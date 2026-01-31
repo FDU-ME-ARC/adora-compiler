@@ -22,5 +22,4 @@ cmake -GNinja \
   # -DLLVM_EXTERNAL_LIT=$LLVM_BUILD_DIR/bin/llvm-lit \
 
 # cmake --build . --target cgra-opt cgra-mapper
-ninja -j 32 install
 ninja -j 32 install check-adora

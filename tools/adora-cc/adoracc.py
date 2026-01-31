@@ -13,6 +13,7 @@ import os
 import shutil
 import subprocess
 import sys
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -56,6 +57,51 @@ def prepare_ir_dirs(root: Path) -> dict[str, Path]:
         "temp_dfg": temp_dfg_dir,
     }
 
+def strip_module_attrs(text: str) -> str:
+    """
+    Remove the content of:
+        module attributes { ... } 
+    in MLIR, leaving only empty {}.
+    Supports multi-line and nested braces.
+    """
+    TOKEN = "module attributes "
+
+    out = []
+    i = 0
+    n = len(text)
+
+    while True:
+        pos = text.find(TOKEN, i)
+        if pos == -1:
+            out.append(text[i:])
+            break
+
+        out.append(text[i:pos])
+        out.append(TOKEN)
+
+        brace_start = pos + len(TOKEN)
+
+        if brace_start >= n or text[brace_start] != '{':
+            # Format does not match, skip
+            i = brace_start
+            continue
+
+        # Write empty {}
+        out.append("{}")
+
+        # Skip the original {...}
+        j = brace_start + 1
+        brace_depth = 1
+        while j < n and brace_depth > 0:
+            if text[j] == '{':
+                brace_depth += 1
+            elif text[j] == '}':
+                brace_depth -= 1
+            j += 1
+
+        i = j  # Continue scanning after the closing brace
+
+    return "".join(out)
 
 def build_pipeline(
     input_path: Path,
@@ -80,6 +126,17 @@ def build_pipeline(
             ]
         )
         mlir_input = cgeist_output
+
+    # Read
+    with open(mlir_input, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    # Clean
+    cleaned = strip_module_attrs(text)
+
+    # Overwrite in place
+    with open(mlir_input, "w", encoding="utf-8") as f:
+        f.write(cleaned)
 
     normalized = dirs["ir"] / f"{base_name}_normalized.mlir"
     run_command(
