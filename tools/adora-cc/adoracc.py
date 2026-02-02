@@ -109,6 +109,7 @@ def build_pipeline(
     dirs: dict[str, Path],
     enable_unroll: bool,
     adg_path: Path | None,
+    output_path: Path | None,   # NEW
 ) -> None:
     base_name = input_path.stem
     mlir_input = input_path
@@ -138,16 +139,16 @@ def build_pipeline(
     with open(mlir_input, "w", encoding="utf-8") as f:
         f.write(cleaned)
 
-    normalized = dirs["ir"] / f"{base_name}_normalized.mlir"
+    normalized = dirs["temp_dfg"] / f"{base_name}_normalized.mlir"
     run_command(
         [
-            tools["mlir-opt"],
+            tools["cgra-opt"],
             "--allow-unregistered-dialect",
             "--affine-loop-normalize",
             "--affine-simplify-structures",
             "--normalize-memrefs",
-            "--force-specialization",
-            "--bufferization-bufferize",
+            # "--force-specialization",
+            # "--bufferization-bufferize",
             str(mlir_input),
             "-o",
             str(normalized),
@@ -157,7 +158,7 @@ def build_pipeline(
     kernel_mlir = dirs["kernels"] / f"{base_name}_kernel.mlir"
     run_command(
         [
-            tools["adora-opt"],
+            tools["cgra-opt"],
             "--canonicalize",
             "-reconcile-unrealized-casts",
             "--affine-loop-fusion",
@@ -173,7 +174,7 @@ def build_pipeline(
 
     kernel_opt = dirs["kernels_opt"] / f"{base_name}_opt.mlir"
     kernel_opt_cmd = [
-        tools["adora-opt"],
+        tools["cgra-opt"],
         "--adora-simplify-loadstore",
         "--adora-math-rewrite",
         (
@@ -186,13 +187,25 @@ def build_pipeline(
             raise ValueError("Unroll enabled but no ADG path provided.")
         kernel_opt_cmd.append(f"--adora-auto-unroll=cgra-adg={adg_path}")
     kernel_opt_cmd.extend([str(kernel_mlir), "-o", str(kernel_opt)])
-    run_command(
-        kernel_opt_cmd
-    )
+    run_command(kernel_opt_cmd)
+
+    # NEW: export kernel_opt result
+    with open(kernel_opt, "r", encoding="utf-8") as f:
+        kernel_opt_text = f.read()
+
+    if output_path is None:
+        # no -o: print to stdout
+        sys.stdout.write(kernel_opt_text)
+        if not kernel_opt_text.endswith("\n"):
+            sys.stdout.write("\n")
+    else:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(kernel_opt_text)
 
     run_command(
         [
-            tools["adora-opt"],
+            tools["cgra-opt"],
             "--adora-kernel-dfg-gen",
             str(kernel_opt),
         ],
@@ -205,7 +218,7 @@ def build_pipeline(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Compile C/MLIR to CDFG using cgeist/mlir-opt/adora-opt."
+        description="Compile C/MLIR to CDFG using cgeist/mlir-opt/cgra-opt."
     )
     parser.add_argument("input", type=Path, help="Input .C or .MLIR file")
     parser.add_argument(
@@ -224,6 +237,15 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Path to the CGRA .adg file used for unroll.",
     )
+
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=None,
+        help="Write the optimized kernel MLIR (after kernel optimization) to this file. "
+             "If not provided, print to stdout.",
+    )
     return parser.parse_args()
 
 
@@ -239,10 +261,12 @@ def main() -> int:
     if suffix not in {".C", ".MLIR"}:
         print("Only .C or .MLIR inputs are supported.", file=sys.stderr)
         return 1
+    
+    output_path: Path | None = args.output.resolve() if args.output else None
 
     tools: dict[str, str] = {
-        "mlir-opt": require_tool("mlir-opt"),
-        "adora-opt": require_tool("adora-opt"),
+        # "mlir-opt": require_tool("mlir-opt"),
+        "cgra-opt": require_tool("cgra-opt"),
     }
     if suffix == ".C":
         tools["cgeist"] = require_tool("cgeist")
@@ -261,7 +285,7 @@ def main() -> int:
     dirs = prepare_ir_dirs(args.work_dir.resolve())
 
     try:
-        build_pipeline(input_path, tools, dirs, args.enable_unroll, adg_path)
+        build_pipeline(input_path, tools, dirs, args.enable_unroll, adg_path, output_path)
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -272,7 +296,9 @@ def main() -> int:
         print(f"Command failed with exit code {exc.returncode}", file=sys.stderr)
         return exc.returncode
 
-    print(f"CDFG output directory: {dirs['dfgs']}")
+    print(f"Final optimal mlir file: {dirs['kernels_opt']}", file=sys.stderr)
+    print(f"CDFG output directory: {dirs['dfgs']}", file=sys.stderr)
+
     return 0
 
 
