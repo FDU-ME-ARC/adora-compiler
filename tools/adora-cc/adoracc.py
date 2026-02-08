@@ -103,6 +103,12 @@ def strip_module_attrs(text: str) -> str:
 
     return "".join(out)
 
+
+def has_adora_kernel(text: str) -> bool:
+    """Return True if the MLIR text already contains ADORA.kernel (skip extract pass)."""
+    return "ADORA.kernel" in text
+
+
 def build_pipeline(
     input_path: Path,
     tools: dict[str, str],
@@ -156,13 +162,18 @@ def build_pipeline(
     )
 
     kernel_mlir = dirs["kernels"] / f"{base_name}_kernel.mlir"
-    run_command(
+    with open(normalized, "r", encoding="utf-8") as f:
+        normalized_text = f.read()
+    skip_extract = has_adora_kernel(normalized_text)
+    kernel_passes = [
+        "--canonicalize",
+        "-reconcile-unrealized-casts",
+        "--affine-loop-fusion",
+    ]
+    if not skip_extract:
+        kernel_passes.append("--adora-extract-affine-for-to-kernel")
+    kernel_passes.extend(
         [
-            tools["cgra-opt"],
-            "--canonicalize",
-            "-reconcile-unrealized-casts",
-            "--affine-loop-fusion",
-            "--adora-extract-affine-for-to-kernel",
             "--arith-expand",
             "--memref-expand",
             "-cse",
@@ -171,6 +182,7 @@ def build_pipeline(
             str(kernel_mlir),
         ]
     )
+    run_command([tools["cgra-opt"]] + kernel_passes)
 
     kernel_opt = dirs["kernels_opt"] / f"{base_name}_opt.mlir"
     kernel_opt_cmd = [
