@@ -43,8 +43,8 @@ def prepare_ir_dirs(root: Path) -> dict[str, Path]:
     kernels_dir = ir_dir / "0_kernels"
     kernels_opt_dir = ir_dir / "1_kernels_opt"
     dfgs_dir = ir_dir / "2_dfgs"
-    temp_dir = ir_dir / "tempfiles"
-    temp_dfg_dir = temp_dir / "DFGs"
+    tempfiles_dir = ir_dir / "tempfiles"
+    temp_dfg_dir = tempfiles_dir / "DFGs"
 
     for directory in (kernels_dir, kernels_opt_dir, dfgs_dir, temp_dfg_dir):
         directory.mkdir(parents=True, exist_ok=True)
@@ -54,6 +54,7 @@ def prepare_ir_dirs(root: Path) -> dict[str, Path]:
         "kernels": kernels_dir,
         "kernels_opt": kernels_opt_dir,
         "dfgs": dfgs_dir,
+        "tempfiles": tempfiles_dir,
         "temp_dfg": temp_dfg_dir,
     }
 
@@ -199,7 +200,12 @@ def build_pipeline(
             raise ValueError("Unroll enabled but no ADG path provided.")
         kernel_opt_cmd.append(f"--adora-auto-unroll=cgra-adg={adg_path}")
     kernel_opt_cmd.extend([str(kernel_mlir), "-o", str(kernel_opt)])
-    run_command(kernel_opt_cmd)
+    # Run with cwd=dirs["tempfiles"] when unroll is enabled so AutoUnroll creates
+    # DesignSpace under adora-cc-ir/tempfiles/DesignSpace
+    run_command(
+        kernel_opt_cmd,
+        cwd=dirs["tempfiles"] if enable_unroll else None,
+    )
 
     # NEW: export kernel_opt result
     with open(kernel_opt, "r", encoding="utf-8") as f:

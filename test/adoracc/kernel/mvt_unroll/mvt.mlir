@@ -1,5 +1,5 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: adoracc.py %s --work-dir %t -o %t/result.mlir
+// RUN: adoracc.py %s --work-dir %t --enable-unroll -o %t/result.mlir
 // RUN: FileCheck %s --input-file=%t/result.mlir
 // RUN: rm -rf %t && mkdir -p %t
 //
