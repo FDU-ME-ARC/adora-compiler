@@ -7,7 +7,9 @@
 // DOT0-DAG: Input{{[0-9]+}}[opcode = "Input"
 // DOT0-DAG: load{{[0-9]+}}[opcode = "load"
 // DOT0-DAG: Output{{[0-9]+}}[opcode = "Output"
+// DOT0-DAG: Input{{[0-9]+}} -> load{{[0-9]+}}
 // DOT0-DAG: load{{[0-9]+}} -> Output
+// DOT0-DAG: operand = 0, label = "Op=0"
 // DOT0: }
 //
 // CHECK: module {
