@@ -3,4 +3,5 @@ Input0[opcode = "Input", ref_name=":0", size="8", offset="0,0", pattern="0,1025"
 load2[opcode = "load", color = black];
 Output3[opcode = "Output", ref_name=":4", size="4100", offset="0,0", pattern="4,1025", color = black];
 load2 -> Output3[color = black, style = bold, operand = 0, label = "Op=0"];
+Input0 -> load2[color = black, style = bold, operand = 1, label = "Op=1"];
 }

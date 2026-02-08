@@ -2928,6 +2928,9 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
       int edgeidx;
       if (SuccNode->getTypeName() == "SEL")
         edgeidx = 2 - operand_idx;
+      else if (SuccNode->getTypeName() == "load")
+        // memref.load: MLIR operand 0 = memref, 1+ = address indices; CDFG address = first operand (0)
+        edgeidx = (operand_idx >= 1) ? (int)(operand_idx - 1) : (int)operand_idx;
       else
         edgeidx = operand_idx;
       
@@ -3134,17 +3137,23 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
         {
           LLVMCDFGNode* output = CDFG->edge(edgeid)->dst();
           assert(output != NULL);
-          const std::vector<NodeInfo> infos = output->getinputInfoMap()[AnceNode];
-          for(NodeInfo info: infos){
-            output->addInputNode(AnceNode, info.idx, info.isBackEdge);
-            AnceNode->addOutputNode(output, info.isBackEdge);
-            CDFG->addEdge(AnceNode, output); //To fix: Edge Type  
+          // output's input is node (the cast we are removing), not AnceNode
+          const auto &inputMap = output->inputInfoMap();
+          auto it = inputMap.find(node);
+          if(it != inputMap.end()){
+            const std::vector<NodeInfo> &infos = it->second;
+            for(const NodeInfo &info : infos){
+              output->addInputNode(AnceNode, info.idx, info.isBackEdge);
+              AnceNode->addOutputNode(output, info.isBackEdge);
+              CDFG->addEdge(AnceNode, output); //To fix: Edge Type
+            }
+          } else {
+            int edgeidx = output->getInputIdx(node);
+            bool isbackedge = output->isInputBackEdge(node);
+            output->addInputNode(AnceNode, edgeidx, isbackedge);
+            AnceNode->addOutputNode(output, isbackedge);
+            CDFG->addEdge(AnceNode, output); //To fix: Edge Type
           }
-          // int edgeidx = output->getInputIdx(node);
-          // bool isbackedge = output->isInputBackEdge(node);
-          // output->addInputNode(AnceNode,  edgeidx, isbackedge);
-          // AnceNode->addOutputNode(output, isbackedge);
-          // CDFG->addEdge(AnceNode, output); //To fix: Edge Type     
         }
         CDFG->delNode(node);
         removing = 1;

@@ -1,3 +1,29 @@
+// RUN: rm -f kernel_0_CDFG.dot
+// RUN: %cgra-opt --adora-kernel-dfg-gen %s | %FileCheck %s
+// RUN: test -s kernel_0_CDFG.dot
+// RUN: %FileCheck %s --check-prefix=DOT0 --input-file=kernel_0_CDFG.dot
+//
+// DOT0: Digraph G {
+// DOT0-DAG: Input{{[0-9]+}}[opcode = "Input"
+// DOT0-DAG: load{{[0-9]+}}[opcode = "load"
+// DOT0-DAG: Output{{[0-9]+}}[opcode = "Output"
+// DOT0-DAG: load{{[0-9]+}} -> Output
+// DOT0: }
+//
+// CHECK: module {
+// CHECK: func.func @merge(%arg0: memref<?xi32>) attributes {llvm.linkage = #llvm.linkage<external>} {
+// CHECK: ADORA.BlockLoad
+// CHECK: ADORA.LocalMemAlloc
+// CHECK: ADORA.kernel {
+// CHECK: affine.for %arg1 = 0 to 1025 {
+// CHECK: affine.load
+// CHECK: memref.load
+// CHECK: affine.store
+// CHECK: ADORA.terminator
+// CHECK: ADORA.BlockStore
+// CHECK: return
+// CHECK: }
+
 module {
   func.func @merge(%arg0: memref<?xi32>) attributes {llvm.linkage = #llvm.linkage<external>} {
     %c-1_i32 = arith.constant -1 : i32
