@@ -1,5 +1,5 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: adoracc.py %s --work-dir %t --enable-unroll -o %t/result.mlir
+// RUN: adoracc.py %s --work-dir %t --enable-unroll --adg-path %S/../../../spec/cgra_adg.json  -o %t/result.mlir
 // RUN: FileCheck %s --input-file=%t/result.mlir
 // RUN: rm -rf %t && mkdir -p %t
 //
@@ -12,12 +12,16 @@
 // CHECK: ADORA.kernel {
 // CHECK: affine.for %[[I:.*]] = 0 to 40 {
 // CHECK: %[[A_I:.*]] = affine.load %[[A]]{{\[}}%[[I]]{{\]}} : memref<40xf32>
-// CHECK: %[[RED:.*]] = affine.for %[[J:.*]] = 0 to 40 iter_args(%[[ACC:.*]] = %[[A_I]]) -> (f32) {
-// CHECK: %[[M_IJ:.*]] = affine.load %[[M]]{{\[}}%[[I]], %[[J]]{{\]}} : memref<40x40xf32>
-// CHECK: %[[X_J:.*]] = affine.load %[[X]]{{\[}}%[[J]]{{\]}} : memref<40xf32>
-// CHECK: %[[MUL:.*]] = arith.mulf %[[M_IJ]], %[[X_J]] : f32
-// CHECK: %[[ADD:.*]] = arith.addf %[[ACC]], %[[MUL]] : f32
-// CHECK: affine.yield %[[ADD]] : f32
+// CHECK: %[[RED:.*]] = affine.for %[[J:.*]] = 0 to 40 step 10 iter_args(%[[ACC:.*]] = %[[A_I]]) -> (f32) {
+// CHECK: affine.load %[[M]]{{\[}}%[[I]], %[[J]]{{\]}} : memref<40x40xf32>
+// CHECK: affine.load %[[X]]{{\[}}%[[J]]{{\]}} : memref<40xf32>
+// CHECK: arith.mulf
+// CHECK: arith.addf {{.*}}%[[ACC]]
+// CHECK: affine.load %[[M]]
+// CHECK: affine.load %[[X]]
+// CHECK: arith.mulf
+// CHECK: arith.addf
+// CHECK: affine.yield {{.*}} : f32
 // CHECK: }
 // CHECK: affine.store %[[RED]], %[[OUT0]]{{\[}}%[[I]]{{\]}} : memref<40xf32>
 // CHECK: }
