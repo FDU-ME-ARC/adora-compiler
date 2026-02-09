@@ -802,62 +802,9 @@ void MoveAccumulationToLast(ADORA::KernelOp kernel){
 }
 
 
-// //hjy
-// // === Fix: 适配 ADORA::KernelOp 的 If 转换函数 ===
-// static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
-//     // 收集所有的 scf.if op，避免在遍历过程中修改导致迭代器失效
-//     llvm::SmallVector<scf::IfOp, 4> ifOps;
-//     kernel.walk([&](scf::IfOp op) {
-//         ifOps.push_back(op);
-//     });
-
-//     for (auto ifOp : ifOps) {
-//         // 1. 如果 if 没有返回值，这种转换可能不安全（或者不需要数据流转换），暂时跳过
-//         if (ifOp.getNumResults() == 0) continue;
-
-//         OpBuilder builder(ifOp);
-
-//         // 2. 将 Then 分支的所有指令（除了 yield）移动到 if 之前
-//         // 我们假设 getTanh.mlir 里的 if 是纯计算，没有内存读写冲突
-//         mlir::Block *thenBlock = &ifOp.getThenRegion().front();
-//         for (auto &op : llvm::make_early_inc_range(thenBlock->getOperations())) {
-//             if (!isa<scf::YieldOp>(op)) {
-//                 op.moveBefore(ifOp);
-//             }
-//         }
-
-//         // 3. 将 Else 分支的所有指令（除了 yield）移动到 if 之前
-//         mlir::Block *elseBlock = &ifOp.getElseRegion().front();
-//         for (auto &op : llvm::make_early_inc_range(elseBlock->getOperations())) {
-//             if (!isa<scf::YieldOp>(op)) {
-//                 op.moveBefore(ifOp);
-//             }
-//         }
-
-//         // 4. 获取 yield 的返回值
-//         auto thenYield = cast<scf::YieldOp>(thenBlock->getTerminator());
-//         auto elseYield = cast<scf::YieldOp>(elseBlock->getTerminator());
-
-//         // 5. 针对每一个返回值，生成一个 arith.select 指令
-//         for (unsigned i = 0; i < ifOp.getNumResults(); ++i) {
-//             mlir::Value trueVal = thenYield.getOperand(i);
-//             mlir::Value falseVal = elseYield.getOperand(i);
-//             mlir::Value condition = ifOp.getCondition();
-
-//             // 创建 select 指令： result = cond ? trueVal : falseVal
-//             // 注意：这里使用 builder 确保插入位置在 ifOp 之前（因为 ifOp 马上要被删了）
-//             auto selectOp = builder.create<mlir::arith::SelectOp>(
-//                 ifOp.getLoc(), condition, trueVal, falseVal);
-
-//             // 6. 将所有使用 if 结果的地方，替换为使用 select 的结果
-//             ifOp.getResult(i).replaceAllUsesWith(selectOp.getResult());
-//         }
-
-//         // 7. 删除原来的 if 结构
-//         ifOp.erase();
-//     }
-// }
-// 辅助结构体，用于记录分析结果
+// hjy
+// =================== Begin If to Select with Store Sinking Support =============
+// auxiliary struct to hold store information
 struct StoreInfo {
     mlir::Operation* op;
     mlir::Value valueToStore;
@@ -865,29 +812,27 @@ struct StoreInfo {
     llvm::SmallVector<mlir::Value, 4> indices;
 };
 
-// 辅助函数：判断两个 Store 是否写入同一个位置
+// auxiliary function to check if two store operations are the same
 static bool isSameLocation(const StoreInfo& a, const StoreInfo& b) {
     if (a.memref != b.memref) return false;
     if (a.indices.size() != b.indices.size()) return false;
-    // 简单比对索引 Value 是否相同 (更复杂的分析可能需要 AffineMap 分析，但这里够用了)
     for (size_t i = 0; i < a.indices.size(); ++i) {
         if (a.indices[i] != b.indices[i]) return false;
     }
     return true;
 }
 
-// 辅助函数：在 scf.if 之前查找是否存在从相同位置的 load 操作
-// 用于避免创建新的 load，而是复用已存在的 load 值
+// auxiliary function to find existing load value before ifOp
 static mlir::Value findExistingLoadValue(scf::IfOp ifOp, mlir::Value memref, 
                                           llvm::ArrayRef<mlir::Value> indices) {
-    // 获取 if 所在的 block
+    // Get the block containing the ifOp
     mlir::Block* block = ifOp->getBlock();
     
-    // 遍历 if 之前的所有操作
+    // Iterate backwards from ifOp to find matching load
     for (auto it = block->begin(); it != Block::iterator(ifOp); ++it) {
         mlir::Operation* op = &(*it);
         
-        // 检查 affine.load
+        //Check if the operation is a load
         if (auto loadOp = dyn_cast<affine::AffineLoadOp>(op)) {
             if (loadOp.getMemref() == memref) {
                 auto loadIndices = loadOp.getMapOperands();
@@ -905,7 +850,7 @@ static mlir::Value findExistingLoadValue(scf::IfOp ifOp, mlir::Value memref,
                 }
             }
         }
-        // 检查 memref.load
+        // Check if the operation is a store
         else if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
             if (loadOp.getMemref() == memref) {
                 auto loadIndices = loadOp.getIndices();
@@ -925,10 +870,10 @@ static mlir::Value findExistingLoadValue(scf::IfOp ifOp, mlir::Value memref,
         }
     }
     
-    return mlir::Value(); // 没找到返回空
+    return mlir::Value(); // not found
 }
 
-// === Fix: 增强版，支持 Store Sinking 的 If 转换 ===
+// The main function to lower scf.if to select with store sinking support
 static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
     llvm::SmallVector<scf::IfOp, 4> ifOps;
     kernel.walk([&](scf::IfOp op) {
@@ -938,12 +883,12 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
     for (auto ifOp : ifOps) {
         OpBuilder builder(ifOp);
         
-        // 1. 处理 Pure Data Flow (有返回值的情况，逻辑不变)
+        // 1. handle return values first
         if (ifOp.getNumResults() > 0) {
             mlir::Block *thenBlock = &ifOp.getThenRegion().front();
             mlir::Block *elseBlock = &ifOp.getElseRegion().front();
             
-            // 移动计算指令 - 使用 make_early_inc_range 避免迭代器失效
+            // move all non-yield operations out of the ifOp
             for (auto &op : llvm::make_early_inc_range(thenBlock->getOperations())) {
                 if (!isa<scf::YieldOp>(op)) op.moveBefore(ifOp);
             }
@@ -960,20 +905,19 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
                 ifOp.getResult(i).replaceAllUsesWith(selectOp.getResult());
             }
             ifOp.erase();
-            continue; // 处理完有返回值的，跳过后续逻辑
+            continue; // skip to next ifOp
         }
 
-        // 2. 处理 Side Effects (Store Sinking) - 针对 sort.mlir
-        // 只有当没有返回值时，我们才尝试分析内部的 Store
+        // 2. handle store operations when there is no return value
         if (ifOp.getNumResults() == 0) {
             mlir::Block *thenBlock = &ifOp.getThenRegion().front();
             mlir::Block *elseBlock = ifOp.getElseRegion().empty() ? nullptr : &ifOp.getElseRegion().front();
 
-            // 2.1 收集 Then 和 Else 分支中的所有 Store 操作
+            // 2.1 separate store operations from other operations
             llvm::SmallVector<StoreInfo, 4> thenStores;
             llvm::SmallVector<StoreInfo, 4> elseStores;
 
-            // 收集 stores 的 lambda - 不在这里移动操作，避免迭代器问题
+            // Lambda to collect only store operations
             auto collectStoresOnly = [&](mlir::Block* block, llvm::SmallVector<StoreInfo, 4>& stores) {
                 if (!block) return;
                 for (auto &op : block->getOperations()) {
@@ -990,7 +934,7 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
                 }
             };
 
-            // 移动非 store 操作的 lambda - 使用 make_early_inc_range 避免迭代器失效
+            // Lambda to move non-store operations out of the ifOp
             auto moveNonStoreOps = [&](mlir::Block* block) {
                 if (!block) return;
                 for (auto &op : llvm::make_early_inc_range(block->getOperations())) {
@@ -1002,19 +946,15 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
                 }
             };
 
-            // 先收集所有 stores
+            // 2.1.1 collect store operations
             collectStoresOnly(thenBlock, thenStores);
             collectStoresOnly(elseBlock, elseStores);
 
-            // 然后移动非 store 操作
+            // 2.1.2 move non-store operations out of the ifOp
             moveNonStoreOps(thenBlock);
             moveNonStoreOps(elseBlock);
 
-            // 2.2 处理所有涉及的 Store
-            // 策略：我们把 Then 和 Else 的 Store 视为一个并集。
-            // 对于每一个内存位置，我们构造 select(cond, val_in_then, val_in_else)
-            
-            // 用于标记哪些 Else Store 已经被配对处理了
+            // 2.2 handle all involved stores
             llvm::DenseSet<mlir::Operation*> processedElseOps;
 
             for (const auto& tStore : thenStores) {
@@ -1022,7 +962,7 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
                 mlir::Value valFalse;
                 mlir::Operation* matchedElseOp = nullptr;
 
-                // 在 Else 中寻找写入同一位置的操作
+                // search for matching store in elseStores
                 for (const auto& eStore : elseStores) {
                     if (isSameLocation(tStore, eStore)) {
                         valFalse = eStore.valueToStore;
@@ -1032,12 +972,12 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
                     }
                 }
 
-                // 如果 Else 分支没有写入这个位置，我们需要获取原来的值（保持不变）
+                // if no matching store in elseStores, create a new load
                 if (!matchedElseOp) {
-                    // 首先尝试查找已存在的 load 操作，避免创建新的 load
+                    // find existing load value
                     valFalse = findExistingLoadValue(ifOp, tStore.memref, tStore.indices);
                     
-                    // 如果没有找到已存在的 load，才创建新的
+                    // if not found, create a new load
                     if (!valFalse) {
                         if (isa<affine::AffineStoreOp>(tStore.op)) {
                             auto origStore = cast<affine::AffineStoreOp>(tStore.op);
@@ -1053,11 +993,11 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
                     }
                 }
 
-                // 创建 Select
+                // create Select
                 auto selectOp = builder.create<mlir::arith::SelectOp>(
                     ifOp.getLoc(), ifOp.getCondition(), valTrue, valFalse);
 
-                // 创建新的无条件 Store (放在 If 后面)
+                // create new unconditional Store (after If)
                 if (isa<affine::AffineStoreOp>(tStore.op)) {
                     auto origStore = cast<affine::AffineStoreOp>(tStore.op);
                     builder.create<affine::AffineStoreOp>(
@@ -1069,17 +1009,17 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
                 }
             }
 
-            // 处理那些只在 Else 中出现，而 Then 中没出现的 Store
+            // handle elseStores that were not processed
             for (const auto& eStore : elseStores) {
                 if (processedElseOps.count(eStore.op)) continue;
 
-                mlir::Value valTrue; // Then 分支保持不变
+                mlir::Value valTrue; 
                 mlir::Value valFalse = eStore.valueToStore;
 
-                // 首先尝试查找已存在的 load 操作，避免创建新的 load
+                // search for matching store in thenStores
                 valTrue = findExistingLoadValue(ifOp, eStore.memref, eStore.indices);
                 
-                // 如果没有找到已存在的 load，才创建新的
+                // if not found, create a new load
                 if (!valTrue) {
                     if (isa<affine::AffineStoreOp>(eStore.op)) {
                         auto origStore = cast<affine::AffineStoreOp>(eStore.op);
@@ -1094,11 +1034,11 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
                     }
                 }
 
-                // 创建 Select
+                // create Select
                 auto selectOp = builder.create<mlir::arith::SelectOp>(
                     ifOp.getLoc(), ifOp.getCondition(), valTrue, valFalse);
 
-                // 创建新的 Store
+                // create new unconditional Store (after If)
                 if (isa<affine::AffineStoreOp>(eStore.op)) {
                     auto origStore = cast<affine::AffineStoreOp>(eStore.op);
                     builder.create<affine::AffineStoreOp>(
@@ -1110,7 +1050,7 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
                 }
             }
 
-            // 2.3 移除原来的 If
+            // 2.3 erase the ifOp
             ifOp.erase();
         }
     }
@@ -1332,7 +1272,7 @@ std::string GetCMPTypeStr(mlir::Operation* op){
     else if(cmptype == "ugt") return "UGT";
     else if(cmptype == "uge") return "UGE";
         //hjy
-    // 添加有符号整数比较的支持
+    // add signed integer compare
     else if(cmptype == "slt") return "SLT";
     else if(cmptype == "sle") return "SLE";
     else if(cmptype == "sgt") return "SGT";
@@ -1377,7 +1317,7 @@ bool ConvertGreaterToLess(LLVMCDFGNode* node){
   else if(node->getTypeName() == "FOGT") node->setTypeName("FOLT");
   else if(node->getTypeName() == "FOGE") node->setTypeName("FOLE");
     //hjy
-  // 添加有符号整数比较的转换
+  // add signed integer compare
   else if(node->getTypeName() == "SGT") node->setTypeName("SLT");
   else if(node->getTypeName() == "SGE") node->setTypeName("SLE");
   else return true;
@@ -2988,6 +2928,9 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
       int edgeidx;
       if (SuccNode->getTypeName() == "SEL")
         edgeidx = 2 - operand_idx;
+      else if (SuccNode->getTypeName() == "load")
+        // memref.load: MLIR operand 0 = memref, 1+ = address indices; CDFG address = first operand (0)
+        edgeidx = (operand_idx >= 1) ? (int)(operand_idx - 1) : (int)operand_idx;
       else
         edgeidx = operand_idx;
       
@@ -3088,7 +3031,7 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
                 ||ance_op->getName().getStringRef() == "ADORA.LocalMemAlloc"){
             if(SuccNode->isLinearAccess())
               continue;
-            // hjy：允许 memref.load 和 memref.store 跳过基地址依赖检查
+            // hjy：added for memref.load/store outside affine.for
             else if(SuccNode->operation()->getName().getStringRef() == "memref.load"
                 ||SuccNode->operation()->getName().getStringRef() == "memref.store")
               continue;
@@ -3097,12 +3040,11 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
           }
           //hjy
           else if(ance_op->getName().getStringRef() == "memref.alloca"){
-            // memref.alloca 定义在 kernel 外部，用于 memref.load/store 的内存引用
-            // 对于 memref.load/store，内存引用不需要作为边添加到 DFG
+            
             continue;
           }
           else {
-            // 其他未处理的外部操作，跳过边的创建
+            
             LLVM_DEBUG(llvm::errs() << "[Warning] Skipping unhandled external operation: " 
                        << ance_op->getName().getStringRef() << "\n");
             continue;
@@ -3195,17 +3137,23 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
         {
           LLVMCDFGNode* output = CDFG->edge(edgeid)->dst();
           assert(output != NULL);
-          const std::vector<NodeInfo> infos = output->getinputInfoMap()[AnceNode];
-          for(NodeInfo info: infos){
-            output->addInputNode(AnceNode, info.idx, info.isBackEdge);
-            AnceNode->addOutputNode(output, info.isBackEdge);
-            CDFG->addEdge(AnceNode, output); //To fix: Edge Type  
+          // output's input is node (the cast we are removing), not AnceNode
+          const auto &inputMap = output->inputInfoMap();
+          auto it = inputMap.find(node);
+          if(it != inputMap.end()){
+            const std::vector<NodeInfo> &infos = it->second;
+            for(const NodeInfo &info : infos){
+              output->addInputNode(AnceNode, info.idx, info.isBackEdge);
+              AnceNode->addOutputNode(output, info.isBackEdge);
+              CDFG->addEdge(AnceNode, output); //To fix: Edge Type
+            }
+          } else {
+            int edgeidx = output->getInputIdx(node);
+            bool isbackedge = output->isInputBackEdge(node);
+            output->addInputNode(AnceNode, edgeidx, isbackedge);
+            AnceNode->addOutputNode(output, isbackedge);
+            CDFG->addEdge(AnceNode, output); //To fix: Edge Type
           }
-          // int edgeidx = output->getInputIdx(node);
-          // bool isbackedge = output->isInputBackEdge(node);
-          // output->addInputNode(AnceNode,  edgeidx, isbackedge);
-          // AnceNode->addOutputNode(output, isbackedge);
-          // CDFG->addEdge(AnceNode, output); //To fix: Edge Type     
         }
         CDFG->delNode(node);
         removing = 1;
@@ -3279,8 +3227,20 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
 
 
 LLVMCDFG* mlir::ADORA::generateCDFGfromKernel(LLVMCDFG* &CDFG, ADORA::KernelOp kernel, bool verbose){
+  
+  
   /// remove truncf op
   RemoveConstantTruncF(kernel);
+
+  // hjy
+  // [Add] If-Conversion (scf.if -> arith.select)
+  lowerSCFIfToSelect(kernel);
+  if(verbose) {
+    llvm::errs() << "[ADORA] Applied If-Conversion (scf.if -> arith.select).\n";
+    kernel.dump(); // 打印 IR 查看转换结果
+  }
+  // [Add] End
+
   ADORA::KernelOp kernel_clone = kernel.clone();
   // kernel_clone.dump();
   kernel.getOperation()->getBlock()->push_back(kernel_clone);
@@ -3290,6 +3250,8 @@ LLVMCDFG* mlir::ADORA::generateCDFGfromKernel(LLVMCDFG* &CDFG, ADORA::KernelOp k
   /// FIX: We should judge whether to use hoist
   HoistLoadStoreInKernelOp(kernel); 
   if(verbose) kernel.dump();
+
+  
 
   /// For every loop carried value, find their accumulation mode. Move initial value computing to outer most level.
   MoveLoopCarriedInitailValue(kernel);

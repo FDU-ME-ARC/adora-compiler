@@ -47,7 +47,7 @@ namespace
 void ADORALoopCdfgGenPass::runOnOperation()
 {
   mlir::Operation *m = getOperation();
-  llvm::errs() << "[test] kernel! " ; m->dump() ;
+  LLVM_DEBUG(m->dump());
 
   /// Get function name
   func::FuncOp Func;
@@ -83,7 +83,7 @@ void ADORALoopCdfgGenPass::runOnOperation()
         kernelName = "kernel_" + std::to_string(kernel_cnt);
       }
       LLVMCDFG *CDFG = new LLVMCDFG(kernelName, GeneralOpNameFile_str);
-      generateCDFGfromKernel(CDFG, kernel, /*verbose=*/false);
+      generateCDFGfromKernel(CDFG, kernel, /*verbose=*/Verbose);
       CDFG->CDFGtoDOT(kernelName + "_CDFG.dot");
       kernel_cnt++;
     });   

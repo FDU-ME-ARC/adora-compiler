@@ -435,8 +435,25 @@ void ADORAAutoUnroll::runOnOperation() {
     kernels.push_back(kernel);
   });
 
-  for(ADORA::KernelOp kernel : kernels){
-    LogicalResult r = chooseAndApplyUnrollStrategyWithDeps(kernel, m);
+  // Iterate by index: after each chooseAndApplyUnrollStrategyWithDeps we replace
+  // the function, so kernel pointers in `kernels` become invalid. Re-fetch the
+  // i-th kernel from the current module each time.
+  for (size_t i = 0; i < kernels.size(); ++i) {
+    ADORA::KernelOp currentKernel;
+    size_t count = 0;
+    m.walk([&](ADORA::KernelOp k) {
+      if (count == i) {
+        currentKernel = k;
+        return WalkResult::interrupt();
+      }
+      count++;
+      return WalkResult::advance();
+    });
+    if (!currentKernel)
+      continue;
+    LogicalResult r = chooseAndApplyUnrollStrategyWithDeps(currentKernel, m);
+    if (failed(r))
+      return;
     m.dump();
   }
 

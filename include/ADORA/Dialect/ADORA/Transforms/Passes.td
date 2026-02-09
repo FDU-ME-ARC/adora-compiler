@@ -25,6 +25,11 @@ def ADORALoopCdfgGen : Pass<"adora-kernel-dfg-gen", "ModuleOp"> {
     "::mlir::scf::SCFDialect",
     "::mlir::affine::AffineDialect"
   ];
+  let options = [
+     Option<"Verbose", "verbose", "bool",
+           /*default=*/"false",
+           "Output detailed process of generating cdfg and intermediate cdfgs(default:false)">,
+  ];
 }
 
 //===----------------------------------------------------------------------===//

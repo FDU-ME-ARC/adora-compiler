@@ -20,6 +20,6 @@ cmake -GNinja \
 
   # -DADORA_ENABLE_ONNX_TENSOR_OPT=ON
   # -DLLVM_EXTERNAL_LIT=$LLVM_BUILD_DIR/bin/llvm-lit \
-
-# cmake --build . --target cgra-opt cgra-mapper
+  
 ninja -j 32 install check-adora
+# or ninja -j 32 install
