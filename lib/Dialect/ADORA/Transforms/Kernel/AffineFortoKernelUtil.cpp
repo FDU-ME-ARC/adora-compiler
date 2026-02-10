@@ -59,10 +59,12 @@ LogicalResult mlir::ADORA::SpecifiedAffineFortoKernel(mlir::affine::AffineForOp&
   builder.create<ADORA::TerminatorOp>(loc);
   builder.setInsertionPointToStart(&KernelOp.getBody().front());
 
-  // Copy root loop and its operations into the Kernel
-  auto &ops = kernelforOp.getBody()->getOperations();
+  // Move the selected loop op into the Kernel body.
+  // Note: we must splice from the loop's *parent block* operation list.
+  auto &parentOps = kernelforOp->getBlock()->getOperations();
   KernelOp.getBody().front().getOperations().splice(
-  KernelOp.getBody().front().begin(), ops, Block::iterator(kernelforOp));
+      KernelOp.getBody().front().begin(), parentOps,
+      Block::iterator(kernelforOp));
 
   return LogicalResult::success();
 }

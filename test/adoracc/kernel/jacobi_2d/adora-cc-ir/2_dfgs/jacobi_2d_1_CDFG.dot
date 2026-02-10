@@ -1,0 +1,25 @@
+Digraph G {
+Input0[opcode = "Input", ref_name="jacobi_2d_1:0", size="3136", offset="0,0", pattern="4,28,4,28", color = black];
+Input1[opcode = "Input", ref_name="jacobi_2d_1:1", size="3136", offset="0,0", pattern="4,28,4,28", color = black];
+ADD2[opcode = "ADD", color = black];
+Input3[opcode = "Input", ref_name="jacobi_2d_1:2", size="3136", offset="0,0", pattern="4,28,4,28", color = black];
+ADD4[opcode = "ADD", color = black];
+Input5[opcode = "Input", ref_name="jacobi_2d_1:3", size="3136", offset="0,0", pattern="4,28,4,28", color = black];
+ADD6[opcode = "ADD", color = black];
+Input7[opcode = "Input", ref_name="jacobi_2d_1:4", size="3136", offset="0,0", pattern="4,28,4,28", color = black];
+ADD8[opcode = "ADD", color = black];
+divsi9[opcode = "divsi", color = black];
+Output10[opcode = "Output", ref_name="jacobi_2d_1:5", size="3136", offset="0,0", pattern="4,28,4,28", color = black];
+CONST15[opcode = "CONST", value="0x00000005", color = black];
+Input0 -> ADD2[color = black, style = bold, operand = 0, label = "Op=0"];
+Input1 -> ADD2[color = black, style = bold, operand = 1, label = "Op=1"];
+ADD2 -> ADD4[color = black, style = bold, operand = 0, label = "Op=0"];
+Input3 -> ADD4[color = black, style = bold, operand = 1, label = "Op=1"];
+ADD4 -> ADD6[color = black, style = bold, operand = 0, label = "Op=0"];
+Input5 -> ADD6[color = black, style = bold, operand = 1, label = "Op=1"];
+ADD6 -> ADD8[color = black, style = bold, operand = 0, label = "Op=0"];
+Input7 -> ADD8[color = black, style = bold, operand = 1, label = "Op=1"];
+ADD8 -> divsi9[color = black, style = bold, operand = 0, label = "Op=0"];
+CONST15 -> divsi9[color = black, style = bold, operand = 1, label = "Op=1"];
+divsi9 -> Output10[color = black, style = bold, operand = 0, label = "Op=0"];
+}
