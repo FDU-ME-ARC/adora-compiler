@@ -1772,7 +1772,7 @@ bool DeleteYield(LLVMCDFG* CDFG, LLVMCDFGNode* yieldnode){
         for(int operandidx = 0; operandidx < OutputOp->getOperands().size(); operandidx++){
           /// only corresponding input port index should be connected
           if(OutputOp->getOperand(operandidx) == forop.getResult(YieldIndex)){
-            OutputNodeToIdx[outputnode].push_back(operandidx);
+            OutputNodeToIdx[outputnode].push_back(YieldIndex);
           }
         }
         /// backedge is a loop-carried variable
@@ -2175,6 +2175,7 @@ static void HandleSelfCycle(LLVMCDFG* CDFG, bool verbose = true){
     }
   }
   
+
   /// Thirdly, delete yield-for nodes
   // unsigned k = 55;
   for(auto ynode : YieldsToBeDelete){
