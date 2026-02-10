@@ -1,3 +1,27 @@
+// RUN: rm -f mmul_relu_CDFG.dot
+// RUN: %cgra-opt --adora-kernel-dfg-gen %s 
+// RUN: test -s mmul_relu_CDFG.dot
+// RUN: %FileCheck %s --check-prefix=DOT0 --input-file=mmul_relu_CDFG.dot
+//
+// DOT0: Digraph G {
+// DOT0-DAG: Input{{[0-9]+}}[opcode = "Input"
+// DOT0-DAG: MUL{{[0-9]+}}[opcode = "MUL"
+// DOT0-DAG: ACC{{[0-9]+}}[opcode = "ACC"
+// DOT0-DAG: Output{{[0-9]+}}[opcode = "Output"
+// DOT0-DAG: SLT{{[0-9]+}}[opcode = "SLT", color = purple];
+// DOT0-DAG: SEL{{[0-9]+}}[opcode = "SEL", color = purple];
+// DOT0-DAG: CONST{{[0-9]+}}[opcode = "CONST"
+// DOT0-DAG: Input{{[0-9]+}} -> MUL{{[0-9]+}}
+// DOT0-DAG: MUL{{[0-9]+}} -> ACC{{[0-9]+}}
+// DOT0-DAG: ACC{{[0-9]+}} -> SLT{{[0-9]+}}
+// DOT0-DAG: CONST{{[0-9]+}} -> SLT{{[0-9]+}}
+// ReLU: SEL(cond=SLT, op1=CONST 0, op0=ACC) -> select(cond, 0, acc); SEL result -> Output
+// DOT0-DAG: SLT{{[0-9]+}} -> SEL{{[0-9]+}}{{[^]]*operand = 2, label = "Op=2"}}
+// DOT0-DAG: CONST{{[0-9]+}} -> SEL{{[0-9]+}}{{[^]]*operand = 1, label = "Op=1"}}
+// DOT0-DAG: ACC{{[0-9]+}} -> SEL{{[0-9]+}}{{[^]]*operand = 0, label = "Op=0"}}
+// DOT0-DAG: SEL{{[0-9]+}} -> Output{{[0-9]+}}{{[^]]*operand = 0, label = "Op=0"}}
+// DOT0: }
+//
 module {
   func.func @mmul_relu(%arg0: memref<?x25xi32>, %arg1: memref<?x25xi32>, %arg2: memref<?x25xi32>) attributes {llvm.linkage = #llvm.linkage<external>} {
     %c0_i32 = arith.constant 0 : i32

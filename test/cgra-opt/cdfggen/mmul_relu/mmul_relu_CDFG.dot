@@ -1,0 +1,21 @@
+Digraph G {
+Input0[opcode = "Input", ref_name="mmul_relu:0", size="2500", offset="0,0", pattern="4,25,-96,25,4,25", color = black];
+Input1[opcode = "Input", ref_name="mmul_relu:1", size="2500", offset="0,0", pattern="100,25,-2396,25,-2496,25", color = black];
+MUL2[opcode = "MUL", color = black];
+ACC3[opcode = "ACC", acc_params="0,25,1,625", acc_first=1, color = black];
+Output6[opcode = "Output", ref_name="mmul_relu:2", size="8", offset="0,0", pattern="0,25,0,25,0,25", color = purple];
+SLT7[opcode = "SLT", color = purple];
+SEL8[opcode = "SEL", color = purple];
+Output9[opcode = "Output", ref_name="mmul_relu:3", size="2500", offset="0,0", pattern="0,25,4,25,4,25", color = purple];
+CONST14[opcode = "CONST", value="0x00000000", color = black];
+Input0 -> MUL2[color = black, style = bold, operand = 0, label = "Op=0"];
+Input1 -> MUL2[color = black, style = bold, operand = 1, label = "Op=1"];
+MUL2 -> ACC3[color = black, style = bold, operand = 0, label = "Op=0"];
+CONST14 -> SLT7[color = black, style = bold, operand = 1, label = "Op=1"];
+SLT7 -> SEL8[color = black, style = bold, operand = 2, label = "Op=2"];
+CONST14 -> SEL8[color = black, style = bold, operand = 1, label = "Op=1"];
+SEL8 -> Output9[color = black, style = bold, operand = 0, label = "Op=0"];
+ACC3 -> Output6[color = black, style = bold, operand = 0, label = "Op=0"];
+ACC3 -> SLT7[color = black, style = bold, operand = 0, label = "Op=0"];
+ACC3 -> SEL8[color = black, style = bold, operand = 0, label = "Op=0"];
+}
