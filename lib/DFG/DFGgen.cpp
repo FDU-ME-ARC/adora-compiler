@@ -1772,7 +1772,7 @@ bool DeleteYield(LLVMCDFG* CDFG, LLVMCDFGNode* yieldnode){
         for(int operandidx = 0; operandidx < OutputOp->getOperands().size(); operandidx++){
           /// only corresponding input port index should be connected
           if(OutputOp->getOperand(operandidx) == forop.getResult(YieldIndex)){
-            OutputNodeToIdx[outputnode].push_back(YieldIndex);
+            OutputNodeToIdx[outputnode].push_back(operandidx);
           }
         }
         /// backedge is a loop-carried variable
@@ -2552,6 +2552,22 @@ static void FuseOperators(LLVMCDFG* CDFG, bool verbose){
   }
 }
 
+/// After HandleSelfCycle, fix operand indices for SEL nodes. When adding edges we use
+/// MLIR operand order (0=cond, 1=true_value, 2=false_value). CDFG SEL expects
+/// 0=value_if_false, 1=value_if_true, 2=cond. Remap each input's idx to 2 - old_idx.
+static void fixSELOperandIndices(LLVMCDFG *CDFG, bool verbose) {
+  for (auto nodepair : CDFG->nodes()) {
+    LLVMCDFGNode *node = nodepair.second;
+    if (node->getTypeName() != "SEL")
+      continue;
+    for (LLVMCDFGNode *inputNode : node->inputNodes()) {
+      int oldIdx = node->getInputIdx(inputNode);
+      int newIdx = 2 - oldIdx;
+      node->setInputIdx(inputNode, newIdx);
+    }
+  }
+}
+
 bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp kernel, bool verbose){
   if(verbose) {kernel.dump();}
   _kernel_toDFG = &kernel;
@@ -2927,9 +2943,7 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
       mlir::Value _v = op->getOperand(operand_idx);
 
       int edgeidx;
-      if (SuccNode->getTypeName() == "SEL")
-        edgeidx = 2 - operand_idx;
-      else if (SuccNode->getTypeName() == "load")
+      if (SuccNode->getTypeName() == "load")
         // memref.load: MLIR operand 0 = memref, 1+ = address indices; CDFG address = first operand (0)
         edgeidx = (operand_idx >= 1) ? (int)(operand_idx - 1) : (int)operand_idx;
       else
@@ -3099,7 +3113,9 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
   /// Extract Accumulation
   ////////////////////////
   HandleSelfCycle(CDFG, verbose);
+  fixSELOperandIndices(CDFG, verbose);
   if(verbose) { CDFG->CDFGtoDOT(CDFG->name_str()+"_2_CDFG.dot");}
+  
   ////////////////////////
   /// End of extracting acc op
   ////////////////////////
