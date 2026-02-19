@@ -1,0 +1,195 @@
+{
+  "Operations" : [ {
+    "name" : "PASS",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 1,
+    "numRes" : 1,
+    "OPC" : 0
+  }, {
+    "name" : "ADD",
+    "commutative" : 1,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 1
+  }, {
+    "name" : "SUB",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 2
+  }, {
+    "name" : "MUL",
+    "commutative" : 1,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 3
+  }, {
+    "name" : "SHL",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 4
+  }, {
+    "name" : "LSHR",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 5
+  }, {
+    "name" : "ASHR",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 6
+  }, {
+    "name" : "ACC",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 1,
+    "numOperands" : 1,
+    "numRes" : 1,
+    "OPC" : 17
+  }, {
+    "name" : "ASUB",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 1,
+    "numOperands" : 1,
+    "numRes" : 1,
+    "OPC" : 18
+  }, {
+    "name" : "SEL",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 3,
+    "numRes" : 1,
+    "OPC" : 7
+  }, {
+    "name" : "FMUL32",
+    "commutative" : 1,
+    "latency" : 2,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 8
+  }, {
+    "name" : "FDIV32",
+    "commutative" : 0,
+    "latency" : 2,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 9
+  }, {
+    "name" : "FSUB32",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 10
+  }, {
+    "name" : "FADD32",
+    "commutative" : 1,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 11
+  }, {
+    "name" : "FACC32",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 1,
+    "numOperands" : 1,
+    "numRes" : 1,
+    "OPC" : 27
+  }, {
+    "name" : "FEQ32",
+    "commutative" : 1,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 12
+  }, {
+    "name" : "FOLT32",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 13
+  }, {
+    "name" : "FOLE32",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 14
+  }, {
+    "name" : "FUNO32",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 15
+  }, {
+    "name" : "ISEL",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : -1,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 80
+  }, {
+    "name" : "INPUT",
+    "commutative" : 0,
+    "latency" : 3,
+    "accumulative" : 0,
+    "numOperands" : 0,
+    "numRes" : 1,
+    "OPC" : 0
+  }, {
+    "name" : "OUTPUT",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 1,
+    "numRes" : 0,
+    "OPC" : 1
+  }, {
+    "name" : "LOAD",
+    "commutative" : 0,
+    "latency" : 3,
+    "accumulative" : 0,
+    "numOperands" : 1,
+    "numRes" : 1,
+    "OPC" : 2
+  }, {
+    "name" : "STORE",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 0,
+    "OPC" : 3
+  } ]
+}
