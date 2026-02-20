@@ -6,8 +6,13 @@
 //
 // Verify cgra-mapper mapping flow: adoracc -> opt.mlir -> cgra-mapper -> SDK C output.
 //
-// CHECK-SDK: void
-// CHECK-SDK: f32VecAddMul
+// CHECK-SDK: void f32VecAddMul(XAxiCdma* AxiCdmaInstance, XScuGic* IntcController, void* arg_0, void* arg_1, void* arg_2, void* arg_3)
+// CHECK-SDK: HostToDeviceTransfer
+// CHECK-SDK: cin_f32VecAddMul
+// CHECK-SDK: cgra_config
+// CHECK-SDK: cgra_exe
+// CHECK-SDK: wait_cgra_all_finish
+// CHECK-SDK: DeviceToHostTransfer
 module attributes {} {
   func.func @f32VecAddMul(%arg0: memref<?xf32>, %arg1: memref<?xf32>, %arg2: memref<?xf32>, %argr: memref<?xf32>) attributes {llvm.linkage = #llvm.linkage<external>} {
       affine.for %arg3 = 0 to 20 {
