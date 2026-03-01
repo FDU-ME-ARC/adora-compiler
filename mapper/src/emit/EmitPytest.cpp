@@ -982,7 +982,7 @@ public:
       value = "0";
     }
     else{
-      std::string value = _pytestemitter->lookupName(op.getValue());
+      value = _pytestemitter->lookupName(op.getValue());
       // assert("Unsupported!\n");
       if(value == "")
         value = ConstOpToValueStr[op.getValue()];
