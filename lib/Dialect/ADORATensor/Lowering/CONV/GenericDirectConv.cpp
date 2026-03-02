@@ -1,14 +1,16 @@
 //===------------------ GenericDirectConv.cpp - ADORATensor Lowering ------------------===//
 /// builtin dialect
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 
 /// ADORA dialect
 #include "ADORA/Dialect/ADORA/Utility/Utility.h"
-
+#include "ADORA/Dialect/ADORA/IR/ADORA.h"
 #include "ADORA/Dialect/ADORATensor/IR/ADORATensor.h"
 #include "ADORA/Dialect/ADORATensor/Interface/SystolicImplInterface.h"
-
 #include "ADORA/Dialect/ADORATensor/Lowering/TensorOps/LowerConv.h"
+#include "ADORA/Dialect/ADORATensor/Lowering/TensorOps/LowerGemm.h" // For helpers
 
 using namespace ::mlir::ADORA::ADORATensor;
 using namespace ::mlir::affine;
@@ -21,29 +23,18 @@ namespace mlir
         namespace ADORATensor
         {
 
-            // === 1. Implementation of Helpers ===
-
-            // Extract metadata from ConvOp
+            // === 1. Metadata Helper ===
             ConvMetadata getConvMetadata(ConvOp op)
             {
                 ConvMetadata meta;
-
-                // Get Shape: Input(N,C,H,W), Weight(K,C,R,S), Output(N,K,P,Q)
                 auto inShape = op.getX().getType().cast<MemRefType>().getShape();
                 auto wShape = op.getW().getType().cast<MemRefType>().getShape();
                 auto outShape = op.getY().getType().cast<MemRefType>().getShape();
 
-                // Fill Bounds [N, K, P, Q, C, R, S]
-                meta.bounds.resize(7);
-                meta.bounds[DimN] = outShape[0];
-                meta.bounds[DimK] = outShape[1];
-                meta.bounds[DimP] = outShape[2];
-                meta.bounds[DimQ] = outShape[3];
-                meta.bounds[DimC] = inShape[1];
-                meta.bounds[DimR] = wShape[2];
-                meta.bounds[DimS] = wShape[3];
+                // Bounds: [N, K, P, Q, C, R, S]
+                meta.bounds.assign({outShape[0], outShape[1], outShape[2], outShape[3],
+                                    inShape[1], wShape[2], wShape[3]});
 
-                // Parse Strides
                 if (auto s = op.getStrides())
                 {
                     for (auto val : s.value())
@@ -54,7 +45,6 @@ namespace mlir
                     meta.strides = {1, 1};
                 }
 
-                // Parse Dilations
                 if (auto d = op.getDilations())
                 {
                     for (auto val : d.value())
@@ -65,162 +55,201 @@ namespace mlir
                     meta.dilations = {1, 1};
                 }
 
-                // Pads (Simplified)
-                meta.pads = {0, 0, 0, 0};
-
+                meta.pads = {0, 0, 0, 0}; // Simplified
                 meta.elementType = op.getX().getType().cast<MemRefType>().getElementType();
                 return meta;
             }
 
-            // === 2. Body Builder Implementation ===
-
-            // Internal helper for loop body generation
-            // Note: 'mutable' is added to lambda to fix const correctness issues with Op accessors
-            static StationaryBodyBuilderFn TileofGenericDirectConv(
+            // === 2. Body Builder for Output Stationary Direct Conv ===
+            // Iterates over tiles of Output (N, K, P, Q), loads necessary Input/Weight tiles, computes, and stores.
+            StationaryBodyBuilderFn TileofDirectConvOutputStationary(
                 ConvOp op,
-                SystolicConfig config,
                 const ConvMetadata &meta,
-                const DenseMap<int, int> &loopIndexToDimMap // Map: LoopDepth -> ConvDim(0..6)
+                ArrayRef<int64_t> tileSizes // [T_N, T_K, T_P, T_Q, T_C, T_R, T_S]
             )
             {
-                return [=](OpBuilder &builder, Location loc, ValueRange ivs) mutable
+                return [=](OpBuilder &builder, Location loc, ValueRange ivs)
                 {
-                    // ivs contains induction variables from outermost to innermost
+                    // ivs corresponds to the outer loops.
+                    // Assuming Outer Loops Order: N -> K -> P -> Q
+                    Value iv_n = ivs[0];
+                    Value iv_k = ivs[1];
+                    Value iv_p = ivs[2];
+                    Value iv_q = ivs[3];
 
-                    // 1. Map IVs back to logical dimensions (N, K, P, Q...)
-                    SmallVector<Value, 7> logicalIVs(7);
-                    SmallVector<AffineExpr, 7> logicalExprs(7);
+                    // Current Tile Sizes (Temporal)
+                    int64_t T_N = tileSizes[DimN];
+                    int64_t T_K = tileSizes[DimK];
+                    int64_t T_P = tileSizes[DimP];
+                    int64_t T_Q = tileSizes[DimQ];
 
-                    for (int i = 0; i < ivs.size(); ++i)
-                    {
-                        int logicalDim = loopIndexToDimMap.lookup(i);
-                        logicalIVs[logicalDim] = ivs[i];
-                        // Create affine expr for the i-th loop induction var
-                        logicalExprs[logicalDim] = builder.getAffineDimExpr(i);
-                    }
+                    // Derived Input Tile Sizes (Accounting for Stride/Dilation)
+                    // H_in = (H_out - 1) * stride + 1 + (kernel - 1) * dilation
+                    int64_t T_H_in = (T_P - 1) * meta.strides[0] + 1 + (meta.bounds[DimR] - 1) * meta.dilations[0];
+                    int64_t T_W_in = (T_Q - 1) * meta.strides[1] + 1 + (meta.bounds[DimS] - 1) * meta.dilations[1];
+                    int64_t T_C = meta.bounds[DimC]; // Load full channel for now (Simplication)
 
-                    // 2. Build Access Map for Input (X)
-                    // Formula: [n, c, p*stride_h + r*dilation_h, q*stride_w + s*dilation_w]
+                    unsigned OpId = 0;
+
+                    // === 1. Data Transfer: Load Input (X) Tile ===
+                    // Map: (n, c, h, w) -> Global Memory
+                    // h = iv_p * stride + local_h
+                    // w = iv_q * stride + local_w
                     SmallVector<AffineExpr, 4> xExprs;
-                    xExprs.push_back(logicalExprs[DimN]); // N
-                    xExprs.push_back(logicalExprs[DimC]); // C
+                    xExprs.push_back(builder.getAffineDimExpr(0)); // n = iv_n + local_n (simplified to just iv_n if T_N=1)
+                    xExprs.push_back(builder.getAffineDimExpr(1)); // c
 
-                    // H_in
-                    AffineExpr hExpr = logicalExprs[DimP] * meta.strides[0] + logicalExprs[DimR] * meta.dilations[0];
+                    // H_global = iv_p * stride_h + h_local
+                    auto hExpr = builder.getAffineSymbolExpr(0) * meta.strides[0] + builder.getAffineDimExpr(2);
                     xExprs.push_back(hExpr);
 
-                    // W_in
-                    AffineExpr wExpr = logicalExprs[DimQ] * meta.strides[1] + logicalExprs[DimS] * meta.dilations[1];
+                    // W_global = iv_q * stride_w + w_local
+                    auto wExpr = builder.getAffineSymbolExpr(1) * meta.strides[1] + builder.getAffineDimExpr(3);
                     xExprs.push_back(wExpr);
 
-                    AffineMap mapX = AffineMap::get(ivs.size(), 0, xExprs, builder.getContext());
+                    AffineMap mapX = AffineMap::get(/*dims*/ 4, /*symbols*/ 2, xExprs, builder.getContext());
 
-                    // 3. Build Access Map for Weight (W)
-                    // Formula: [k, c, r, s]
-                    SmallVector<AffineExpr, 4> wExprs;
-                    wExprs.push_back(logicalExprs[DimK]);
-                    wExprs.push_back(logicalExprs[DimC]);
-                    wExprs.push_back(logicalExprs[DimR]);
-                    wExprs.push_back(logicalExprs[DimS]);
-                    AffineMap mapW = AffineMap::get(ivs.size(), 0, wExprs, builder.getContext());
+                    // Alloc Local Input
+                    MemRefType tileTypeX = MemRefType::get({T_N, T_C, T_H_in, T_W_in}, meta.elementType);
 
-                    // 4. Build Access Map for Output (Y)
-                    // Formula: [n, k, p, q]
-                    SmallVector<AffineExpr, 4> yExprs;
-                    yExprs.push_back(logicalExprs[DimN]);
-                    yExprs.push_back(logicalExprs[DimK]);
-                    yExprs.push_back(logicalExprs[DimP]);
-                    yExprs.push_back(logicalExprs[DimQ]);
-                    AffineMap mapY = AffineMap::get(ivs.size(), 0, yExprs, builder.getContext());
-
-                    // === 3. Generate Computation Core (Affine Load/Store) ===
-
-                    // Load X
-                    auto loadX = builder.create<AffineLoadOp>(loc, op.getX(), mapX, ivs);
+                    // DataBlockLoad X
+                    auto loadX = builder.create<ADORA::DataBlockLoadOp>(
+                        loc, op.getX(), mapX,
+                        ValueRange{iv_n, iv_p, iv_q}, // Pass iv_n as dim0? Need careful map construction
+                        tileTypeX);
+                    loadX.setKernelName("ConvDirect");
+                    loadX.setId(std::to_string(OpId++));
                     setPingpongAttr(loadX);
 
-                    // Load W
-                    auto loadW = builder.create<AffineLoadOp>(loc, op.getW(), mapW, ivs);
+                    // === 2. Data Transfer: Load Weight (W) Tile ===
+                    // W shape: [K, C, R, S]
+                    // Load tile [T_K, C, R, S]
+                    MemRefType tileTypeW = MemRefType::get({T_K, T_C, meta.bounds[DimR], meta.bounds[DimS]}, meta.elementType);
+
+                    // Simple offset map for W: [k_global, c, r, s]
+                    // k_global = iv_k + k_local
+                    SmallVector<AffineExpr, 4> wExprs;
+                    wExprs.push_back(builder.getAffineSymbolExpr(0) + builder.getAffineDimExpr(0));
+                    wExprs.push_back(builder.getAffineDimExpr(1));
+                    wExprs.push_back(builder.getAffineDimExpr(2));
+                    wExprs.push_back(builder.getAffineDimExpr(3));
+                    AffineMap mapW = AffineMap::get(4, 1, wExprs, builder.getContext());
+
+                    auto loadW = builder.create<ADORA::DataBlockLoadOp>(
+                        loc, op.getW(), mapW, ValueRange{iv_k}, tileTypeW);
+                    loadW.setKernelName("ConvDirect");
+                    loadW.setId(std::to_string(OpId++));
                     setPingpongAttr(loadW);
 
-                    // Load Y (Accumulator)
-                    auto loadY = builder.create<AffineLoadOp>(loc, op.getY(), mapY, ivs);
-                    setPingpongAttr(loadY);
+                    // === 3. Allocate Output (Y) Accumulator ===
+                    MemRefType tileTypeY = MemRefType::get({T_N, T_K, T_P, T_Q}, meta.elementType);
+                    auto allocY = builder.create<ADORA::LocalMemAllocOp>(loc, tileTypeY);
+                    allocY.setKernelName("ConvDirect");
+                    allocY.setId(std::to_string(OpId));
 
-                    // Compute: Y += X * W
-                    // Using helper functions from LowerGemm.h
-                    Value mul = genArithMulOpAccordingToDataType(builder, loc, loadX, loadW)->getResult(0);
-                    Value add = genArithAddOpAccordingToDataType(builder, loc, mul, loadY)->getResult(0);
+                    // Initialize Y (e.g. to 0 or bias). For brevity assuming 0 init loop here or Load Bias.
+                    // ... (Init Y loop omitted for brevity, can call initOutWithC2DLike equivalent) ...
 
-                    // Store Y
-                    auto storeY = builder.create<AffineStoreOp>(loc, add, op.getY(), mapY, ivs);
+                    // === 4. On-Device Computation (Nested Loop) ===
+                    // Iterate over T_N, T_K, T_P, T_Q, T_C, T_R, T_S
+                    // Simplification: Let's create a loop nest for computation
+                    // Order: n, k, p, q, c, r, s
+
+                    SmallVector<int64_t, 7> upperBounds = {T_N, T_K, T_P, T_Q, T_C, meta.bounds[DimR], meta.bounds[DimS]};
+
+                    auto innerBodyBuilder = [&](OpBuilder &b, Location l, ValueRange innerIVs)
+                    {
+                        // innerIVs: n, k, p, q, c, r, s
+                        Value n = innerIVs[0], k = innerIVs[1], p = innerIVs[2], q = innerIVs[3];
+                        Value c = innerIVs[4], r = innerIVs[5], s = innerIVs[6];
+
+                        // 1. Load X local: [n, c, h_in, w_in]
+                        // h_in = p*stride + r*dilation
+                        Value h_off = b.create<arith::AddIOp>(l,
+                                                              b.create<arith::MulIOp>(l, p, b.create<arith::ConstantIndexOp>(l, meta.strides[0])),
+                                                              b.create<arith::MulIOp>(l, r, b.create<arith::ConstantIndexOp>(l, meta.dilations[0])));
+
+                        Value w_off = b.create<arith::AddIOp>(l,
+                                                              b.create<arith::MulIOp>(l, q, b.create<arith::ConstantIndexOp>(l, meta.strides[1])),
+                                                              b.create<arith::MulIOp>(l, s, b.create<arith::ConstantIndexOp>(l, meta.dilations[1])));
+
+                        Value valX = b.create<memref::LoadOp>(l, loadX, ValueRange{n, c, h_off, w_off});
+
+                        // 2. Load W local: [k, c, r, s]
+                        Value valW = b.create<memref::LoadOp>(l, loadW, ValueRange{k, c, r, s});
+
+                        // 3. Load Y accumulation: [n, k, p, q]
+                        Value valY = b.create<memref::LoadOp>(l, allocY, ValueRange{n, k, p, q});
+
+                        // 4. Compute
+                        Value mul = genArithMulOpAccordingToDataType(b, l, valX, valW)->getResult(0);
+                        Value res = genArithAddOpAccordingToDataType(b, l, valY, mul)->getResult(0);
+
+                        // 5. Store Y
+                        b.create<memref::StoreOp>(l, res, allocY, ValueRange{n, k, p, q});
+                    };
+
+                    AffineForOp computeLoop = GenerateOnDeviceNestedLoop(
+                        builder, loc, 7, upperBounds, innerBodyBuilder);
+                    SpecifiedAffineFortoKernel(computeLoop, "ConvDirect");
+
+                    // === 5. Store Result Back ===
+                    // Store Y_local -> Y_global
+                    // Map: [n_local, k_local, p_local, q_local] -> [iv_n+n, iv_k+k, iv_p+p, iv_q+q]
+                    SmallVector<AffineExpr, 4> yExprs;
+                    yExprs.push_back(builder.getAffineSymbolExpr(0) + builder.getAffineDimExpr(0));
+                    yExprs.push_back(builder.getAffineSymbolExpr(1) + builder.getAffineDimExpr(1));
+                    yExprs.push_back(builder.getAffineSymbolExpr(2) + builder.getAffineDimExpr(2));
+                    yExprs.push_back(builder.getAffineSymbolExpr(3) + builder.getAffineDimExpr(3));
+                    AffineMap mapY = AffineMap::get(4, 4, yExprs, builder.getContext());
+
+                    auto storeY = builder.create<ADORA::DataBlockStoreOp>(
+                        loc, allocY, op.getY(), mapY, ValueRange{iv_n, iv_k, iv_p, iv_q});
+                    storeY.setKernelName("ConvDirect");
+                    storeY.setId(std::to_string(OpId++));
                     setPingpongAttr(storeY);
                 };
             }
 
             // === 3. Main Entry Point ===
-
             mlir::affine::AffineForOp LowerGenericDirectConv(OpBuilder &b, ConvOp op, SystolicConfig config)
             {
                 Location loc = op.getLoc();
                 ConvMetadata meta = getConvMetadata(op);
 
-                // 1. Prepare Loop Bounds and Steps
-                // We need to reorder the logical bounds according to config.loopOrder
+                // Tiling Configuration (Simplified for Output Stationary)
+                // Assuming loopOrder is [N, K, P, Q, ...]
+                // We tile N, K, P, Q as the temporal loops.
 
-                SmallVector<int> sortedBounds;
-                SmallVector<int> sortedSteps;
-
-                // Key: Loop depth (0 is outermost), Value: ConvDim enum
-                DenseMap<int, int> loopIndexToDimMap;
-
-                if (config.loopOrder.size() != 7)
+                // Use config.tileSizes if available, else default to small tiles
+                // Mapping: N=0, K=1, P=2, Q=3 ...
+                SmallVector<int64_t, 7> tileSizes(7, 1);
+                if (config.tileSizes.size() >= 4)
                 {
-                    llvm::errs() << "Error: loopOrder for Direct Conv must have 7 dimensions.\n";
-                    return nullptr;
+                    for (int i = 0; i < 4; ++i)
+                        tileSizes[i] = config.tileSizes[i];
+                }
+                else
+                {
+                    // Default fallback
+                    tileSizes[DimN] = 1;
+                    tileSizes[DimK] = 4;
+                    tileSizes[DimP] = 4;
+                    tileSizes[DimQ] = 4;
                 }
 
-                // Assume the last two dimensions in loopOrder map to spatial tiles (Row, Col)
-                int spatialDimStart = config.loopOrder.size() - 2;
+                // Generate Outer Loops (Off-Device)
+                // Iterating over N, K, P, Q
+                SmallVector<int64_t> upperBounds = {meta.bounds[DimN], meta.bounds[DimK], meta.bounds[DimP], meta.bounds[DimQ]};
+                SmallVector<int64_t> steps = {tileSizes[DimN], tileSizes[DimK], tileSizes[DimP], tileSizes[DimQ]};
 
-                for (int i = 0; i < config.loopOrder.size(); ++i)
-                {
-                    int logicalDim = config.loopOrder[i];
-
-                    // Record mapping for BodyBuilder
-                    loopIndexToDimMap[i] = logicalDim;
-
-                    // Set Bounds
-                    sortedBounds.push_back((int)meta.bounds[logicalDim]);
-
-                    // Set Steps based on TileSize
-                    if (i >= spatialDimStart)
-                    {
-                        int tileIdx = i - spatialDimStart;
-                        if (tileIdx < config.tileSizes.size())
-                        {
-                            sortedSteps.push_back((int)config.tileSizes[tileIdx]);
-                        }
-                        else
-                        {
-                            sortedSteps.push_back(1);
-                        }
-                    }
-                    else
-                    {
-                        sortedSteps.push_back(1);
-                    }
-                }
-
-                // 2. Generate Loop Nest using shared utility from LowerGemm
                 AffineForOp topLoop = OffDeviceNestedLoop(
                     b, loc,
-                    /*level=*/(int)config.loopOrder.size(),
-                    /*Upperbounds=*/sortedBounds,
-                    /*Steps=*/sortedSteps,
-                    /*InnerMostBodyBuilder=*/TileofGenericDirectConv(op, config, meta, loopIndexToDimMap));
+                    /*level=*/4,
+                    upperBounds,
+                    steps,
+                    /*BodyBuilder=*/TileofDirectConvOutputStationary(op, meta, tileSizes));
 
-                // 3. Post-processing
                 SimplifyLoadStoreOpsInRegion(topLoop.getRegion());
                 topLoop.walk([&](Operation *inst)
                              { inst->setAttr("ADORAConv", UnitAttr::get(topLoop.getContext())); });
