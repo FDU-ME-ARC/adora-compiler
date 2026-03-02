@@ -22,6 +22,7 @@ config.environment["PATH"] = os.pathsep.join(paths + [config.environment.get("PA
 # ---- Substitutions used by RUN lines ----
 if adora_tools_dir:
   config.substitutions.append(("%cgra-opt", os.path.join(adora_tools_dir, "cgra-opt")))
+  config.substitutions.append(("%cgra-mapper", os.path.join(adora_tools_dir, "cgra-mapper")))
 
 if llvm_tools_dir:
   config.substitutions.append(("%FileCheck", os.path.join(llvm_tools_dir, "FileCheck")))

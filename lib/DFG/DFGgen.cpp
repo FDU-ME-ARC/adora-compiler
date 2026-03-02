@@ -2175,6 +2175,7 @@ static void HandleSelfCycle(LLVMCDFG* CDFG, bool verbose = true){
     }
   }
   
+
   /// Thirdly, delete yield-for nodes
   // unsigned k = 55;
   for(auto ynode : YieldsToBeDelete){
@@ -2548,6 +2549,22 @@ static void FuseOperators(LLVMCDFG* CDFG, bool verbose){
  
   if(CDFG->getFusableOperatorTypes().count("FMAC32") != 0){
     fuseMulAccToMAC(CDFG, /*mul_name*/"FMUL32", /*acc_name*/"FACC32", /*mac_name*/"FMAC32");
+  }
+}
+
+/// After HandleSelfCycle, fix operand indices for SEL nodes. When adding edges we use
+/// MLIR operand order (0=cond, 1=true_value, 2=false_value). CDFG SEL expects
+/// 0=value_if_false, 1=value_if_true, 2=cond. Remap each input's idx to 2 - old_idx.
+static void fixSELOperandIndices(LLVMCDFG *CDFG, bool verbose) {
+  for (auto nodepair : CDFG->nodes()) {
+    LLVMCDFGNode *node = nodepair.second;
+    if (node->getTypeName() != "SEL")
+      continue;
+    for (LLVMCDFGNode *inputNode : node->inputNodes()) {
+      int oldIdx = node->getInputIdx(inputNode);
+      int newIdx = 2 - oldIdx;
+      node->setInputIdx(inputNode, newIdx);
+    }
   }
 }
 
@@ -2926,9 +2943,7 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
       mlir::Value _v = op->getOperand(operand_idx);
 
       int edgeidx;
-      if (SuccNode->getTypeName() == "SEL")
-        edgeidx = 2 - operand_idx;
-      else if (SuccNode->getTypeName() == "load")
+      if (SuccNode->getTypeName() == "load")
         // memref.load: MLIR operand 0 = memref, 1+ = address indices; CDFG address = first operand (0)
         edgeidx = (operand_idx >= 1) ? (int)(operand_idx - 1) : (int)operand_idx;
       else
@@ -3098,7 +3113,9 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
   /// Extract Accumulation
   ////////////////////////
   HandleSelfCycle(CDFG, verbose);
+  fixSELOperandIndices(CDFG, verbose);
   if(verbose) { CDFG->CDFGtoDOT(CDFG->name_str()+"_2_CDFG.dot");}
+  
   ////////////////////////
   /// End of extracting acc op
   ////////////////////////

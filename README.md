@@ -47,7 +47,7 @@ ADORA includes two compilers designed for the FDRA CGRA SoC:
 
 - **`mapper`** : C++ source files for `cgra-mapper`
 
-- **`build_tools`** : Bash scripts for building LLVM and Adora
+- **`build_tools`** : Bash scripts for building LLVM and Adora. See [build_tools/C_Compiler_instruction.md](build_tools/C_Compiler_instruction.md) for how to run the C compiler (adoracc + cgra-mapper) end-to-end.
 
 - **`experiment`** : Includes ML benchmarks and C benchmarks (e.g., Polybench). Follow the instructions below to run them. More benchmarks will be added soon.
 
@@ -113,6 +113,9 @@ You can find the Polygeist repository here:
 ---
 
 # Run an Example
+
+You can run the full C compilation flow (C → adoracc → cgra-mapper) by following **[build_tools/C_Compiler_instruction.md](build_tools/C_Compiler_instruction.md)**.
+
 The `experiment` directory contains pre-transformed MLIR files ready to use.
 
 ### Step 1: Set Up Environment Variables
