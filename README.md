@@ -7,7 +7,7 @@
 ## ADORA: Adaptive Dataflow Optimization for Reconfigurable Architectures.
 
 An MLIR project for CGRA SoC ([FDRA Repository](https://github.com/MIONkb/FDRA)).
-ADORA includes two compilers designed for the FDRA CGRA SoC:
+ADORA includes three compilers designed for the CGRA SoC:
 
 - **`tensor-opt`**
 
