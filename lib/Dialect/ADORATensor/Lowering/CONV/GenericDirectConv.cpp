@@ -68,7 +68,7 @@ namespace mlir
                 ArrayRef<int64_t> tileSizes // [T_N, T_K, T_P, T_Q, T_C, T_R, T_S]
             )
             {
-                return [=](OpBuilder &builder, Location loc, ValueRange ivs)
+                return [=](OpBuilder &builder, Location loc, ValueRange ivs) mutable
                 {
                     // ivs corresponds to the outer loops.
                     // Assuming Outer Loops Order: N -> K -> P -> Q
@@ -155,7 +155,9 @@ namespace mlir
                     // Simplification: Let's create a loop nest for computation
                     // Order: n, k, p, q, c, r, s
 
-                    SmallVector<int64_t, 7> upperBounds = {T_N, T_K, T_P, T_Q, T_C, meta.bounds[DimR], meta.bounds[DimS]};
+                    SmallVector<int, 12> upperBounds;
+                    for (auto b : {T_N, T_K, T_P, T_Q, T_C, meta.bounds[DimR], meta.bounds[DimS]})
+                        upperBounds.push_back(static_cast<int>(b));
 
                     auto innerBodyBuilder = [&](OpBuilder &b, Location l, ValueRange innerIVs)
                     {
@@ -240,8 +242,17 @@ namespace mlir
 
                 // Generate Outer Loops (Off-Device)
                 // Iterating over N, K, P, Q
-                SmallVector<int64_t> upperBounds = {meta.bounds[DimN], meta.bounds[DimK], meta.bounds[DimP], meta.bounds[DimQ]};
-                SmallVector<int64_t> steps = {tileSizes[DimN], tileSizes[DimK], tileSizes[DimP], tileSizes[DimQ]};
+                SmallVector<int, 12> upperBounds;
+                for (int64_t b : {meta.bounds[DimN], meta.bounds[DimK], meta.bounds[DimP], meta.bounds[DimQ]})
+                {
+                    upperBounds.push_back(static_cast<int>(b));
+                }
+
+                SmallVector<int, 12> steps;
+                for (int64_t t : {tileSizes[DimN], tileSizes[DimK], tileSizes[DimP], tileSizes[DimQ]})
+                {
+                    steps.push_back(static_cast<int>(t));
+                }
 
                 AffineForOp topLoop = OffDeviceNestedLoop(
                     b, loc,

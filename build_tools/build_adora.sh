@@ -1,25 +1,26 @@
 #!/bin/bash
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BUILD_DIR="${PROJECT_ROOT}/build"
+
 ### set LLVM_BUILD_DIR to your own llvm path
 LLVM_BUILD_DIR="/home/share/onnx-mlir/third_party/llvm-project-onnx/build/"
-LLVM_INSTALL_DIR="/home/share/onnx-mlir/third_party/llvm-project-onnx/build/"
+LLVM_INSTALL_DIR="${LLVM_BUILD_DIR}"
 
-mkdir build && cd build
-# ......................................................................
-cmake -GNinja \
-  ..\
-  "-B." \
-  -DCMAKE_INSTALL_PREFIX=. \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DMLIR_DIR=$LLVM_INSTALL_DIR/lib/cmake/mlir \
-  -DLLVM_BUILD_DIR=$LLVM_BUILD_DIR \
-  -DLLVM_INSTALL_DIR=$LLVM_INSTALL_DIR \
-  -DMLIR_ENABLE_BINDINGS_PYTHON=ON 
+if [ ! -d "$BUILD_DIR" ]; then
+    mkdir -p "$BUILD_DIR" && cd "$BUILD_DIR"
+    cmake -GNinja \
+      "$PROJECT_ROOT" \
+      -DCMAKE_INSTALL_PREFIX=. \
+      -DCMAKE_BUILD_TYPE=Debug \
+      -DMLIR_DIR="$LLVM_INSTALL_DIR/lib/cmake/mlir" \
+      -DLLVM_BUILD_DIR="$LLVM_BUILD_DIR" \
+      -DLLVM_INSTALL_DIR="$LLVM_INSTALL_DIR" \
+      -DMLIR_ENABLE_BINDINGS_PYTHON=ON \
+      -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+else
+    cd "$BUILD_DIR"
+fi
 
-  # -DTHIRDPARTY_ONNX_PRJ_DIR=$THIRDPARTY_ONNX_PRJ_DIR
-
-
-  # -DADORA_ENABLE_ONNX_TENSOR_OPT=ON
-  # -DLLVM_EXTERNAL_LIT=$LLVM_BUILD_DIR/bin/llvm-lit \
-  
-ninja -j 32 install check-adora
+ninja -j $(nproc) install check-adora
 # or ninja -j 32 install
