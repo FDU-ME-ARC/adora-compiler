@@ -1461,8 +1461,13 @@ async def aux_stream_pingpong(
     # 1. Apply stream configuration
     # ------------------------------     
     await stream.config(config_id=config_id)
-        # ------------------------------
+    
+    # ------------------------------
     # 2. Host -> Device transfer
+    #   depend_type:
+    #   2 -> depends on the second previous task (no need to wait for store-back)
+    #   1 -> depends on the immediately previous task (no need to wait for store-back)
+    #   0 -> strictly sequential execution
     # ------------------------------
     for i in range(len(iptrs)):
         if(pingpong == 0):
@@ -1475,6 +1480,7 @@ async def aux_stream_pingpong(
     # ------------------------------
     await stream.execution_start()
     await stream.execution_finish()
+
     # ------------------------------
     # 4. Device → Host transfer
     # ------------------------------
@@ -1485,7 +1491,6 @@ async def aux_stream_pingpong(
             await stream.memcpyDeviceToHost(DeviceData_Pong(optrs[i]), h_data=odata[i], size=olen[i])
     
     # await stream.synchronize()
-
     # await stream.release()
     return
 
