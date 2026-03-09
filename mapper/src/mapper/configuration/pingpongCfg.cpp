@@ -69,7 +69,11 @@ std::map<int, CfgData> Configuration::getIobPingpongCfgData(IOBNode* node, bool 
         if(i < dfgNestedLevels){
             printf("stride:%d\n", stride);
             stride = pattern[i].first;
-            assert(stride % dataBytes == 0);
+            if(stride % dataBytes != 0){
+                std::cout << "Error in data bytes:" << dataBytes << "\n";
+                assert(stride % dataBytes == 0);
+            }
+
             stride = stride / dataBytes;
             cycles = pattern[i].second;
         }
