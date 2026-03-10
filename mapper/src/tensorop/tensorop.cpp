@@ -25,7 +25,7 @@ void MapAdoraTensorOp(MLIRContext* context, mlir::ModuleOp moduleop,
   engine.setEmitter(PyEmitter);
   engine.setMappingArgs(adg, OpNameFile_str, timeout_ms, max_iters, objOpt);
   engine.setVerbose(verbose);
-  moduleop.dump();
+  if(verbose) moduleop.dump();
   moduleop.walk([&](mlir::Operation* op) {
     if(engine.dispatchVisitor(op)){
       if(verbose) {moduleop.dump();}
