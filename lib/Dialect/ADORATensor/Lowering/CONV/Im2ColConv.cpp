@@ -166,7 +166,7 @@ namespace mlir
                                             });
 
                 // ======================================================================
-                // 4. Prepare C matrix for GEMM
+                // 4. Prepare C matrix for GEMM (And Initialize Bias)
                 // ======================================================================
                 auto gemmOutputType = MemRefType::get({M_gemm, N_gemm}, elemType);
                 Value gemmC = b.create<memref::AllocOp>(loc, gemmOutputType);
@@ -243,13 +243,41 @@ namespace mlir
                                                                SystolicConfig config)
             {
                 OpBuilder::InsertionGuard guard(b);
-                b.setInsertionPointAfter(C.getDefiningOp());
+                
+                // 【修复 1】：删除错误的 setInsertionPointAfter(C.getDefiningOp());
+                // 现在生成器会乖乖地跟在 Bias 初始化的循环后面，保证先后顺序正确。
+
+                // 【修复 2】：截断防御机制 (Clamping)，防止 Tile Size 越过实际张量大小
+                auto shapeA = mlir::cast<MemRefType>(A.getType()).getShape();
+                auto shapeB = mlir::cast<MemRefType>(B.getType()).getShape();
+                int64_t actual_M = shapeA[0];
+                int64_t actual_K = shapeA[1];
+                int64_t actual_N = shapeB[1];
+
+                SmallVector<int64_t> clampedTileSizes;
+                for (int64_t ts : config.tileSizes) {
+                    clampedTileSizes.push_back(ts);
+                }
+
+                // 智能适配：拦截 GEMM 切块配置，通过 std::min 强行将 Tile 截断到实际上限
+                if (clampedTileSizes.size() == 3) {
+                    // 对于 [Tile_M, Tile_N, Tile_K] 格式
+                    clampedTileSizes[0] = std::max<int64_t>(1, std::min(clampedTileSizes[0], actual_M));
+                    clampedTileSizes[1] = std::max<int64_t>(1, std::min(clampedTileSizes[1], actual_N));
+                    clampedTileSizes[2] = std::max<int64_t>(1, std::min(clampedTileSizes[2], actual_K));
+                } else if (clampedTileSizes.size() == 4) {
+                    // 对于 [Temporal_M, Temporal_N, Spatial_M, Spatial_N] 格式，直接约束 Spatial 层
+                    clampedTileSizes[2] = std::max<int64_t>(1, std::min(clampedTileSizes[2], actual_M));
+                    clampedTileSizes[3] = std::max<int64_t>(1, std::min(clampedTileSizes[3], actual_N));
+                }
 
                 auto tempGemmOp = b.create<ADORATensor::GemmOp>(loc, C.getType(), A, B, C);
 
                 tempGemmOp->setAttr("Algorithm", b.getStringAttr("GEMM_Standard"));
                 tempGemmOp->setAttr("StationaryKind", b.getStringAttr(getDataflowStrategyStrRef(config.dataflow)));
-                tempGemmOp->setAttr("TileSize", b.getI64ArrayAttr(config.tileSizes));
+                
+                // 将修复后、防越界的 clampedTileSizes 传入 Gemm 算子
+                tempGemmOp->setAttr("TileSize", b.getI64ArrayAttr(clampedTileSizes));
                 tempGemmOp->setAttr("LoopOrder", b.getI64ArrayAttr(config.loopOrder));
 
                 auto dummyCast = b.create<memref::CastOp>(loc, tempGemmOp.getO().getType(), tempGemmOp.getO());
@@ -258,30 +286,31 @@ namespace mlir
                 switch (config.dataflow)
                 {
                 case DataflowStrategy::WeightStationary:
-                    newfor = TiledWeightStationaryGemm(b, tempGemmOp, config.tileSizes);
+                    newfor = TiledWeightStationaryGemm(b, tempGemmOp, clampedTileSizes);
                     break;
                 case DataflowStrategy::InputStationary:
-                    newfor = TiledInputStationaryGemm(b, tempGemmOp, config.tileSizes);
+                    newfor = TiledInputStationaryGemm(b, tempGemmOp, clampedTileSizes);
                     break;
                 case DataflowStrategy::OutputStationary:
-                    newfor = TiledOutputStationaryGemm(b, tempGemmOp, config.tileSizes);
+                    newfor = TiledOutputStationaryGemm(b, tempGemmOp, clampedTileSizes);
                     break;
                 default:
                     tempGemmOp.emitError("Unsupported dataflow strategy for im2col->gemm lowering");
                     return {AffineForOp(), nullptr};
                 }
 
-                Value gemmOutBuffer = dummyCast.getSource();
+                // Value gemmOutBuffer = dummyCast.getSource();
 
-                if (gemmOutBuffer == tempGemmOp.getO())
-                {
-                    gemmOutBuffer = C;
-                }
+                // if (gemmOutBuffer == tempGemmOp.getO())
+                // {
+                //     gemmOutBuffer = C;
+                // }
 
                 dummyCast.erase();
                 tempGemmOp.erase();
 
-                return {newfor, gemmOutBuffer};
+                // return {newfor, gemmOutBuffer};
+                return {newfor, C};
             }
 
             mlir::affine::AffineForOp LowerVirtualIm2ColConv(OpBuilder &b, ConvOp op, SystolicConfig config)

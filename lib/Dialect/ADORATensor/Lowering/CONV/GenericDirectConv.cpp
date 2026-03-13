@@ -122,6 +122,7 @@ namespace mlir
 
                     AffineMap mapX = AffineMap::get(3, 0, xExprs, builder.getContext());
 
+                    // SRAM 分配大小现在会被截断，极其节省空间
                     MemRefType tileTypeX = MemRefType::get({T_N, T_C, T_H_in, T_W_in}, meta.elementType);
                     auto loadX = builder.create<ADORA::DataBlockLoadOp>(
                         loc, op.getX(), mapX, ValueRange{iv_n, iv_p, iv_q}, tileTypeX);
@@ -299,6 +300,7 @@ namespace mlir
                     safeLoopOrder = {DimN, DimK, DimP, DimQ};
                 }
 
+                // 【关键修复】：加入了针对 TileSize 的截断钳位 (Clamping) 机制
                 SmallVector<int64_t, 7> tileSizes(7, 1);
                 if (!config.tileSizes.empty())
                 {
@@ -307,14 +309,16 @@ namespace mlir
                         for (size_t i = 0; i < 4; ++i)
                         {
                             int dim = safeLoopOrder[i];
-                            tileSizes[dim] = config.tileSizes[i];
+                            // 强行约束：Tile大小绝不能超过张量在此维度的实际物理大小
+                            tileSizes[dim] = std::max<int64_t>(1, std::min<int64_t>(config.tileSizes[i], meta.bounds[dim]));
                         }
                     }
                     else if (config.tileSizes.size() == 7)
                     {
                         for (size_t i = 0; i < 7; ++i)
                         {
-                            tileSizes[i] = config.tileSizes[i];
+                            // 强行约束：Tile大小绝不能超过张量在此维度的实际物理大小
+                            tileSizes[i] = std::max<int64_t>(1, std::min<int64_t>(config.tileSizes[i], meta.bounds[i]));
                         }
                     }
                     else
@@ -325,10 +329,11 @@ namespace mlir
                 }
                 else
                 {
-                    tileSizes[DimN] = 1;
-                    tileSizes[DimK] = 4;
-                    tileSizes[DimP] = 4;
-                    tileSizes[DimQ] = 4;
+                    // 默认缺省值也应用安全截断
+                    tileSizes[DimN] = std::min<int64_t>(1, meta.bounds[DimN]);
+                    tileSizes[DimK] = std::min<int64_t>(4, meta.bounds[DimK]);
+                    tileSizes[DimP] = std::min<int64_t>(4, meta.bounds[DimP]);
+                    tileSizes[DimQ] = std::min<int64_t>(4, meta.bounds[DimQ]);
                 }
 
                 SmallVector<int64_t> outerUpperBounds_i64;
