@@ -580,7 +580,7 @@ namespace mlir
           /*level*/ 3,
           /*upper bounds*/ {ShapeB[0], ShapeA[0], ShapeB[1]}, ////  K -> M -> N
           /*steps*/ {K_step, M_step, N_step},                 ////  K -> M -> N
-          /*InnerMostBodyBuilder*/ TileofInputStationary(op.getA(), op.getB(), op.getC(), M_temporal_tile, N_temporal_tile, tilerow, tilecol));
+          /*InnerMostBodyBuilder*/ TileofInputStationary(op.getA(), op.getB(), out, M_temporal_tile, N_temporal_tile, tilerow, tilecol));
 
       // op.getOperation()->getBlock()->push_back(loop);
       // loop.getOperation()->moveAfter(op);

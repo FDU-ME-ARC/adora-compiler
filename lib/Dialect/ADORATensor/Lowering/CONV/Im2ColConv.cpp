@@ -299,18 +299,18 @@ namespace mlir
                     return {AffineForOp(), nullptr};
                 }
 
-                // Value gemmOutBuffer = dummyCast.getSource();
+                Value gemmOutBuffer = dummyCast.getSource();
 
-                // if (gemmOutBuffer == tempGemmOp.getO())
-                // {
-                //     gemmOutBuffer = C;
-                // }
+                if (gemmOutBuffer == tempGemmOp.getO())
+                {
+                    gemmOutBuffer = C;
+                }
 
                 dummyCast.erase();
                 tempGemmOp.erase();
 
-                // return {newfor, gemmOutBuffer};
-                return {newfor, C};
+                return {newfor, gemmOutBuffer};
+                // return {newfor, C};
             }
 
             mlir::affine::AffineForOp LowerVirtualIm2ColConv(OpBuilder &b, ConvOp op, SystolicConfig config)

@@ -582,7 +582,7 @@ namespace mlir
           /*level*/ 3,
           /*upper bounds*/ {ShapeB[1], ShapeB[0], ShapeA[0]}, //// N -> K -> M
           /*steps*/ {N_step, K_step, M_step},                 ////  N -> K -> M
-          /*InnerMostBodyBuilder*/ TileofWeightStationary(op.getA(), op.getB(), op.getC(), K_temporal_tile, M_temporal_tile, tilerow, tilecol));
+          /*InnerMostBodyBuilder*/ TileofWeightStationary(op.getA(), op.getB(), out, K_temporal_tile, M_temporal_tile, tilerow, tilecol));
 
       // op.getOperation()->getBlock()->push_back(loop);
       // loop.getOperation()->moveAfter(op);
