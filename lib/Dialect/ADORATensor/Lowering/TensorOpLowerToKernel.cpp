@@ -78,7 +78,8 @@ namespace mlir
 
         case ComputeAlgorithm::Conv_Im2Col:
           // Im2Col usually involves Transform then GEMM
-          newfor = LowerIm2ColConv(opbuilder, op, config);
+          // newfor = LowerIm2ColConv(opbuilder, op, config);
+          newfor = LowerVirtualIm2ColConv(opbuilder, op, config);
           break;
 
         case ComputeAlgorithm::Conv_Winograd:
