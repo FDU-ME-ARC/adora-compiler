@@ -216,7 +216,7 @@ namespace mlir
                                                                SystolicConfig config)
             {
                 OpBuilder::InsertionGuard guard(b);
-                
+
                 auto shapeA = mlir::cast<MemRefType>(A.getType()).getShape();
                 auto shapeB = mlir::cast<MemRefType>(B.getType()).getShape();
                 int64_t actual_M = shapeA[0];
@@ -224,13 +224,18 @@ namespace mlir
                 int64_t actual_N = shapeB[1];
 
                 SmallVector<int64_t> clampedTileSizes;
-                for (int64_t ts : config.tileSizes) clampedTileSizes.push_back(ts);
+                for (int64_t ts : config.tileSizes)
+                    clampedTileSizes.push_back(ts);
 
-                if (clampedTileSizes.size() == 3) {
+                // Clamp tiles to actual shapes to avoid memory waste
+                if (clampedTileSizes.size() == 3)
+                {
                     clampedTileSizes[0] = std::max<int64_t>(1, std::min(clampedTileSizes[0], actual_M));
                     clampedTileSizes[1] = std::max<int64_t>(1, std::min(clampedTileSizes[1], actual_N));
                     clampedTileSizes[2] = std::max<int64_t>(1, std::min(clampedTileSizes[2], actual_K));
-                } else if (clampedTileSizes.size() == 4) {
+                }
+                else if (clampedTileSizes.size() == 4)
+                {
                     clampedTileSizes[2] = std::max<int64_t>(1, std::min(clampedTileSizes[2], actual_M));
                     clampedTileSizes[3] = std::max<int64_t>(1, std::min(clampedTileSizes[3], actual_N));
                 }
@@ -239,7 +244,6 @@ namespace mlir
 
                 tempGemmOp->setAttr("Algorithm", b.getStringAttr("GEMM_Standard"));
                 tempGemmOp->setAttr("StationaryKind", b.getStringAttr(getDataflowStrategyStrRef(config.dataflow)));
-                
                 tempGemmOp->setAttr("TileSize", b.getI64ArrayAttr(clampedTileSizes));
                 tempGemmOp->setAttr("LoopOrder", b.getI64ArrayAttr(config.loopOrder));
 
@@ -264,7 +268,8 @@ namespace mlir
 
                 Value gemmOutBuffer = dummyCast.getSource();
 
-                if (gemmOutBuffer == tempGemmOp.getO()) gemmOutBuffer = C;
+                if (gemmOutBuffer == tempGemmOp.getO())
+                    gemmOutBuffer = C;
 
                 dummyCast.erase();
                 tempGemmOp.erase();
@@ -273,7 +278,7 @@ namespace mlir
             }
 
             // ======================================================================
-            // Virtual Im2Col Implementation (100% Zero-Memory-Overhead AST Rewriter)
+            // Virtual Im2Col Implementation (Zero-Memory-Overhead AST Rewriter)
             // ======================================================================
             mlir::affine::AffineForOp LowerVirtualIm2ColConv(OpBuilder &b, ConvOp op, SystolicConfig config)
             {
@@ -284,7 +289,7 @@ namespace mlir
                 ConvMetadata meta = getConvMetadata(op);
                 auto elemType = meta.elementType;
 
-                // 1. Padding (same as the explicit version, only generates a small padded buffer)
+                // 1. Padding (Generates a small padded buffer safely)
                 Value actualInput = op.getX();
                 int64_t pad_h_top = meta.pads.size() > 0 ? meta.pads[0] : 0;
                 int64_t pad_w_left = meta.pads.size() > 1 ? meta.pads[1] : 0;
@@ -302,21 +307,23 @@ namespace mlir
                     auto paddedType = MemRefType::get({N, C, H_padded, W_padded}, elemType);
                     Value paddedInput = b.create<memref::AllocOp>(loc, paddedType);
                     Value zero = b.create<arith::ConstantOp>(loc, b.getZeroAttr(elemType));
-                    
-                    affine::buildAffineLoopNest(b, loc, SmallVector<int64_t>(4,0), {N, C, H_padded, W_padded}, SmallVector<int64_t>(4,1),
-                        [&](OpBuilder &builder, Location bodyLoc, ValueRange ivs) {
-                            builder.create<affine::AffineStoreOp>(bodyLoc, zero, paddedInput, ivs);
-                        });
 
-                    affine::buildAffineLoopNest(b, loc, SmallVector<int64_t>(4,0), {N, C, H_in, W_in}, SmallVector<int64_t>(4,1),
-                        [&](OpBuilder &builder, Location bodyLoc, ValueRange ivs) {
-                            Value val = builder.create<affine::AffineLoadOp>(bodyLoc, op.getX(), ivs);
-                            SmallVector<AffineExpr, 4> storeExprs = {
-                                builder.getAffineDimExpr(0), builder.getAffineDimExpr(1),
-                                builder.getAffineDimExpr(2) + pad_h_top, builder.getAffineDimExpr(3) + pad_w_left};
-                            builder.create<affine::AffineStoreOp>(bodyLoc, val, paddedInput, 
-                                AffineMap::get(4, 0, storeExprs, builder.getContext()), ivs);
-                        });
+                    affine::buildAffineLoopNest(b, loc, SmallVector<int64_t>(4, 0), {N, C, H_padded, W_padded}, SmallVector<int64_t>(4, 1),
+                                                [&](OpBuilder &builder, Location bodyLoc, ValueRange ivs)
+                                                {
+                                                    builder.create<affine::AffineStoreOp>(bodyLoc, zero, paddedInput, ivs);
+                                                });
+
+                    affine::buildAffineLoopNest(b, loc, SmallVector<int64_t>(4, 0), {N, C, H_in, W_in}, SmallVector<int64_t>(4, 1),
+                                                [&](OpBuilder &builder, Location bodyLoc, ValueRange ivs)
+                                                {
+                                                    Value val = builder.create<affine::AffineLoadOp>(bodyLoc, op.getX(), ivs);
+                                                    SmallVector<AffineExpr, 4> storeExprs = {
+                                                        builder.getAffineDimExpr(0), builder.getAffineDimExpr(1),
+                                                        builder.getAffineDimExpr(2) + pad_h_top, builder.getAffineDimExpr(3) + pad_w_left};
+                                                    builder.create<affine::AffineStoreOp>(bodyLoc, val, paddedInput,
+                                                                                          AffineMap::get(4, 0, storeExprs, builder.getContext()), ivs);
+                                                });
                     actualInput = paddedInput;
                 }
 
@@ -328,18 +335,23 @@ namespace mlir
                 SmallVector<int64_t> fillUbs = {meta.bounds[DimN], meta.bounds[DimK], meta.bounds[DimP], meta.bounds[DimQ]};
                 SmallVector<int64_t> fillSteps(4, 1);
 
-                if (op.getB() && !mlir::isa<NoneType>(op.getB().getType())) {
+                if (op.getB() && !mlir::isa<NoneType>(op.getB().getType()))
+                {
                     affine::buildAffineLoopNest(b, loc, fillLbs, fillUbs, fillSteps,
-                        [&](OpBuilder &builder, Location bodyLoc, ValueRange ivs) {
-                            Value b_val = builder.create<affine::AffineLoadOp>(bodyLoc, op.getB(), ValueRange{ivs[1]});
-                            builder.create<affine::AffineStoreOp>(bodyLoc, b_val, finalResult, ivs);
-                        });
-                } else {
+                                                [&](OpBuilder &builder, Location bodyLoc, ValueRange ivs)
+                                                {
+                                                    Value b_val = builder.create<affine::AffineLoadOp>(bodyLoc, op.getB(), ValueRange{ivs[1]});
+                                                    builder.create<affine::AffineStoreOp>(bodyLoc, b_val, finalResult, ivs);
+                                                });
+                }
+                else
+                {
                     Value zero = b.create<arith::ConstantOp>(loc, b.getZeroAttr(elemType));
                     affine::buildAffineLoopNest(b, loc, fillLbs, fillUbs, fillSteps,
-                        [&](OpBuilder &builder, Location bodyLoc, ValueRange ivs) {
-                            builder.create<affine::AffineStoreOp>(bodyLoc, zero, finalResult, ivs);
-                        });
+                                                [&](OpBuilder &builder, Location bodyLoc, ValueRange ivs)
+                                                {
+                                                    builder.create<affine::AffineStoreOp>(bodyLoc, zero, finalResult, ivs);
+                                                });
                 }
 
                 // 3. Build dummy tensors to present a virtual matrix view for GEMM
@@ -351,13 +363,14 @@ namespace mlir
                 Value dummyB = b.create<memref::AllocOp>(loc, MemRefType::get({K_gemm, N_gemm}, elemType));
                 Value dummyC = b.create<memref::AllocOp>(loc, MemRefType::get({M_gemm, N_gemm}, elemType));
 
-                // 4. Invoke the native GEMM generator to directly obtain the tiled architecture
+                // 4. Invoke the native GEMM generator
                 auto gemmRes = lowerGemmLike(b, loc, dummyA, dummyB, dummyC, config);
                 AffineForOp gemmLoops = gemmRes.first;
                 Value gemmOutBuffer = gemmRes.second;
 
                 // 5. Coordinate decoding helpers
-                auto decodeM = [&](OpBuilder &b2, Location l2, Value m_idx, Value &batch, Value &p, Value &q) {
+                auto decodeM = [&](OpBuilder &b2, Location l2, Value m_idx, Value &batch, Value &p, Value &q)
+                {
                     int64_t PQ = meta.bounds[DimP] * meta.bounds[DimQ];
                     int64_t Q = meta.bounds[DimQ];
                     AffineExpr d0 = b2.getAffineDimExpr(0);
@@ -367,7 +380,8 @@ namespace mlir
                     q = b2.create<affine::AffineApplyOp>(l2, AffineMap::get(1, 0, d0 % Q), m_rem);
                 };
 
-                auto decodeK = [&](OpBuilder &b2, Location l2, Value k_idx, Value &c, Value &r, Value &s) {
+                auto decodeK = [&](OpBuilder &b2, Location l2, Value k_idx, Value &c, Value &r, Value &s)
+                {
                     int64_t RS = meta.bounds[DimR] * meta.bounds[DimS];
                     int64_t S = meta.bounds[DimS];
                     AffineExpr d0 = b2.getAffineDimExpr(0);
@@ -377,22 +391,28 @@ namespace mlir
                     s = b2.create<affine::AffineApplyOp>(l2, AffineMap::get(1, 0, d0 % S), k_rem);
                 };
 
-                auto getStrides = [](Operation *op, size_t rank) -> SmallVector<int64_t> {
+                auto getStrides = [](Operation *op, size_t rank) -> SmallVector<int64_t>
+                {
                     SmallVector<int64_t> strides(rank, 1);
-                    if (auto attr = op->getAttrOfType<DenseI64ArrayAttr>("strides")) {
+                    if (auto attr = op->getAttrOfType<DenseI64ArrayAttr>("strides"))
+                    {
                         auto arr = attr.asArrayRef();
-                        for(size_t i=0; i<arr.size() && i<rank; ++i) strides[i] = arr[i];
-                    } else if (auto attr = op->getAttrOfType<DenseI64ArrayAttr>("stride")) {
+                        for (size_t i = 0; i < arr.size() && i < rank; ++i)
+                            strides[i] = arr[i];
+                    }
+                    else if (auto attr = op->getAttrOfType<DenseI64ArrayAttr>("stride"))
+                    {
                         auto arr = attr.asArrayRef();
-                        for(size_t i=0; i<arr.size() && i<rank; ++i) strides[i] = arr[i];
+                        for (size_t i = 0; i < arr.size() && i < rank; ++i)
+                            strides[i] = arr[i];
                     }
                     return strides;
                 };
 
-                // 6. AST rewriting: intercept BlockLoad and BlockStore and replace them
-                //    with on-the-fly micro SRAM transfers
-                SmallVector<Operation*> opsToErase;
-
+                // 6. AST rewriting: Rewrite legitimate DMA operations 
+                // with on-the-fly multi-dimensional coordinate decoders
+                SmallVector<Operation *> opsToErase;
+                
                 gemmLoops.walk([&](Operation *inst) {
                     if (auto loadOp = dyn_cast<ADORA::DataBlockLoadOp>(inst)) {
                         Value source = loadOp.getOriginalMemref();
@@ -452,15 +472,18 @@ namespace mlir
                                     b3.create<affine::AffineStoreOp>(l3, loadedVal, localAlloc, ivs3);
                                 });
                             
-                            loadOp.replaceAllUsesWith(localAlloc.getResult());
-                            opsToErase.push_back(loadOp);
+                            loadOp.getResult().replaceAllUsesWith(localAlloc.getResult());
+                            opsToErase.push_back(loadOp.getOperation());
                         }
                     }
                     else if (auto storeOp = dyn_cast<ADORA::DataBlockStoreOp>(inst)) {
                         if (storeOp.getTargetMemref() == gemmOutBuffer) {
                             OpBuilder b2(storeOp);
                             Location l2 = storeOp.getLoc();
-                            auto tileType = mlir::cast<MemRefType>(storeOp.getSourceMemref().getType());
+                            
+                            Value sourceSram = storeOp.getSourceMemref();
+
+                            auto tileType = mlir::cast<MemRefType>(sourceSram.getType());
                             
                             SmallVector<int64_t> lbs(tileType.getRank(), 0);
                             SmallVector<int64_t> ubs(tileType.getShape().begin(), tileType.getShape().end());
@@ -485,29 +508,44 @@ namespace mlir
                                     Value batch, p, q;
                                     decodeM(b3, l3, absIndices[0], batch, p, q);
                                     
-                                    Value valToStore = b3.create<affine::AffineLoadOp>(l3, storeOp.getSourceMemref(), ivs3); // 【修复】
+                                    Value valToStore = b3.create<affine::AffineLoadOp>(l3, sourceSram, ivs3);
                                     b3.create<affine::AffineStoreOp>(l3, valToStore, finalResult, ValueRange{batch, absIndices[1], p, q});
                                 });
                             
-                            opsToErase.push_back(storeOp);
+                            opsToErase.push_back(storeOp.getOperation());
                         }
-                    }
+                    } 
                 });
 
-                // 7. Destroy all unnecessary dummy components to fully release memory
-                for (auto opToErase : opsToErase) opToErase->erase();
-
-                for (Operation *user : llvm::make_early_inc_range(dummyC.getUsers())) {
-                    if (isa<AffineForOp>(user)) user->erase(); // Remove redundant copy-initialization loops
-                }
-                for (Operation *user : llvm::make_early_inc_range(gemmOutBuffer.getUsers())) {
-                    if (isa<AffineForOp>(user) || isa<memref::CopyOp>(user)) user->erase();
+                // 7. Cleanup and safely release memory
+                for (auto opToErase : opsToErase) {
+                    opToErase->dropAllReferences();
+                    opToErase->erase();
                 }
 
-                if (gemmOutBuffer.getDefiningOp()) gemmOutBuffer.getDefiningOp()->erase();
-                dummyC.getDefiningOp()->erase();
-                dummyB.getDefiningOp()->erase();
-                dummyA.getDefiningOp()->erase();
+                // Remove redundant copy-initialization loops generated for dummyC
+                for (Operation *user : llvm::make_early_inc_range(dummyC.getUsers()))
+                {
+                    if (isa<AffineForOp>(user)) user->erase(); 
+                }
+                
+                // Safely clean up gemmOutBuffer ONLY if it is a separate allocation from dummyC
+                if (gemmOutBuffer != dummyC) {
+                    for (Operation *user : llvm::make_early_inc_range(gemmOutBuffer.getUsers()))
+                    {
+                        if (isa<AffineForOp>(user) || isa<memref::CopyOp>(user)) user->erase();
+                    }
+                    if (gemmOutBuffer.getDefiningOp()) gemmOutBuffer.getDefiningOp()->erase();
+                }
+
+                if (dummyC.getDefiningOp()) dummyC.getDefiningOp()->erase();
+                if (dummyB.getDefiningOp()) dummyB.getDefiningOp()->erase();
+                if (dummyA.getDefiningOp()) dummyA.getDefiningOp()->erase();
+
+                // 8. Add ADORAGemm tag globally so the backend extraction pass won't miss anything
+                gemmLoops.walk([&](Operation *inst) { 
+                    inst->setAttr("ADORAGemm", b.getUnitAttr()); 
+                });
 
                 op.replaceAllUsesWith(finalResult);
                 op.erase();
