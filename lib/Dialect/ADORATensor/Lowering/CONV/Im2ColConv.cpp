@@ -461,6 +461,8 @@ namespace mlir
                                         
                                         loadedVal = b3.create<affine::AffineLoadOp>(l3, actualInput, ValueRange{batch, c, h_in, w_in});
                                     } else if (source == dummyB) {
+                                        // dummyB is [K_gemm, N_gemm] where K_gemm=(C*R*S) and N_gemm=K(out-ch).
+                                        // Index mapping: row=absIndices[0] (k_gemm) -> (c,r,s), col=absIndices[1] (out-k).
                                         Value c, r, s;
                                         decodeK(b3, l3, absIndices[0], c, r, s);
                                         loadedVal = b3.create<affine::AffineLoadOp>(l3, op.getW(), ValueRange{absIndices[1], c, r, s});
@@ -518,8 +520,7 @@ namespace mlir
                 });
 
                 // 7. Cleanup and safely release memory
-                for (auto opToErase : opsToErase) {
-                    opToErase->dropAllReferences();
+                for (auto *opToErase : opsToErase) {
                     opToErase->erase();
                 }
 
