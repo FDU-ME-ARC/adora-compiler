@@ -50,7 +50,8 @@ mlir::affine::AffineForOp LowerGenericDirectConv(OpBuilder &b, ConvOp op, Systol
 
 // === 3. Future Interfaces (Placeholders) ===
 
-// AffineForOp LowerIm2ColConv(OpBuilder &b, ConvOp op, SystolicConfig config);
+mlir::affine::AffineForOp LowerIm2ColConv(OpBuilder &b, ConvOp op, SystolicConfig config);
+mlir::affine::AffineForOp LowerVirtualIm2ColConv(OpBuilder &b, ConvOp op, SystolicConfig config);
 // AffineForOp LowerWinogradConv(OpBuilder &b, ConvOp op, SystolicConfig config);
 
 } // namespace ADORATensor
