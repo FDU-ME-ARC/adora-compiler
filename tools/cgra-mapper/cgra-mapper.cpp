@@ -263,7 +263,7 @@ int main(int argc, char **argv) {
   sourceMgr.AddNewSourceBuffer(std::move(file), SMLoc());
   mlir::OwningOpRef<mlir::ModuleOp> m = parseSourceFile<ModuleOp>(sourceMgr, &context); 
   if(!m){
-    assert(0 && "Error in parsing mlir.");
+    assert(0 && "Error when parsing mlir file.");
   }
   mlir::ModuleOp moduleop = m.get();
   // SymbolTable symbolTable(moduleop.getOperation());
