@@ -28,7 +28,8 @@ public:
     return TypeSwitch<Operation *, ResultType>(op)
         .template Case<
             // ADORA Dialect
-            ADORA::ADORATensor::GemmOp
+            ADORA::ADORATensor::GemmOp,
+            ADORA::ADORATensor::ConvOp
 
             >([&](auto opNode) -> ResultType {
               return thisCast->visitOp(opNode, args...);
@@ -56,6 +57,7 @@ public:
 
   // ADORA dialect operations.
   HANDLE(ADORA::ADORATensor::GemmOp);
+  HANDLE(ADORA::ADORATensor::ConvOp);
   // HANDLE(ADORA::DataBlockStoreOp);
   // HANDLE(ADORA::LocalMemAllocOp);
   // HANDLE(ADORA::KernelOp);
