@@ -784,7 +784,68 @@ public:
   // }
 
   /// Function operations.
-  // bool visitOp(func::CallOp op) { return emitter.emitCall(op), true; }
+  bool visitOp(func::CallOp op) { 
+    if (op.getOperation()->hasAttr("EmitSkip"))
+      return true;
+
+    // Resolve callee symbol name.
+    std::string callee = op.getCallee().str();
+    if (callee.empty()) {
+      op.emitError("func.call: failed to resolve callee symbol.");
+      return false;
+    }
+
+    // Build argument list: runtime is always the first argument.
+    std::stringstream callArgs;
+    callArgs << "runtime";
+    for (mlir::Value operand : op.getOperands()) {
+      // Reuse previously emitted SSA names; fallback to inline constants.
+      std::string operandName = _pytestemitter->lookupName(operand);
+      if (operandName.empty())
+        operandName = ConstOpToValueStr[operand];
+      if (operandName.empty()) {
+        op.emitError("func.call: failed to resolve an operand name.");
+        return false;
+      }
+      callArgs << ", " << operandName;
+    }
+
+    std::stringstream callExpr;
+    callExpr << "await " << callee << "(" << callArgs.str() << ")";
+
+    auto getResultEmitName = [&](mlir::Value v) -> std::string {
+      mlir::Type ty = v.getType();
+      if (ty.isa<MemRefType>())
+        return EmitNewValueAndGetName(v, "ndarray");
+      return EmitNewValueAndGetName(v, getEmitType(v));
+    };
+
+    // No return value: emit a plain awaited call.
+    if (op.getNumResults() == 0) {
+      indent() << callExpr.str() << "\n";
+      return true;
+    }
+
+    // Single return value: bind to one emitted name.
+    if (op.getNumResults() == 1) {
+      mlir::Value res = op.getResult(0);
+      indent() << getResultEmitName(res) << " = "
+               << callExpr.str() << "\n";
+      return true;
+    }
+
+    // Multiple return values: tuple-unpack in Python.
+    std::stringstream lhs;
+    for (int i = 0; i < op.getNumResults(); ++i) {
+      mlir::Value res = op.getResult(i);
+      lhs << getResultEmitName(res);
+      if (i + 1 != op.getNumResults())
+        lhs << ", ";
+    }
+    indent() << lhs.str() << " = " << callExpr.str() << "\n";
+    return true;
+  }
+  
   bool visitOp(memref::AllocOp op) {
     // Emit a host-side buffer allocation in Python.
     // We use NumPy arrays as a lightweight representation for memref buffers.

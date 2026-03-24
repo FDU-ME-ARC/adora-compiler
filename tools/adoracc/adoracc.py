@@ -17,6 +17,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+PIPELINE_LOG_NAME = "pipeline.log"
+
 
 def require_tool(tool: str) -> str:
     path = shutil.which(tool)
@@ -28,9 +30,33 @@ def require_tool(tool: str) -> str:
     return path
 
 
-def run_command(args: list[str], cwd: Path | None = None) -> None:
+def run_command(
+    args: list[str],
+    cwd: Path | None = None,
+    log_dir: Path | None = None,
+) -> None:
     print("+", " ".join(args))
-    subprocess.run(args, cwd=cwd, check=True)
+    if log_dir is None:
+        subprocess.run(args, cwd=cwd, check=True)
+        return
+
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / PIPELINE_LOG_NAME
+    with open(log_path, "a", encoding="utf-8") as logf:
+        logf.write("\n" + "=" * 72 + "\n")
+        logf.write(datetime.now().isoformat(timespec="seconds") + "\n")
+        logf.write(f"cwd: {cwd!s}\n")
+        logf.write("+ " + " ".join(args) + "\n")
+        logf.write("-" * 72 + "\n")
+        logf.flush()
+        subprocess.run(
+            args,
+            cwd=cwd,
+            check=True,
+            stdout=logf,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
 
 
 def prepare_ir_dirs(root: Path) -> dict[str, Path]:
@@ -121,6 +147,8 @@ def build_pipeline(
     base_name = input_path.stem
     mlir_input = input_path
 
+    log_dir = dirs["tempfiles"]
+
     if input_path.suffix.upper() == ".C":
         cgeist_output = dirs["ir"] / f"{base_name}.mlir"
         run_command(
@@ -131,7 +159,8 @@ def build_pipeline(
                 "-S",
                 "-o",
                 str(cgeist_output),
-            ]
+            ],
+            log_dir=log_dir,
         )
         mlir_input = cgeist_output
 
@@ -159,7 +188,8 @@ def build_pipeline(
             str(mlir_input),
             "-o",
             str(normalized),
-        ]
+        ],
+        log_dir=log_dir,
     )
 
     kernel_mlir = dirs["kernels"] / f"{base_name}_kernel.mlir"
@@ -183,7 +213,7 @@ def build_pipeline(
             str(kernel_mlir),
         ]
     )
-    run_command([tools["cgra-opt"]] + kernel_passes)
+    run_command([tools["cgra-opt"]] + kernel_passes, log_dir=log_dir)
 
     kernel_opt = dirs["kernels_opt"] / f"{base_name}_opt.mlir"
     kernel_opt_cmd = [
@@ -205,6 +235,7 @@ def build_pipeline(
     run_command(
         kernel_opt_cmd,
         cwd=dirs["tempfiles"] if enable_unroll else None,
+        log_dir=log_dir,
     )
 
     # NEW: export kernel_opt result
@@ -228,6 +259,7 @@ def build_pipeline(
             str(kernel_opt),
         ],
         cwd=dirs["temp_dfg"],
+        log_dir=log_dir,
     )
 
     for dot_file in dirs["temp_dfg"].glob("*_CDFG.dot"):
@@ -312,6 +344,10 @@ def main() -> int:
         return 1
     except subprocess.CalledProcessError as exc:
         print(f"Command failed with exit code {exc.returncode}", file=sys.stderr)
+        print(
+            f"See subprocess log: {dirs['tempfiles'] / PIPELINE_LOG_NAME}",
+            file=sys.stderr,
+        )
         return exc.returncode
 
     print(f"Final optimal mlir file: {dirs['kernels_opt']}", file=sys.stderr)

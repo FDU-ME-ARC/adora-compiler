@@ -37,7 +37,7 @@ public:
 
 
             // // Function operations.
-            // func::CallOp, 
+            func::CallOp, 
             func::ReturnOp,
 
             // // SCF statements.
@@ -133,7 +133,7 @@ public:
   // HANDLE(PrimCastOp);
 
   // Control flow operations.
-  // HANDLE(func::CallOp);
+  HANDLE(func::CallOp);
   HANDLE(func::ReturnOp);
 
   // SCF statements.
