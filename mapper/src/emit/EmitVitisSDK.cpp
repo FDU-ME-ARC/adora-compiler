@@ -585,7 +585,50 @@ public:
   // }
 
   /// Function operations.
-  // bool visitOp(func::CallOp op) { return emitter.emitCall(op), true; }
+  bool visitOp(func::CallOp op) { 
+    if (op.getOperation()->hasAttr("EmitSkip"))
+      return true;
+
+    std::string callee = op.getCallee().str();
+    if (callee.empty()) {
+      op.emitError("func.call: failed to resolve callee symbol.");
+      return false;
+    }
+
+    std::stringstream callExpr;
+    callExpr << callee << "(";
+    for (int i = 0; i < op.getNumOperands(); ++i) {
+      mlir::Value operand = op.getOperand(i);
+      std::string operandName = _cgracallemitter->lookupName(operand);
+      if (operandName.empty())
+        operandName = ConstOpToValueStr[operand];
+      if (operandName.empty()) {
+        op.emitError("func.call: failed to resolve an operand name.");
+        return false;
+      }
+      if (i != 0)
+        callExpr << ", ";
+      callExpr << operandName;
+    }
+    callExpr << ")";
+
+    if (op.getNumResults() == 0) {
+      indent() << callExpr.str() << ";\n";
+      return true;
+    }
+
+    if (op.getNumResults() > 1) {
+      op.emitError("func.call with multiple results is not supported in VitisSDK emitter.");
+      return false;
+    }
+
+    mlir::Value res = op.getResult(0);
+    std::string type = res.getType().isa<MemRefType>() ? "void*" : getEmitType(res);
+    indent() << type << " " << EmitNewValueAndGetName(res, type) << " = "
+             << callExpr.str() << ";\n";
+    return true;
+  }
+  
   bool visitOp(memref::AllocaOp op) { 
     mlir::MemRefType mt = op.getType();
     assert(mt.getShape().size() == 0);
