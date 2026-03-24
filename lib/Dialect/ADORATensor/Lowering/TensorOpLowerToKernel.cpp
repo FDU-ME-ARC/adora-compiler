@@ -55,6 +55,8 @@ namespace mlir
           newfor = TiledOutputStationaryGemm(opbuilder, op, tilesize);
         }
 
+        op.erase();
+
         return true;
       }
 
