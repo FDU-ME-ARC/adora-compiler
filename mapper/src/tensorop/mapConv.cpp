@@ -1,6 +1,8 @@
 //===------------------ mapConv.cpp - ADORATensor Lower process ----------------------===//
 /// builtin dialect
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 
 /// ADORA dialect
 #include "ADORA/Dialect/ADORA/IR/ADORA.h"
@@ -25,8 +27,43 @@ namespace mlir
     {
         extern void tryToMoveOutBlockAccessOp(affine::AffineForOp forop);
 
+        static void injectDefaultConvAttributesIfNeeded(ADORATensor::ConvOp op, OpBuilder &builder)
+        {
+            bool modified = false;
+
+            if (!op->hasAttr("algorithm_kind"))
+            {
+                op->setAttr("algorithm_kind", builder.getStringAttr("Conv_Im2Col"));
+                modified = true;
+            }
+            if (!op->hasAttr("stationary_kind"))
+            {
+                op->setAttr("stationary_kind", builder.getStringAttr("InputStationary"));
+                modified = true;
+            }
+            if (!op->hasAttr("tile_size"))
+            {
+                op->setAttr("tile_size", builder.getDenseI64ArrayAttr({4, 64, 4, 4}));
+                modified = true;
+            }
+
+            if (modified)
+            {
+                llvm::errs() << "\n[Warning] Missing systolic attributes on ConvOp.\n"
+                             << "          Injected fallback defaults: Algorithm=Conv_Im2Col, "
+                             << "Stationary=InputStationary, TileSize=[4,4].\n"
+                             << "          Did you bypass the strategy-decision pass?\n\n";
+            }
+        }
+
         bool TensorDataflowGen::visitOp(ADORATensor::ConvOp op)
         {
+            op->getContext()->loadDialect<mlir::memref::MemRefDialect>();
+            op->getContext()->loadDialect<mlir::arith::ArithDialect>();
+            op->getContext()->loadDialect<mlir::affine::AffineDialect>();
+
+            injectDefaultConvAttributesIfNeeded(op, opbuilder);
+
             // 1. Get Systolic configuration (uniformly parse algorithm, loopOrder, tileSizes, etc.)
             SystolicConfig config = parseSystolicConfig(op);
             AffineForOp newfor;
