@@ -1,0 +1,106 @@
+//===------------------ mapConv.cpp - ADORATensor Lower process ----------------------===//
+/// builtin dialect
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
+
+/// ADORA dialect
+#include "ADORA/Dialect/ADORA/IR/ADORA.h"
+#include "ADORA/Dialect/ADORA/Utility/Utility.h"
+#include "ADORA/Dialect/ADORA/Transforms/SimplifyLoadStore.h"
+#include "ADORA/Dialect/ADORATensor/IR/ADORATensor.h"
+#include "ADORA/Dialect/ADORATensor/Interface/SystolicImplInterface.h"
+
+#include "tensorop/TensorOp.h"
+#include "ADORA/Dialect/ADORATensor/Lowering/TensorOps/LowerConv.h"
+
+#include "ir/adg_ir.h"
+#include "ir/dfg_ir.h"
+#include "mapper/mapper_sa.h"
+
+using namespace ::mlir::ADORA::ADORATensor;
+using namespace ::mlir::affine;
+
+namespace mlir
+{
+    namespace ADORA
+    {
+        extern void tryToMoveOutBlockAccessOp(affine::AffineForOp forop);
+
+        bool TensorDataflowGen::visitOp(ADORATensor::ConvOp op)
+        {
+            // 1. Get Systolic configuration (uniformly parse algorithm, loopOrder, tileSizes, etc.)
+            SystolicConfig config = parseSystolicConfig(op);
+            AffineForOp newfor;
+
+            // 2. Dispatch to the corresponding Lowering function based on the convolution algorithm
+            switch (config.algorithm)
+            {
+            case ComputeAlgorithm::Conv_Direct:
+                newfor = LowerGenericDirectConv(opbuilder, op, config);
+                break;
+
+            case ComputeAlgorithm::Conv_Im2Col:
+                newfor = LowerVirtualIm2ColConv(opbuilder, op, config);
+                break;
+
+            case ComputeAlgorithm::Conv_Winograd:
+                // Winograd is not yet fully supported in the mapper
+                llvm::errs() << "[Error] Winograd algorithm mapping is not yet supported in mapper.\n";
+                return false;
+
+            case ComputeAlgorithm::GEMM_Standard:
+                llvm::errs() << "[Error] ConvOp should not use GEMM_Standard algorithm directly.\n";
+                return false;
+
+            default:
+                llvm::errs() << "[Error] Unknown Conv Algorithm.\n";
+                return false;
+            }
+
+            // Check if Lowering successfully generated a nested loop
+            if (!newfor)
+            {
+                llvm::errs() << "[Error] Failed to lower ConvOp to AffineForOp.\n";
+                return false;
+            }
+
+            // 3. Perform loop level simplification and memory access optimization on the generated nested loop
+            simplifyLoopLevelsInRegion(newfor.getRegion(), /*donttouchkernel=*/true);
+
+            if (_verbose)
+            {
+                llvm::errs() << "\n[mapConv] After simplifyLoopLevelsInRegion:\n";
+                newfor.dump();
+            }
+
+            // Try to hoist BlockLoad to the outer loop
+            tryToMoveOutBlockAccessOp(newfor);
+
+            if (_verbose)
+            {
+                llvm::errs() << "\n[mapConv] After tryToMoveOutBlockAccessOp:\n";
+                newfor.dump();
+            }
+
+            // Simplify redundant memory reads and writes
+            SimplifyBlockAccessOp(newfor.getRegion());
+
+            if (_verbose)
+            {
+                llvm::errs() << "\n[mapConv] After SimplifyBlockAccessOp:\n";
+                newfor.dump();
+            }
+
+            // 4. Initialize the CGRA mapper, and execute hardware mapping and Python/C configuration generation
+            ADORA_TENSOR_MAPPER *mapper = new ADORA_TENSOR_MAPPER(_adg, _timeout_ms, _max_iters, _objOpt);
+            mappers.push_back(mapper);
+
+            MapNestedForOrKernel(mapper, newfor, _OpNameFile_str);
+
+            // 5. Completely erase the original ConvOp to prevent zombie nodes from causing secondary engine triggers and segmentation faults
+            op.erase();
+
+            return true;
+        }
+
+    } // namespace ADORA
+} // namespace mlir
