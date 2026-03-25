@@ -443,7 +443,6 @@ namespace mlir
 
                                 loadOp->replaceUsesOfWith(dummyA, actualInput);
                                 loadOp->setAttr("map", AffineMapAttr::get(composedMap));
-                                // 【新增修复】：将 strides 属性同步更新为 4D
                                 loadOp->setAttr("strides", b2.getDenseI64ArrayAttr({1, 1, 1, 1}));
 
                             } else if (source == dummyB) {
@@ -461,7 +460,6 @@ namespace mlir
 
                                 loadOp->replaceUsesOfWith(dummyB, op.getW());
                                 loadOp->setAttr("map", AffineMapAttr::get(composedMap));
-                                // 【新增修复】：将 strides 属性同步更新为 4D
                                 loadOp->setAttr("strides", b2.getDenseI64ArrayAttr({1, 1, 1, 1}));
 
                             } else if (source == gemmOutBuffer) {
@@ -479,7 +477,6 @@ namespace mlir
 
                                 loadOp->replaceUsesOfWith(gemmOutBuffer, finalResult);
                                 loadOp->setAttr("map", AffineMapAttr::get(composedMap));
-                                // 【新增修复】：将 strides 属性同步更新为 4D
                                 loadOp->setAttr("strides", b2.getDenseI64ArrayAttr({1, 1, 1, 1}));
                             }
                         }
@@ -502,7 +499,6 @@ namespace mlir
                             
                             storeOp->replaceUsesOfWith(gemmOutBuffer, finalResult);
                             storeOp->setAttr("map", AffineMapAttr::get(composedMap));
-                            // 【新增修复】：将 strides 属性同步更新为 4D
                             storeOp->setAttr("strides", b2.getDenseI64ArrayAttr({1, 1, 1, 1}));
                         }
                     } });
