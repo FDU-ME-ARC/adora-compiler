@@ -98,6 +98,8 @@ namespace mlir
           return false;
         }
 
+        op.erase();
+
         return true;
       }
 

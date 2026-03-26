@@ -242,10 +242,10 @@ namespace mlir
 
                 auto tempGemmOp = b.create<ADORATensor::GemmOp>(loc, C.getType(), A, B, C);
 
-                tempGemmOp->setAttr("Algorithm", b.getStringAttr("GEMM_Standard"));
-                tempGemmOp->setAttr("StationaryKind", b.getStringAttr(getDataflowStrategyStrRef(config.dataflow)));
-                tempGemmOp->setAttr("TileSize", b.getI64ArrayAttr(clampedTileSizes));
-                tempGemmOp->setAttr("LoopOrder", b.getI64ArrayAttr(config.loopOrder));
+                tempGemmOp->setAttr("algorithm", b.getStringAttr("GEMM_Standard"));
+                tempGemmOp->setAttr("stationary_kind", b.getStringAttr(getDataflowStrategyStrRef(config.dataflow)));
+                tempGemmOp->setAttr("tile_size", b.getI64ArrayAttr(clampedTileSizes));
+                tempGemmOp->setAttr("loop_order", b.getI64ArrayAttr(config.loopOrder));
 
                 auto dummyCast = b.create<memref::CastOp>(loc, tempGemmOp.getO().getType(), tempGemmOp.getO());
 
@@ -306,24 +306,24 @@ namespace mlir
 
                     auto paddedType = MemRefType::get({N, C, H_padded, W_padded}, elemType);
                     Value paddedInput = b.create<memref::AllocOp>(loc, paddedType);
-                    Value zero = b.create<arith::ConstantOp>(loc, b.getZeroAttr(elemType));
+                    // Value zero = b.create<arith::ConstantOp>(loc, b.getZeroAttr(elemType));
 
-                    affine::buildAffineLoopNest(b, loc, SmallVector<int64_t>(4, 0), {N, C, H_padded, W_padded}, SmallVector<int64_t>(4, 1),
-                                                [&](OpBuilder &builder, Location bodyLoc, ValueRange ivs)
-                                                {
-                                                    builder.create<affine::AffineStoreOp>(bodyLoc, zero, paddedInput, ivs);
-                                                });
+                    // affine::buildAffineLoopNest(b, loc, SmallVector<int64_t>(4, 0), {N, C, H_padded, W_padded}, SmallVector<int64_t>(4, 1),
+                    //                             [&](OpBuilder &builder, Location bodyLoc, ValueRange ivs)
+                    //                             {
+                    //                                 builder.create<affine::AffineStoreOp>(bodyLoc, zero, paddedInput, ivs);
+                    //                             });
 
-                    affine::buildAffineLoopNest(b, loc, SmallVector<int64_t>(4, 0), {N, C, H_in, W_in}, SmallVector<int64_t>(4, 1),
-                                                [&](OpBuilder &builder, Location bodyLoc, ValueRange ivs)
-                                                {
-                                                    Value val = builder.create<affine::AffineLoadOp>(bodyLoc, op.getX(), ivs);
-                                                    SmallVector<AffineExpr, 4> storeExprs = {
-                                                        builder.getAffineDimExpr(0), builder.getAffineDimExpr(1),
-                                                        builder.getAffineDimExpr(2) + pad_h_top, builder.getAffineDimExpr(3) + pad_w_left};
-                                                    builder.create<affine::AffineStoreOp>(bodyLoc, val, paddedInput,
-                                                                                          AffineMap::get(4, 0, storeExprs, builder.getContext()), ivs);
-                                                });
+                    // affine::buildAffineLoopNest(b, loc, SmallVector<int64_t>(4, 0), {N, C, H_in, W_in}, SmallVector<int64_t>(4, 1),
+                    //                             [&](OpBuilder &builder, Location bodyLoc, ValueRange ivs)
+                    //                             {
+                    //                                 Value val = builder.create<affine::AffineLoadOp>(bodyLoc, op.getX(), ivs);
+                    //                                 SmallVector<AffineExpr, 4> storeExprs = {
+                    //                                     builder.getAffineDimExpr(0), builder.getAffineDimExpr(1),
+                    //                                     builder.getAffineDimExpr(2) + pad_h_top, builder.getAffineDimExpr(3) + pad_w_left};
+                    //                                 builder.create<affine::AffineStoreOp>(bodyLoc, val, paddedInput,
+                    //                                                                       AffineMap::get(4, 0, storeExprs, builder.getContext()), ivs);
+                    //                             });
                     actualInput = paddedInput;
                 }
 
@@ -331,28 +331,28 @@ namespace mlir
                 auto finalOutputType = mlir::cast<MemRefType>(op.getY().getType());
                 Value finalResult = b.create<memref::AllocOp>(loc, finalOutputType);
 
-                SmallVector<int64_t> fillLbs(4, 0);
-                SmallVector<int64_t> fillUbs = {meta.bounds[DimN], meta.bounds[DimK], meta.bounds[DimP], meta.bounds[DimQ]};
-                SmallVector<int64_t> fillSteps(4, 1);
+                // SmallVector<int64_t> fillLbs(4, 0);
+                // SmallVector<int64_t> fillUbs = {meta.bounds[DimN], meta.bounds[DimK], meta.bounds[DimP], meta.bounds[DimQ]};
+                // SmallVector<int64_t> fillSteps(4, 1);
 
-                if (op.getB() && !mlir::isa<NoneType>(op.getB().getType()))
-                {
-                    affine::buildAffineLoopNest(b, loc, fillLbs, fillUbs, fillSteps,
-                                                [&](OpBuilder &builder, Location bodyLoc, ValueRange ivs)
-                                                {
-                                                    Value b_val = builder.create<affine::AffineLoadOp>(bodyLoc, op.getB(), ValueRange{ivs[1]});
-                                                    builder.create<affine::AffineStoreOp>(bodyLoc, b_val, finalResult, ivs);
-                                                });
-                }
-                else
-                {
-                    Value zero = b.create<arith::ConstantOp>(loc, b.getZeroAttr(elemType));
-                    affine::buildAffineLoopNest(b, loc, fillLbs, fillUbs, fillSteps,
-                                                [&](OpBuilder &builder, Location bodyLoc, ValueRange ivs)
-                                                {
-                                                    builder.create<affine::AffineStoreOp>(bodyLoc, zero, finalResult, ivs);
-                                                });
-                }
+                // if (op.getB() && !mlir::isa<NoneType>(op.getB().getType()))
+                // {
+                //     affine::buildAffineLoopNest(b, loc, fillLbs, fillUbs, fillSteps,
+                //                                 [&](OpBuilder &builder, Location bodyLoc, ValueRange ivs)
+                //                                 {
+                //                                     Value b_val = builder.create<affine::AffineLoadOp>(bodyLoc, op.getB(), ValueRange{ivs[1]});
+                //                                     builder.create<affine::AffineStoreOp>(bodyLoc, b_val, finalResult, ivs);
+                //                                 });
+                // }
+                // else
+                // {
+                //     Value zero = b.create<arith::ConstantOp>(loc, b.getZeroAttr(elemType));
+                //     affine::buildAffineLoopNest(b, loc, fillLbs, fillUbs, fillSteps,
+                //                                 [&](OpBuilder &builder, Location bodyLoc, ValueRange ivs)
+                //                                 {
+                //                                     builder.create<affine::AffineStoreOp>(bodyLoc, zero, finalResult, ivs);
+                //                                 });
+                // }
 
                 // 3. Build dummy tensors to present a virtual matrix view for GEMM
                 int64_t M_gemm = meta.bounds[DimN] * meta.bounds[DimP] * meta.bounds[DimQ];
@@ -535,7 +535,7 @@ namespace mlir
                                { inst->setAttr("ADORAGemm", b.getUnitAttr()); });
 
                 op.replaceAllUsesWith(finalResult);
-                op.erase();
+                // op.erase();
 
                 return gemmLoops;
             }

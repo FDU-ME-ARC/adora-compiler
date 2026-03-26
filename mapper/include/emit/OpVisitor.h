@@ -34,7 +34,7 @@ public:
 
             // ADORATensor Dialect
             ADORA::ADORATensor::GemmOp,
-
+            ADORA::ADORATensor::ConvOp,
 
             // // Function operations.
             func::CallOp, 
@@ -79,15 +79,17 @@ public:
 
             // Integer binary expressions.
             arith::AddIOp, arith::SubIOp, arith::MulIOp, arith::DivSIOp,
-            // arith::CmpIOp, 
-            //  arith::RemSIOp, arith::DivUIOp, arith::RemUIOp,
+            arith::CmpIOp,
+            arith::RemSIOp,
+            // arith::DivUIOp, arith::RemUIOp,
             // arith::XOrIOp, arith::AndIOp, arith::OrIOp, arith::ShLIOp,
             // arith::ShRSIOp, arith::ShRUIOp, arith::MaxSIOp, arith::MinSIOp,
             // arith::MaxUIOp, arith::MinUIOp,
 
             // // Special expressions. 
             arith::ConstantOp,
-            // arith::SelectOp, arith::TruncIOp,
+            arith::SelectOp,
+            // arith::TruncIOp,
             // arith::TruncFOp, arith::ExtUIOp, arith::ExtSIOp, arith::IndexCastOp,
             // arith::UIToFPOp, arith::SIToFPOp, arith::FPToSIOp, arith::FPToUIOp
             LLVM::UndefOp
@@ -123,6 +125,7 @@ public:
   HANDLE(ADORA::LocalMemAllocOp);
   HANDLE(ADORA::KernelOp);
   HANDLE(ADORA::ADORATensor::GemmOp);
+  HANDLE(ADORA::ADORATensor::ConvOp);
   // HANDLE(StreamOp);
   // HANDLE(StreamReadOp);
   // HANDLE(StreamWriteOp);
@@ -201,12 +204,12 @@ public:
   // HANDLE(math::PowFOp);
 
   // // Integer binary expressions.
-  // HANDLE(arith::CmpIOp);
+  HANDLE(arith::CmpIOp);
   HANDLE(arith::AddIOp);
   HANDLE(arith::SubIOp);
   HANDLE(arith::MulIOp);
   HANDLE(arith::DivSIOp);
-  // HANDLE(arith::RemSIOp);
+  HANDLE(arith::RemSIOp);
   // HANDLE(arith::DivUIOp);
   // HANDLE(arith::RemUIOp);
   // HANDLE(arith::XOrIOp);
@@ -221,7 +224,7 @@ public:
   // HANDLE(arith::MinUIOp);
 
   // // Special expressions.
-  // HANDLE(arith::SelectOp);
+  HANDLE(arith::SelectOp);
   HANDLE(arith::ConstantOp);
   // HANDLE(arith::TruncIOp);
   // HANDLE(arith::TruncFOp);

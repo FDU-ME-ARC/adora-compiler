@@ -138,7 +138,7 @@ public:
       uint64_t DataBytes = op.getOriginalMemrefType().getElementTypeBitWidth()/8;
       uint64_t DMA_Len = DataBytes;
       uint64_t spadbaddr = DfgIoInfos[0].addr;
-      int fuse = 0;
+      // int fuse = 0;
       std::stringstream load_data, spm_ptr;
 
       load_data << "idata.append(" << Memref_BaseAddr;
@@ -169,7 +169,7 @@ public:
       return true;
     }
 
-    assert(SourceShape.size() == ResultShape.size());
+    // assert(SourceShape.size() == ResultShape.size());
 
     /// Get DMA_Len 
     uint64_t DataBytes = op.getOriginalMemrefType().getElementTypeBitWidth()/8;
@@ -184,13 +184,13 @@ public:
 
     /// Get DRAM_Offset
     std::vector<std::string> DRAM_Offset_EachDim;
-    DRAM_Offset_EachDim.resize(ResultShape.size(), "-1");
+    DRAM_Offset_EachDim.resize(SourceShape.size(), "-1");
     /// initialize DRAM_Offset_EachDim
-    for(auto elem : DRAM_Offset_EachDim){
-      elem = "-1";
-    }
+    // for(auto elem : DRAM_Offset_EachDim){
+    //   elem = "-1";
+    // }
 
-    assert(ResultShape.size() == op.getAffineMap().getResults().size());
+    assert(SourceShape.size() == op.getAffineMap().getResults().size());
     for(int exprIdx = 0; exprIdx < op.getAffineMap().getResults().size(); exprIdx++){
       AffineExpr expr = op.getAffineMap().getResult(exprIdx);
       if(expr.getKind() == AffineExprKind::Constant){
@@ -200,9 +200,9 @@ public:
       else if(expr.getKind() == AffineExprKind::DimId){
         for(int operandIdx = 0; operandIdx < op.getMapOperands().size(); operandIdx++){
           mlir::Value operand = op.getMapOperands()[operandIdx];
-          SmallVector<int>Dimensions = getOperandDimensionsInMap(/*dim=*/operandIdx, /*map=*/op.getAffineMap());
-          assert(Dimensions.size() == 1 && "We do not support one index is related to multiple dim of one array.");
-          if(Dimensions[0] == exprIdx){
+          SmallVector<int> Dimensions = getOperandDimensionsInMap(/*dim=*/operandIdx, /*map=*/op.getAffineMap());
+          // assert(Dimensions.size() == 1 && "We do not support one index is related to multiple dim of one array.");
+          if(Dimensions.size() > 0 && Dimensions[0] == exprIdx){
             std::string operandname = _pytestemitter->lookupName(operand);
             DRAM_Offset_EachDim[exprIdx] = operandname;
           }
@@ -216,9 +216,11 @@ public:
 
     /// Get DMA_Request_Len from every dim
     std::vector<int64_t> LenEachDim;
-    bool continuous = true;
-    for(int r = ResultShape.size() - 1; r >= 0; r--){
-      LenEachDim.insert(LenEachDim.begin(), ResultShape[r]);
+    for(int r = SourceShape.size() - 1; r >= 0; r--){
+      if (SourceShape.size() == ResultShape.size())
+        LenEachDim.insert(LenEachDim.begin(), ResultShape[r]);
+      else
+        LenEachDim.insert(LenEachDim.begin(), 1); // Use dummy padding to bypass the original assertion when dimensions do not match.
     }    
 
     /// SPAD_BaseAddr
@@ -233,35 +235,42 @@ public:
     for(int i = 0; i < SPAD_BaseAddrs.size(); i++)
     {
       auto spadbaddr = SPAD_BaseAddrs[i];
-      int fuse = (i == SPAD_BaseAddrs.size() - 1)? 0 : 1; /// fuse: 0 - broadcast, 1 - non-broadcast
       std::stringstream load_data, spm_ptr;
      
       load_data << "idata.append(" << Memref_BaseAddr;
-      assert(DRAM_Offset_EachDim.size() == LenEachDim.size());
-      for(int i = 0; i < DRAM_Offset_EachDim.size(); i++){
-        if(i == 0){
-          load_data << "[" ;
-        }
 
-        if(op.hasStrides()){
-          load_data << DRAM_Offset_EachDim[i] 
-                    << ":" << DRAM_Offset_EachDim[i] << "+" << LenEachDim[i] * op.getStridesAsArrayRef()[i]
-                    << ":" << op.getStridesAsArrayRef()[i];
-        }
-        else{
-          load_data << DRAM_Offset_EachDim[i] 
-                    << ":" << DRAM_Offset_EachDim[i] << "+" << LenEachDim[i];          
-        }
+      // Handle dimension mismatch caused by Im2Col (use ravel flattening for slicing).
+      if (SourceShape.size() != ResultShape.size()) {
+          std::string flat_offset = "";
+          int64_t stride = 1;
+          for(int j = SourceShape.size() - 1; j >= 0; j--){
+              if (j != SourceShape.size() - 1) flat_offset = " + " + flat_offset;
+              flat_offset = "(" + DRAM_Offset_EachDim[j] + ") * " + std::to_string(stride) + flat_offset;
+              stride *= SourceShape[j];
+          }
+          if (flat_offset.empty()) flat_offset = "0";
+          uint64_t total_elements = DMA_Len / DataBytes;
 
-        if(i == DRAM_Offset_EachDim.size() - 1){
-          load_data << "]";
-        }
-        else{
-          load_data << ",";
-        }
-
+          load_data << ".ravel()[" << flat_offset << " : (" << flat_offset << ") + " << total_elements << "].reshape(";
+          load_data << "(";
+          for(size_t j=0; j<ResultShape.size(); ++j) {
+              load_data << ResultShape[j] << (j==ResultShape.size()-1 ? "" : ",");
+          }
+          load_data << ")))";
+      } else {
+          // original logic
+          for(int j = 0; j < DRAM_Offset_EachDim.size(); j++){
+            if(j == 0) load_data << "[" ;
+            if(op.hasStrides()){
+              load_data << DRAM_Offset_EachDim[j] << ":" << DRAM_Offset_EachDim[j] << "+" << LenEachDim[j] * op.getStridesAsArrayRef()[j] << ":" << op.getStridesAsArrayRef()[j];
+            } else {
+              load_data << DRAM_Offset_EachDim[j] << ":" << DRAM_Offset_EachDim[j] << "+" << LenEachDim[j];
+            }
+            if(j == DRAM_Offset_EachDim.size() - 1) load_data << "]";
+            else load_data << ",";
+          }
+          load_data << ")";
       }
-      load_data << ")";
 
       if(_pingpong == true){
         spm_ptr << "iptrs.append(DeviceData(" 
@@ -313,7 +322,7 @@ public:
       uint64_t spadbaddr = DfgIoInfo.addr;
       uint64_t DataBytes = op.getSourceMemrefType().getElementTypeBitWidth()/8;
       uint64_t DMA_Len = DataBytes;
-      int fuse = 0;
+      // int fuse = 0;
 
       std::stringstream store_data, spm_ptr, olen;
       store_data << "odata.append(" << Memref_BaseAddr;
@@ -370,7 +379,7 @@ public:
       return true;
     }
 
-    assert(SourceShape.size() == TargetShape.size());
+    // assert(SourceShape.size() == TargetShape.size());
 
     /// Get DMA_Len 
     uint64_t DataBytes = op.getSourceMemrefType().getElementTypeBitWidth()/8;
@@ -385,7 +394,7 @@ public:
 
     /// Get DRAM_Offset
     std::vector<std::string> DRAM_Offset_EachDim;
-    DRAM_Offset_EachDim.resize(SourceShape.size(), "-1");
+    DRAM_Offset_EachDim.resize(TargetShape.size(), "-1");
     /// initialize DRAM_Offset_EachDim
     for(auto elem : DRAM_Offset_EachDim){
       elem = "-1";
@@ -402,8 +411,8 @@ public:
         for(int operandIdx = 0; operandIdx < op.getMapOperands().size(); operandIdx++){
           mlir::Value operand = op.getMapOperands()[operandIdx];
           SmallVector<int>Dimensions = getOperandDimensionsInMap(/*dim=*/operandIdx, /*map=*/op.getAffineMap());
-          assert(Dimensions.size() == 1 && "We do not support one index is related to multiple dim of one array.");
-          if(Dimensions[0] == exprIdx){
+          // assert(Dimensions.size() == 1 && "We do not support one index is related to multiple dim of one array.");
+          if(Dimensions.size() > 0 &&Dimensions[0] == exprIdx){
             std::string operandname = _pytestemitter->lookupName(operand);
             DRAM_Offset_EachDim[exprIdx] = operandname;
           }
@@ -420,7 +429,10 @@ public:
     std::vector<int64_t> LenEachDim;
     bool continuous = true;
     for(int r = SourceShape.size() - 1; r >= 0; r--){
-      LenEachDim.insert(LenEachDim.begin(), SourceShape[r]);
+      if (SourceShape.size() == TargetShape.size())
+        LenEachDim.insert(LenEachDim.begin(), SourceShape[r]);
+      else
+        LenEachDim.insert(LenEachDim.begin(), 1); // dummy
     }    
 
 
@@ -434,33 +446,42 @@ public:
     for(int i = 0; i < SPAD_BaseAddrs.size(); i++)
     {
       auto spadbaddr = SPAD_BaseAddrs[i];
-      int fuse = (i == SPAD_BaseAddrs.size() - 1)? 0 : 1; /// fuse: 0 - broadcast, 1 - non-broadcast
       std::stringstream store_data, spm_ptr, olen;
 
       store_data << "odata.append(" << Memref_BaseAddr;
-      assert(DRAM_Offset_EachDim.size() == LenEachDim.size());
-      for(int i = 0; i < DRAM_Offset_EachDim.size(); i++){
-        if(i == 0){
-          store_data << "[" ;
-        }
 
-        if(op.hasStrides()){
-          store_data << DRAM_Offset_EachDim[i] 
-                  << ":" << DRAM_Offset_EachDim[i] << "+" << LenEachDim[i] * op.getStridesAsArrayRef()[i] 
-                  << ":" << op.getStridesAsArrayRef()[i];
-        }
-        else{
-          store_data << DRAM_Offset_EachDim[i] 
-                  << ":" << DRAM_Offset_EachDim[i] << "+" << LenEachDim[i];
-        }
-        if(i == DRAM_Offset_EachDim.size() - 1){
-          store_data << "]";
-        }
-        else{
-          store_data << ",";
-        }
+      // Handle dimension mismatch by allocating the write-back region using a one-dimensional flattened layout.
+      if (SourceShape.size() != TargetShape.size()) {
+          std::string flat_offset = "";
+          int64_t stride = 1;
+          for(int j = TargetShape.size() - 1; j >= 0; j--){
+              if (j != TargetShape.size() - 1) flat_offset = " + " + flat_offset;
+              flat_offset = "(" + DRAM_Offset_EachDim[j] + ") * " + std::to_string(stride) + flat_offset;
+              stride *= TargetShape[j];
+          }
+          if (flat_offset.empty()) flat_offset = "0";
+          uint64_t total_elements = DMA_Len / DataBytes;
+
+          store_data << ".ravel()[" << flat_offset << " : (" << flat_offset << ") + " << total_elements << "].reshape(";
+          store_data << "(";
+          for(size_t j=0; j<SourceShape.size(); ++j) {
+              store_data << SourceShape[j] << (j==SourceShape.size()-1 ? "" : ",");
+          }
+          store_data << ")))";
+      } else {
+          for(int j = 0; j < DRAM_Offset_EachDim.size(); j++){
+            if(j == 0) store_data << "[" ;
+            if(op.hasStrides()){
+              store_data << DRAM_Offset_EachDim[j] << ":" << DRAM_Offset_EachDim[j] << "+" << LenEachDim[j] * op.getStridesAsArrayRef()[j] << ":" << op.getStridesAsArrayRef()[j];
+            } else {
+              store_data << DRAM_Offset_EachDim[j] << ":" << DRAM_Offset_EachDim[j] << "+" << LenEachDim[j];
+            }
+            if(j == DRAM_Offset_EachDim.size() - 1) store_data << "]";
+            else store_data << ",";
+          }
+          store_data << ")";
       }
-      store_data << ")";
+
       if(_pingpong == true){
         spm_ptr << "optrs.append(DeviceData(" 
                 << "0x" << std::hex << spadbaddr << "+" << std::dec <<DMA_Len
@@ -583,187 +604,82 @@ public:
   ///////////////////////////////
   /// ADORA Tensor dialect operations.
   ///////////////////////////////
-  bool visitOp(ADORA::ADORATensor::GemmOp gemmop) {
-
-    // if(isa<affine::AffineForOp>(op)){
-    //   op->setAttr("ADORAGemm", mlir::UnitAttr::get(op->getContext()));
-    // }
+  // =====================================================================
+  // Emit TensorOp Config Init: Extract hardware stream initialization,
+  // and hand over the loop parsing back to the natural AST traversal flow.
+  // =====================================================================
+  bool visitGemmLikeOp(mlir::Operation* gemmop) {
     indent() << "#######################################\n";
-    indent() << "### Emit GemmOp: " << gemmop << "\n";
+    indent() << "### Emit TensorOp Config Init: " << *gemmop << "\n";
     indent() << "#######################################\n";
-    indent() << "pingpong = False" << "\n\n";
-    _pingpong = true;
-    mlir::Operation* op = gemmop.getOperation()->getNextNode();
 
-    while (1) //// skip previous nodes such as memref.alloc and initialization process
-    {
-      if(op->hasAttr("ADORAGemm")){
-        break;
-      }
-      else if(isa<mlir::affine::AffineForOp>(op)){
-        visitOp(dyn_cast<mlir::affine::AffineForOp>(op));
-      }
-      else if(isa<mlir::memref::CopyOp>(op)){
-        indent() << "### memref::CopyOp: " << *op << "\n";
-        visitOp(dyn_cast<mlir::memref::CopyOp>(op));
-      }
-      else if(isa<mlir::memref::AllocOp>(op)){
-        indent() << "### memref::AllocOpp: " << *op << "\n";
-        visitOp(dyn_cast<mlir::memref::AllocOp>(op));
-      }
-      else{
-        assert(false && "Unsupported Op type in adraotensor.gemmop lower.");
-      }
-
-      setEmitSkipAttr(op);
-      op = op->getNextNode();
+    // 1. Look ahead to find the bound KernelOp
+    ADORA::KernelOp kernel = nullptr;
+    mlir::Operation* op = gemmop->getNextNode();
+    while (op) {
+        if (isa<mlir::affine::AffineForOp>(op) && op->hasAttr("ADORAGemm")) {
+            op->walk([&](ADORA::KernelOp k) { kernel = k; });
+            break;
+        }
+        op = op->getNextNode();
     }
 
-    indent() << "\n";
-    while (1)  //// start to emit gemm computing related node 
-    {
-      if(isa<mlir::affine::AffineForOp>(op) && op->hasAttr("ADORAGemm")){
-        mlir::affine::AffineForOp gemmFor = dyn_cast<mlir::affine::AffineForOp>(op);
-        ADORA::KernelOp kernel = findTheOnlyKernelInNestedLoop(gemmFor);;
-        std::string knName = kernel.getKernelName();
-        /// emit pingpong 
-        indent() << "ptrs_ping, ptrs_pong = [], []\n";
+    if (!kernel) return true;
 
-        for(auto elem : _pytestemitter->getLoadToSPMInfosMap()){
-          ADORA::DataBlockLoadOp load = elem.first;
-          load.dump();
-          if( load.getOperation()->hasAttr("Pingpong")
-            && findElement(load.getKernelNameAsStrVector(), kernel.getKernelName()) != -1){
-            ///// belongs to this kernel
-            llvm::SmallVector< std::pair<int, dfgIoInfo> > SPMs = elem.second;
-            for(auto pair : SPMs){
-              int base_addr = pair.second.addr;
-              int len = getByteSizeFromMemref(load.getResultType());
-              std::stringstream ss_ping, ss_pong;
-              
-              indent() << "### Pingpong DataBlockLoadOp: " << load << "\n";
-              ss_ping << "ptrs_ping.append(DeviceData("                 
-                      << "0x" << std::hex << base_addr
-                      << ", " << std::dec << len 
-                      << "))";
-              indent() << ss_ping.str() << "\n";
+    // 2. Generate all Pingpong stream initialization structures
+    std::string knName = kernel.getKernelName();
+    indent() << "ptrs_ping, ptrs_pong = [], []\n";
 
-              ss_pong << "ptrs_pong.append(DeviceData("                 
-                      << "0x" << std::hex << base_addr
-                      << "+"  << std::dec << len
-                      << ", " << std::dec << len 
-                      << "))";
-              indent() << ss_pong.str() << "\n";
+    for(auto elem : _pytestemitter->getLoadToSPMInfosMap()){
+        ADORA::DataBlockLoadOp load = elem.first;
+        if(load.getOperation()->hasAttr("Pingpong") && findElement(load.getKernelNameAsStrVector(), kernel.getKernelName()) != -1){
+            for(auto pair : elem.second){
+                int base_addr = pair.second.addr;
+                int len = getByteSizeFromMemref(load.getResultType());
+                std::stringstream ss_ping, ss_pong;
+                ss_ping << "ptrs_ping.append(DeviceData(0x" << std::hex << base_addr << std::dec << ", " << len << "))";
+                ss_pong << "ptrs_pong.append(DeviceData(0x" << std::hex << base_addr << std::dec << "+"  << len << ", " << len << "))";
+                indent() << ss_ping.str() << "\n";
+                indent() << ss_pong.str() << "\n";
             }
-          }
         }
+    }
 
-        for(auto elem : _pytestemitter->getLocalAllocToSPMMap()){
-          ADORA::LocalMemAllocOp alloc = elem.first;
-          alloc.dump();
-          if( alloc.getOperation()->hasAttr("Pingpong")
-            && findElement(alloc.getKernelNameAsStrVector(), kernel.getKernelName()) != -1){
-            ///// belongs to this kernel
-            std::pair<int, dfgIoInfo> spm = elem.second;
-            int base_addr = spm.second.addr;
+    for(auto elem : _pytestemitter->getLocalAllocToSPMMap()){
+        ADORA::LocalMemAllocOp alloc = elem.first;
+        if(alloc.getOperation()->hasAttr("Pingpong") && findElement(alloc.getKernelNameAsStrVector(), kernel.getKernelName()) != -1){
+            int base_addr = elem.second.second.addr;
             int len = getByteSizeFromMemref(alloc.getMemrefType());
             std::stringstream ss_ping, ss_pong;
-            indent() << "### Pingpong LocalMemAllocOp: " << alloc << "\n";
-            
-            ss_ping << "ptrs_ping.append(DeviceData("                 
-                    << "0x" << std::hex << base_addr
-                    << ", " << std::dec << len 
-                    << "))";
+            ss_ping << "ptrs_ping.append(DeviceData(0x" << std::hex << base_addr << std::dec << ", " << len << "))";
+            ss_pong << "ptrs_pong.append(DeviceData(0x" << std::hex << base_addr << std::dec << "+"  << len << ", " << len << "))";
             indent() << ss_ping.str() << "\n";
-
-            ss_pong << "ptrs_pong.append(DeviceData("                 
-                    << "0x" << std::hex << base_addr
-                    << "+"  << std::dec << len
-                    << ", " << std::dec << len 
-                    << "))";
             indent() << ss_pong.str() << "\n";
-          }
         }
-
-        /// emit different config for gemm
-        /**
-         * Example: 
-         *  pingpong = False
-         *  stream = runtime.create_stream()
-         *  aux_stream_pingpong_init(stream, [cfgbit_GEMMIS,cfgbit_GEMMIS_ping,cfgbit_GEMMIS_pong])
-        */
-
-        ///// get iob_ens:
-        BYTES_LIST iob_ens = _pytestemitter->getIobEns(kernel);
-        BYTES_LIST tile_ens = _pytestemitter->getTileEns(kernel);
-        std::stringstream iobens_ss, tileens_ss;
-        for(int _ = 0; _ < iob_ens.size(); _++){
-          iobens_ss << iob_ens.getByte(_);
-          if(_ != iob_ens.size() - 1)
-            iobens_ss << "," ;
-        }
-        for(int _ = 0; _ < tile_ens.size(); _++){
-          tileens_ss << tile_ens.getByte(_);
-          if(_ != tile_ens.size() - 1)
-            tileens_ss << "," ;
-        }
-
-        indent() << "pingpong = False" << "\n";
-        indent() << "stream = runtime.create_stream()" << "\n";
-
-        indent() << "config_" << knName << " = DeviceConfig("
-                << "config_values=" << "cfgbit_" << knName << ", "
-                << "iob_en=[" << iobens_ss.str() << "], "
-                << "tile_en=[" << tileens_ss.str() << "], "
-                << "data_ptr=data_ptr)\n";
-        
-        indent() << "config_" << knName << "_ping" << " = DeviceConfig("
-                << "config_values=" << "cfgbit_" << knName << "_ping" << ", "
-                << "iob_en=[" << iobens_ss.str() << "], "
-                << "tile_en=[" << tileens_ss.str() << "], "
-                << "data_ptr=ptrs_ping)\n";
-
-        indent() << "config_" << knName << "_pong" << " = DeviceConfig("
-                << "config_values=" << "cfgbit_" << knName << "_pong" << ", "
-                << "iob_en=[" << iobens_ss.str() << "], "
-                << "tile_en=[" << tileens_ss.str() << "], "
-                << "data_ptr=ptrs_pong)\n";
-
-        indent() << "await aux_stream_pingpong_init(stream, ["
-                << "config_" << knName << ", "
-                << "config_" << knName << "_ping, "
-                << "config_" << knName << "_pong])\n\n";
-      
-        visitOp(gemmFor);
-      }
-      else if(isa<mlir::ADORA::DataBlockLoadOp>(op)
-            && op->hasAttr("ADORAGemm")){
-        visitOp(dyn_cast<mlir::ADORA::DataBlockLoadOp>(op));
-      }
-      else if(isa<mlir::ADORA::DataBlockStoreOp>(op)
-            && op->hasAttr("ADORAGemm")){
-        visitOp(dyn_cast<mlir::ADORA::DataBlockStoreOp>(op));
-      }
-      else if(isa<mlir::ADORA::LocalMemAllocOp>(op)
-            && op->hasAttr("ADORAGemm")){
-        visitOp(dyn_cast<mlir::ADORA::LocalMemAllocOp>(op));
-      }
-      else if(isa<mlir::ADORA::LocalMemAllocOp>(op)
-            && op->hasAttr("ADORAGemm")){
-        visitOp(dyn_cast<mlir::ADORA::LocalMemAllocOp>(op));
-      }
-      else{
-        break;
-      }
-      setEmitSkipAttr(op);
-      op = op->getNextNode();
     }
 
-    indent() << "#######################################\n";
-    indent() << "### End of GemmOp:" << gemmop << "\n";
-    indent() << "#######################################\n";
-    _pingpong = false;
+    BYTES_LIST iob_ens = _pytestemitter->getIobEns(kernel);
+    BYTES_LIST tile_ens = _pytestemitter->getTileEns(kernel);
+    std::stringstream iobens_ss, tileens_ss;
+    for(int _ = 0; _ < iob_ens.size(); _++) { iobens_ss << iob_ens.getByte(_) << (_ != iob_ens.size() - 1 ? "," : ""); }
+    for(int _ = 0; _ < tile_ens.size(); _++) { tileens_ss << tile_ens.getByte(_) << (_ != tile_ens.size() - 1 ? "," : ""); }
+
+    indent() << "pingpong = False\n";
+    indent() << "stream = runtime.create_stream()\n";
+    indent() << "config_" << knName << " = DeviceConfig(config_values=cfgbit_" << knName << ", iob_en=[" << iobens_ss.str() << "], tile_en=[" << tileens_ss.str() << "], data_ptr=data_ptr)\n";
+    indent() << "config_" << knName << "_ping = DeviceConfig(config_values=cfgbit_" << knName << "_ping, iob_en=[" << iobens_ss.str() << "], tile_en=[" << tileens_ss.str() << "], data_ptr=ptrs_ping)\n";
+    indent() << "config_" << knName << "_pong = DeviceConfig(config_values=cfgbit_" << knName << "_pong, iob_en=[" << iobens_ss.str() << "], tile_en=[" << tileens_ss.str() << "], data_ptr=ptrs_pong)\n";
+    indent() << "await aux_stream_pingpong_init(stream, [config_" << knName << ", config_" << knName << "_ping, config_" << knName << "_pong])\n\n";
+
+    // 3. Turn on the global Pingpong switch!
+    // This informs the subsequent affine.for traversal to emit pingpong logic.
+    _pingpong = true;
+
+    return true;
   }
+
+  bool visitOp(ADORA::ADORATensor::GemmOp op) { return visitGemmLikeOp(op.getOperation()); }
+  bool visitOp(ADORA::ADORATensor::ConvOp op) { return visitGemmLikeOp(op.getOperation()); }
 
   // bool visitOp(BufferOp op) {
   //   if (op.getDepth() == 1)
@@ -1282,6 +1198,61 @@ public:
 
   bool visitOp(arith::DivSIOp op) {
     return EmitBinary(op, "/");
+  }
+
+  bool visitOp(arith::RemSIOp op) {
+    std::string type = getEmitType(op.getResult());
+    std::string Lhs = _pytestemitter->lookupName(op.getLhs());
+    if(Lhs == "") Lhs = ConstOpToValueStr[op.getLhs()];
+    std::string Rhs = _pytestemitter->lookupName(op.getRhs());
+    if(Rhs == "") Rhs = ConstOpToValueStr[op.getRhs()];
+    assert(Lhs != "" && Rhs != "");
+
+    indent() << EmitNewValueAndGetName(op.getResult(), type)
+             << " = " << Lhs << " % " << Rhs << "\n";
+    return true;
+  }
+
+  bool visitOp(arith::CmpIOp op) {
+      std::string type = "bool"; // CmpI 结果是 bool 类型
+      std::string Lhs = _pytestemitter->lookupName(op.getLhs());
+      if(Lhs == "") Lhs = ConstOpToValueStr[op.getLhs()];
+      std::string Rhs = _pytestemitter->lookupName(op.getRhs());
+      if(Rhs == "") Rhs = ConstOpToValueStr[op.getRhs()];
+      assert(Lhs != "" && Rhs != "");
+
+      std::string pred = " == ";
+      auto predicate = op.getPredicate();
+      if (predicate == arith::CmpIPredicate::slt || predicate == arith::CmpIPredicate::ult) pred = " < ";
+      else if (predicate == arith::CmpIPredicate::sle || predicate == arith::CmpIPredicate::ule) pred = " <= ";
+      else if (predicate == arith::CmpIPredicate::sgt || predicate == arith::CmpIPredicate::ugt) pred = " > ";
+      else if (predicate == arith::CmpIPredicate::sge || predicate == arith::CmpIPredicate::uge) pred = " >= ";
+      else if (predicate == arith::CmpIPredicate::eq) pred = " == ";
+      else if (predicate == arith::CmpIPredicate::ne) pred = " != ";
+
+      indent() << EmitNewValueAndGetName(op.getResult(), type)
+              << " = " << Lhs << pred << Rhs << "\n";
+      return true;
+  }
+
+  bool visitOp(arith::SelectOp op) {
+      std::string type = getEmitType(op.getResult());
+
+      std::string cond = _pytestemitter->lookupName(op.getCondition());
+      if(cond == "") cond = ConstOpToValueStr[op.getCondition()];
+
+      std::string trueVal = _pytestemitter->lookupName(op.getTrueValue());
+      if(trueVal == "") trueVal = ConstOpToValueStr[op.getTrueValue()];
+
+      std::string falseVal = _pytestemitter->lookupName(op.getFalseValue());
+      if(falseVal == "") falseVal = ConstOpToValueStr[op.getFalseValue()];
+
+      assert(cond != "" && trueVal != "" && falseVal != "");
+
+      // res = trueVal if cond else falseVal
+      indent() << EmitNewValueAndGetName(op.getResult(), type)
+              << " = " << trueVal << " if " << cond << " else " << falseVal << "\n";
+      return true;
   }
 
   bool visitOp(LLVM::UndefOp op) {

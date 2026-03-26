@@ -31,9 +31,9 @@ namespace mlir
         {
             bool modified = false;
 
-            if (!op->hasAttr("algorithm_kind"))
+            if (!op->hasAttr("algorithm"))
             {
-                op->setAttr("algorithm_kind", builder.getStringAttr("Conv_Im2Col"));
+                op->setAttr("algorithm", builder.getStringAttr("Conv_Im2Col"));
                 modified = true;
             }
             if (!op->hasAttr("stationary_kind"))
@@ -43,15 +43,15 @@ namespace mlir
             }
             if (!op->hasAttr("tile_size"))
             {
-                op->setAttr("tile_size", builder.getDenseI64ArrayAttr({4, 64, 4, 4}));
+                op->setAttr("tile_size", builder.getDenseI64ArrayAttr({128, 16, 4, 9}));
                 modified = true;
             }
 
             if (modified)
             {
                 llvm::errs() << "\n[Warning] Missing systolic attributes on ConvOp.\n"
-                             << "          Injected fallback defaults: Algorithm=Conv_Im2Col, "
-                             << "Stationary=InputStationary, TileSize=[4,4].\n"
+                             << "          Injected fallback defaults: algorithm=Conv_Im2Col, "
+                             << "stationary_kind=InputStationary, tileSize=[128,16,4,9].\n"
                              << "          Did you bypass the strategy-decision pass?\n\n";
             }
         }
@@ -133,8 +133,17 @@ namespace mlir
 
             MapNestedForOrKernel(mapper, newfor, _OpNameFile_str);
 
-            // 5. Completely erase the original ConvOp to prevent zombie nodes from causing secondary engine triggers and segmentation faults
-            op.erase();
+            ADORA::KernelOp kernel = nullptr;
+            newfor.walk([&](ADORA::KernelOp k) { kernel = k; });
+            if (kernel) {
+                if (pyEmitter)  pyEmitter->GenerateCGRACFGAndEXE(kernel, mapper);
+                // if (sdkEmitter) sdkEmitter->GenerateCGRACFGAndEXE(kernel, mapper);
+                // if (cEmitter)   cEmitter->GenerateCGRACFGAndEXE(kernel, mapper);
+            }
+
+            op->moveBefore(newfor);
+
+            // op.erase();
 
             return true;
         }

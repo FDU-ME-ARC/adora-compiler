@@ -122,7 +122,7 @@ namespace mlir
 
                     AffineMap mapX = AffineMap::get(3, 0, xExprs, builder.getContext());
 
-                    // SRAM 分配大小现在会被截断，极其节省空间
+                    // The SRAM allocation size is now truncated
                     MemRefType tileTypeX = MemRefType::get({T_N, T_C, T_H_in, T_W_in}, meta.elementType);
                     auto loadX = builder.create<ADORA::DataBlockLoadOp>(
                         loc, op.getX(), mapX, ValueRange{iv_n, iv_p, iv_q}, tileTypeX);
@@ -366,8 +366,8 @@ namespace mlir
                     outerSteps_int,
                     /*BodyBuilder=*/BuildTiledDirectConvBody(op, meta, tileSizes, safeLoopOrder, finalResult));
 
-                op.getY().replaceAllUsesWith(finalResult);
-                op.erase();
+                op.replaceAllUsesWith(finalResult);
+                // op.erase();
 
                 SimplifyLoadStoreOpsInRegion(topLoop.getRegion());
                 topLoop.walk([&](Operation *inst)
