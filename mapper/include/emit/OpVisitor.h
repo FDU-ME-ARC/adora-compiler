@@ -81,7 +81,7 @@ public:
             arith::AddIOp, arith::SubIOp, arith::MulIOp, arith::DivSIOp,
             arith::CmpIOp,
             arith::RemSIOp,
-            // arith::DivUIOp, arith::RemUIOp,
+            arith::DivUIOp, arith::RemUIOp,
             // arith::XOrIOp, arith::AndIOp, arith::OrIOp, arith::ShLIOp,
             // arith::ShRSIOp, arith::ShRUIOp, arith::MaxSIOp, arith::MinSIOp,
             // arith::MaxUIOp, arith::MinUIOp,
@@ -210,8 +210,8 @@ public:
   HANDLE(arith::MulIOp);
   HANDLE(arith::DivSIOp);
   HANDLE(arith::RemSIOp);
-  // HANDLE(arith::DivUIOp);
-  // HANDLE(arith::RemUIOp);
+  HANDLE(arith::DivUIOp);
+  HANDLE(arith::RemUIOp);
   // HANDLE(arith::XOrIOp);
   // HANDLE(arith::AndIOp);
   // HANDLE(arith::OrIOp);
