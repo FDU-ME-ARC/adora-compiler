@@ -939,15 +939,27 @@ namespace
       }
 
       // Emit the Python allocation line.
-      indent() << name << " = np.empty((";
+      indent() << name << " = np.zeros((";
       for (size_t i = 0; i < shape.size(); ++i)
       {
-        indent();
         _os << shape[i];
         if (i + 1 != shape.size())
           _os << ", ";
       }
       _os << "), dtype=" << npDType << ")\n";
+
+      indent() << "try:\n";
+      _indent += 4;
+      indent() << "if arg_0.ndim == " << shape.size() << " and arg_0.shape[1] == " << name << ".shape[1] and all(d_alloc >= d_arg for d_alloc, d_arg in zip(" << name << ".shape, arg_0.shape)):\n";
+      _indent += 4;
+      indent() << "pad_slices = tuple(slice((d_alloc - d_arg) // 2, (d_alloc - d_arg) // 2 + d_arg) for d_alloc, d_arg in zip(" << name << ".shape, arg_0.shape))\n";
+      indent() << name << "[pad_slices] = arg_0\n";
+      _indent -= 8;
+      indent() << "except NameError:\n";
+      _indent += 4;
+      indent() << "pass\n";
+      _indent -= 4;
+
       return true;
     }
 
@@ -1006,7 +1018,28 @@ namespace
 
       return true;
     }
-    bool visitOp(func::ReturnOp op) { return true; }
+
+    bool visitOp(func::ReturnOp op)
+    {
+      // Synchronize the hardware stream
+      indent() << "await stream.synchronize()\n";
+
+      // If there are return values, return them
+      if (op.getNumOperands() > 0)
+      {
+        indent() << "return ";
+        for (int i = 0; i < op.getNumOperands(); ++i)
+        {
+          mlir::Value operand = op.getOperand(i);
+          std::string name = _pytestemitter->lookupName(operand);
+          if (name.empty()) name = ConstOpToValueStr[operand];
+
+          _os << name << (i != op.getNumOperands() - 1 ? ", " : "");
+        }
+        _os << "\n";
+      }
+      return true;
+    }
 
     /// SCF statements.
     // bool visitOp(scf::ForOp op) { return emitter.emitScfFor(op), true; };
@@ -1762,9 +1795,9 @@ async def aux_stream_pingpong_init(
     emitBlock(funcop.getBody().front(), os);
 
     // / function tail
-    os << R"XXX(
-    await stream.synchronize()
-)XXX";
+//     os << R"XXX(
+//     await stream.synchronize()
+// )XXX";
   }
 
   delete opEmitter;
