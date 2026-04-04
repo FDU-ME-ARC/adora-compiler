@@ -33,10 +33,19 @@ ADORA includes three compilers designed for the CGRA SoC:
 
 ·Handles hardware-specific scheduling, placement, and resource allocation.  
 
-·Generates RISC-V execution files for the Rocket+CGRA SoC. 
+·Generates RISC-V execution files for the Rocket+CGRA SoC.
 
-·Or generates pytest files for the AXI-CGRA simulation envioronment.   
+·Or generates pytest files for the AXI-CGRA simulation environment.
 
+
+### Related repositories
+
+External projects that complement this tree:
+
+| Project | Role |
+|--------|------|
+| [VITRA-CGRA](https://github.com/MIONkb/VITRA-CGRA) | CGRA RTL / hardware generation (Chipyard-based). |
+| [CGRA-Cocotb-Sim](https://github.com/theElysia/CGRA-Cocotb-Sim) | Cocotb-based simulation environment for AXI-CGRA. |
 
 #### If you have any issues related to this repository, please don't hesitate to get in touch!
 
@@ -46,6 +55,10 @@ ADORA includes three compilers designed for the CGRA SoC:
 - **`include` / `lib`** : C++ headers and source files for `cgra-opt` and `tensor-opt`
 
 - **`mapper`** : C++ source files for `cgra-mapper`
+
+- **`test`** : LLVM **lit** regression suite (`check-adora`): MLIR inputs and FileCheck expectations for `tensor-opt`, `cgra-opt`, `cgra-mapper`, and `adoracc` kernel flows; `test/spec/` holds JSON architecture / operation specs used by mapper tests.
+
+- **`frontend`** : Checkout location for the optional **adora-onnx-mlir** submodule (ONNX → MLIR entry path). Initialize and build it as in [Build § adora-onnx-mlir](#3-adora-onnx-mlir-optional) below.
 
 - **`build_tools`** : Bash scripts for building LLVM and Adora. See [build_tools/C_Compiler_instruction.md](build_tools/C_Compiler_instruction.md) for how to run the C compiler (adoracc + cgra-mapper) end-to-end.
 
@@ -75,15 +88,21 @@ Update the LLVM installation path in the following files to your own path:
 <!-- - `CMakeLists.txt` -->
 
 After making the changes, run `build_adora.sh`.  
-**Tip:** It is recommended to execute the script line-by-line (copy-paste using `Ctrl+C`/`Ctrl+V`) for better control.
+**Tip:** Run `build_adora.sh` in small steps (copy one command at a time) so you can catch errors early.
+
+After a successful CMake build, you can run the regression suite from the build directory:
+
+```bash
+cmake --build <your-build-dir> --target check-adora
+```
 
 ### 3 adora-onnx-mlir (Optional)
 
-A self-hosted version of onnx-mlir is provided as a submodule. You can initialize and update it with:
+A self-hosted **onnx-mlir** fork lives under [`frontend/adora-onnx-mlir`](frontend/adora-onnx-mlir) (git submodule). From the repo root, initialize and update it with:
 ```bash
 git submodule update --init --recursive
 ```
-Then follow the installation script build_tools/build_onnxmlir.sh.
+Then follow the installation script [`build_tools/build_onnxmlir.sh`](build_tools/build_onnxmlir.sh).
 
 If you only need to run small existing models in experiments, or only use C kernels, you can skip adora-onnx-mlir.
 
@@ -92,19 +111,19 @@ If you only need to run small existing models in experiments, or only use C kern
 You can download and install the CGRA from the appropriate repository:  
 [CGRA Repository](https://github.com/MIONkb/VITRA-CGRA)
 
-A light-weighted python api(cocotb) will be released soon.
+A lightweight Python API (cocotb) will be released soon.
 
-### 4 Other Dependencies You May Need
+### 5 Other dependencies you may need
 
-##### For AI Benchmarks: `torch-mlir`
+#### For AI benchmarks: `torch-mlir`
 
 Download and install `torch-mlir`.  
-Our supported version is **`torch-mlir_20250127.357`**. (Corresponding torch-vision version: 0.1.6.dev0)
+Our supported version is **`torch-mlir_20250127.357`**. (Corresponding **torchvision** version: `0.1.6.dev0`.)
 
 You can find the official repository here:  
 [Torch MLIR GitHub Repository](https://github.com/llvm/torch-mlir)
 
-##### For C Benchmarks: Polygeist
+#### For C benchmarks: Polygeist
 
 Download and install **Polygeist** to run C benchmarks.  
 You can find the Polygeist repository here:  
@@ -156,9 +175,10 @@ bash scripts/5_compile_and_link.sh
 ```
 
 
-## \# Related Publications
-```latex
-@inproceedings{
+## Related publications
+
+```bibtex
+@inproceedings{lou2025adora,
   title={Adora Compiler: End-to-End Optimization for High-Efficiency Dataflow Acceleration and Task Pipelining on CGRAs},
   author={Lou, Jiahang and Zhu, Qilong and Dai, Yuan and Zhong, Zewei and Yin, Wenbo and Wang, Lingli},
   booktitle={2025 62nd ACM/IEEE Design Automation Conference (DAC)},

@@ -1,0 +1,5 @@
+# format: DFG-IO-Tag, DFG-IO-Name, ADG-IOB-Id, ADG-IOB-Index, DFG-IO-Latency
+INPUT_0, Input1, 5, 4, 0
+INPUT_1, Input3, 7, 6, 0
+INPUT_2, Input8, 4, 3, 0
+OUTPUT_3, Output11, 3, 2, 12

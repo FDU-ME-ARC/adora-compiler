@@ -1,0 +1,10 @@
+Digraph G {
+Input0[opcode = "Input", ref_name="gemm_0:0", size="100", offset="0,0", pattern="4,25", color = black];
+FMUL321[opcode = "FMUL32", color = black];
+Output2[opcode = "Output", ref_name="gemm_0:1", size="100", offset="0,0", pattern="4,25", color = black];
+for4[opcode = "for", color = purple];
+CONST5[opcode = "CONST", value="0x3F99999A", color = black];
+Input0 -> FMUL321[color = black, style = bold, operand = 0, label = "Op=0"];
+CONST5 -> FMUL321[color = black, style = bold, operand = 1, label = "Op=1"];
+FMUL321 -> Output2[color = black, style = bold, operand = 0, label = "Op=0"];
+}

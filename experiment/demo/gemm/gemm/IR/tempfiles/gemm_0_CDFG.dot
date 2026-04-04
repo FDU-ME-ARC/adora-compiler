@@ -1,0 +1,32 @@
+Digraph G {
+Input0[opcode = "Input", ref_name="gemm:0", size="2000", offset="0,0", pattern="4,25,-96,25,-96,30,4,20", color = black];
+FMUL321[opcode = "FMUL32", color = black];
+Output2[opcode = "Output", ref_name="gemm:4", size="2000", offset="0,0", pattern="4,25,-96,25,-96,30,4,20", color = black];
+yield3[opcode = "yield", color = black];
+for4[opcode = "for", color = black];
+Input5[opcode = "Input", ref_name="gemm:1", size="2400", offset="0,0", pattern="0,25,0,25,4,30,4,20", color = purple];
+FMUL326[opcode = "FMUL32", color = purple];
+Input7[opcode = "Input", ref_name="gemm:2", size="3000", offset="0,0", pattern="0,25,4,25,4,30,-2996,20", color = purple];
+FMUL328[opcode = "FMUL32", color = purple];
+Input9[opcode = "Input", ref_name="gemm:3", size="2000", offset="0,0", pattern="0,25,4,25,-96,30,4,20", color = purple];
+FADD3210[opcode = "FADD32", color = purple];
+Output11[opcode = "Output", ref_name="gemm:4", size="2000", offset="0,0", pattern="0,25,4,25,-96,30,4,20", color = purple];
+yield12[opcode = "yield", color = purple];
+for13[opcode = "for", color = purple];
+yield14[opcode = "yield", color = blue];
+for15[opcode = "for", color = blue];
+yield16[opcode = "yield", color = yellow];
+for17[opcode = "for", color = black];
+CONST18[opcode = "CONST", value="0x3F99999A", color = black];
+CONST19[opcode = "CONST", value="0x3FC00000", color = black];
+Input0 -> FMUL321[color = black, style = bold, operand = 0, label = "Op=0"];
+CONST18 -> FMUL321[color = black, style = bold, operand = 1, label = "Op=1"];
+FMUL321 -> Output2[color = black, style = bold, operand = 0, label = "Op=0"];
+Input5 -> FMUL326[color = black, style = bold, operand = 0, label = "Op=0"];
+CONST19 -> FMUL326[color = black, style = bold, operand = 1, label = "Op=1"];
+FMUL326 -> FMUL328[color = black, style = bold, operand = 0, label = "Op=0"];
+Input7 -> FMUL328[color = black, style = bold, operand = 1, label = "Op=1"];
+Input9 -> FADD3210[color = black, style = bold, operand = 0, label = "Op=0"];
+FMUL328 -> FADD3210[color = black, style = bold, operand = 1, label = "Op=1"];
+FADD3210 -> Output11[color = black, style = bold, operand = 0, label = "Op=0"];
+}
