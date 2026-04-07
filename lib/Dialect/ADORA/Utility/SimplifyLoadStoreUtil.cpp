@@ -116,7 +116,8 @@ static bool RemoveRedundantLoads(RegionOpT RegionOp){
       for(AffineLoadOp load : RegionOp.template getOps<AffineLoadOp>()){
         if(store == load){ continue; }
         else if(ConsecutiveStoreLoadAccessSameMemAddr(store, load)){
-          load.getOperation()->replaceAllUsesWith(store.getValue().getDefiningOp());
+          // Replace the load result with the stored SSA value.
+          load.getResult().replaceAllUsesWith(store.getValue());
           load->erase();
           NoChange = false;
           break;
