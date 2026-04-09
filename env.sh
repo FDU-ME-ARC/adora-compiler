@@ -47,3 +47,5 @@ export CC=/usr/bin/gcc
 export CXX=/usr/bin/g++
 
 export PATH=$PATH:/home/ykchen/.local/bin
+
+export PATH=/home/jhlou/zwzhong/verilator-master/install/usr/local/bin:$PATH
