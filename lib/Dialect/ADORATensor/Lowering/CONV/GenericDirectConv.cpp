@@ -55,14 +55,14 @@ ConvMetadata getConvMetadata(ConvOp op)
 StationaryBodyBuilderFn BuildTiledDirectConvBody(
     ConvOp op,
     Value actualInput,
-    ConvMetadata meta,
+    ConvMetadata meta, 
     ArrayRef<int64_t> tileSizes,
     ArrayRef<int> safeLoopOrder,
     Value finalResult)
 {
     return [=](OpBuilder &builder, Location loc, ValueRange ivs) mutable
     {
-        llvm::outs() << "\n[DEBUG-DirectConv] Entering Core Tile Generation...\n";
+        llvm::outs() << "\n[DEBUG-DirectConv] Entering Core Tile Generation (Multi-Bank Scalar Strategy)...\n";
 
         Value zero_idx = builder.create<arith::ConstantIndexOp>(loc, 0);
         Value iv_n = zero_idx, iv_k = zero_idx, iv_p = zero_idx, iv_q = zero_idx;
@@ -76,7 +76,7 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
 
         int64_t T_N = tileSizes[DimN];
         int64_t T_K = tileSizes[DimK];
-        int64_t T_P = tileSizes[DimP];
+        int64_t T_P = tileSizes[DimP]; 
         int64_t T_Q = tileSizes[DimQ];
 
         int64_t T_H_in = (T_P - 1) * meta.strides[0] + (meta.bounds[DimR] - 1) * meta.dilations[0] + 1;
@@ -85,7 +85,9 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
         unsigned OpId = 0;
         MemRefType tileTypeX = MemRefType::get({T_N, meta.bounds[DimC], T_H_in, T_W_in}, meta.elementType);
         MemRefType tileTypeW = MemRefType::get({T_K, meta.bounds[DimC], meta.bounds[DimR], meta.bounds[DimS]}, meta.elementType);
-        MemRefType rowPeTypeY = MemRefType::get({1, T_K, 1, T_Q}, meta.elementType);
+        
+        // 我们回归最纯粹的 2D 独立 Alloc 策略
+        MemRefType singleBankTypeY = MemRefType::get({T_K, T_Q}, meta.elementType); 
 
         // 1. Data Transfer: Load Input (X)
         SmallVector<AffineExpr, 4> xExprs = {
@@ -98,7 +100,6 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
         auto loadX = builder.create<ADORA::DataBlockLoadOp>(loc, actualInput, mapX, ValueRange{iv_n, iv_p, iv_q}, tileTypeX);
         loadX.setId(std::to_string(OpId++));
         loadX.setKernelName("ConvDirect");
-        setPingpongAttr(loadX);
 
         // 2. Data Transfer: Load Weight (W)
         SmallVector<AffineExpr, 4> wExprs = {
@@ -111,9 +112,8 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
         auto loadW = builder.create<ADORA::DataBlockLoadOp>(loc, op.getW(), mapW, ValueRange{iv_k}, tileTypeW);
         loadW.setId(std::to_string(OpId++));
         loadW.setKernelName("ConvDirect");
-        setPingpongAttr(loadW);
 
-        // 3. 外部静态分配 Local SRAM：满足 Mapper 的 IO 分配约束，只在行维度展开
+        // 3. 为 T_P 展开分配独立的 SPAD Bank（完美消除并行写的端口争用）
         SmallVector<Value> yInits, yAllocs;
         SmallVector<std::string> yAllocIDs;
         for (int p = 0; p < T_P; ++p) {
@@ -125,71 +125,61 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
             };
             AffineMap mapY_block = AffineMap::get(4, 0, yExprs, builder.getContext());
 
-            auto yInit = builder.create<ADORA::DataBlockLoadOp>(loc, finalResult, mapY_block, ValueRange{iv_n, iv_k, iv_p, iv_q}, rowPeTypeY);
+            auto yInit = builder.create<ADORA::DataBlockLoadOp>(loc, finalResult, mapY_block, ValueRange{iv_n, iv_k, iv_p, iv_q}, singleBankTypeY);
             yInit.setId(std::to_string(OpId++));
             yInit.setKernelName("ConvDirect");
-            setPingpongAttr(yInit);
             yInits.push_back(yInit.getResult());
 
-            auto yAlloc = builder.create<ADORA::LocalMemAllocOp>(loc, rowPeTypeY);
+            auto yAlloc = builder.create<ADORA::LocalMemAllocOp>(loc, singleBankTypeY);
             std::string allocID = std::to_string(OpId++);
             yAlloc.setId(allocID);
             yAlloc.setKernelName("ConvDirect");
-            setPingpongAttr(yAlloc);
-
+            
             yAllocs.push_back(yAlloc.getResult());
             yAllocIDs.push_back(allocID);
         }
 
         // 4. Kernel 硬件核心
-        SmallVector<int> device_bounds = { static_cast<int>(T_K), static_cast<int>(T_Q) };
-
+        SmallVector<int> device_bounds = { static_cast<int>(T_K), static_cast<int>(T_Q) }; 
+        
         auto deviceBodyBuilder = [&](OpBuilder &b3, Location microLoc, ValueRange dev_ivs) {
             Value k_inner = dev_ivs[0];
             Value q_inner = dev_ivs[1];
 
-            // 4.1 将 yInit 的初始值读入 yAlloc (SRAM 内部流转)
-            for (int p = 0; p < T_P; ++p) {
-                SmallVector<AffineExpr, 4> yInnerExprs = {
-                    b3.getAffineConstantExpr(0), b3.getAffineDimExpr(0),
-                    b3.getAffineConstantExpr(0), b3.getAffineDimExpr(1)
-                };
-                AffineMap mapYInner = AffineMap::get(2, 0, yInnerExprs, b3.getContext());
+            SmallVector<AffineExpr, 2> yInnerExprs = {
+                b3.getAffineDimExpr(0), b3.getAffineDimExpr(1)
+            };
+            AffineMap mapYInner = AffineMap::get(2, 0, yInnerExprs, b3.getContext());
 
+            // 4.1 初始化内部暂存值
+            for (int p = 0; p < T_P; ++p) {
                 auto initVal = b3.create<affine::AffineLoadOp>(microLoc, yInits[p], mapYInner, ValueRange{k_inner, q_inner});
                 b3.create<affine::AffineStoreOp>(microLoc, initVal, yAllocs[p], mapYInner, ValueRange{k_inner, q_inner});
             }
 
-            // 4.2 通道 C 的归约循环
+            // 4.2 通道循环
             auto cLoop = b3.create<affine::AffineForOp>(microLoc, 0, meta.bounds[DimC], 1);
             OpBuilder cBuilder = OpBuilder::atBlockTerminator(cLoop.getBody());
             Value c_inner = cLoop.getInductionVar();
 
-            // 4.3 核心计算累加：彻底抛弃违规的 alloc，直接对 SRAM 原地累加
+            // 4.3 独立的标量累加（向 GEMM 看齐：无 Interleaver）
             for (int p = 0; p < T_P; ++p) {
-                SmallVector<AffineExpr, 4> yInnerExprs = {
-                    cBuilder.getAffineConstantExpr(0), cBuilder.getAffineDimExpr(0),
-                    cBuilder.getAffineConstantExpr(0), cBuilder.getAffineDimExpr(1)
-                };
-                AffineMap mapYInner = AffineMap::get(2, 0, yInnerExprs, cBuilder.getContext());
-
-                // 读出现有累加值
                 Value acc = cBuilder.create<affine::AffineLoadOp>(microLoc, yAllocs[p], mapYInner, ValueRange{k_inner, q_inner});
 
                 for (int r = 0; r < meta.bounds[DimR]; ++r) {
                     for (int s = 0; s < meta.bounds[DimS]; ++s) {
-                        SmallVector<AffineExpr, 4> xInnerExprs = {
-                            cBuilder.getAffineConstantExpr(0),
-                            cBuilder.getAffineDimExpr(0),
-                            cBuilder.getAffineConstantExpr(p * meta.strides[0] + r * meta.dilations[0]),
-                            cBuilder.getAffineDimExpr(1) * meta.strides[1] + cBuilder.getAffineConstantExpr(s * meta.dilations[1])
+                        SmallVector<AffineExpr, 2> xInnerExprs = {
+                            cBuilder.getAffineConstantExpr(0), 
+                            cBuilder.getAffineDimExpr(0), 
+                            cBuilder.getAffineConstantExpr(p * meta.strides[0] + r * meta.dilations[0]), 
+                            cBuilder.getAffineDimExpr(1) * meta.strides[1] + cBuilder.getAffineConstantExpr(s * meta.dilations[1]) 
                         };
                         AffineMap mapXInner = AffineMap::get(2, 0, xInnerExprs, cBuilder.getContext());
                         auto valX = cBuilder.create<affine::AffineLoadOp>(microLoc, loadX.getResult(), mapXInner, ValueRange{c_inner, q_inner});
 
-                        SmallVector<AffineExpr, 4> wInnerExprs = {
-                            cBuilder.getAffineDimExpr(0),
-                            cBuilder.getAffineDimExpr(1),
+                        SmallVector<AffineExpr, 2> wInnerExprs = {
+                            cBuilder.getAffineDimExpr(0), 
+                            cBuilder.getAffineDimExpr(1), 
                             cBuilder.getAffineConstantExpr(r),
                             cBuilder.getAffineConstantExpr(s)
                         };
@@ -200,7 +190,8 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
                         acc = genArithAddOpAccordingToDataType(cBuilder, microLoc, acc, mul)->getResult(0);
                     }
                 }
-                // 存回累加值
+                
+                // 完全独立的标量 Store，Mapper 会把它们调度到无冲突的 SPAD Bank 上！
                 cBuilder.create<affine::AffineStoreOp>(microLoc, acc, yAllocs[p], mapYInner, ValueRange{k_inner, q_inner});
             }
 
@@ -210,7 +201,7 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
         AffineForOp computeLoop = GenerateOnDeviceNestedLoop(builder, loc, 2, device_bounds, deviceBodyBuilder);
         (void)SpecifiedAffineFortoKernel(computeLoop, "ConvDirect");
 
-        // 5. BlockStore 回写
+        // 5. 独立的 BlockStore 回写
         for (int p = 0; p < T_P; ++p) {
             SmallVector<AffineExpr, 4> yExprs = {
                 builder.getAffineDimExpr(0),
@@ -219,14 +210,13 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
                 builder.getAffineDimExpr(3)
             };
             AffineMap mapY_block = AffineMap::get(4, 0, yExprs, builder.getContext());
-
+            
             auto storeY = builder.create<ADORA::DataBlockStoreOp>(
                 loc, yAllocs[p], finalResult, mapY_block, ValueRange{iv_n, iv_k, iv_p, iv_q});
             storeY.setKernelName("ConvDirect");
             storeY.setId(yAllocIDs[p]);
-            setPingpongAttr(storeY);
         }
-
+        
         builder.create<affine::AffineYieldOp>(loc);
     };
 }
@@ -271,7 +261,7 @@ mlir::affine::AffineForOp LowerGenericDirectConv(OpBuilder &b, ConvOp op, Systol
         outerSteps_int.push_back(static_cast<int>(tileSizes[dim]));
     }
 
-    Value actualInput = op.getX();
+    Value actualInput = op.getX(); 
     auto finalOutputType = mlir::cast<MemRefType>(op.getY().getType());
     Value finalResult = b.create<memref::AllocOp>(loc, finalOutputType);
 
@@ -281,7 +271,20 @@ mlir::affine::AffineForOp LowerGenericDirectConv(OpBuilder &b, ConvOp op, Systol
 
     op.replaceAllUsesWith(finalResult);
 
-    topLoop.walk([&](Operation *inst) { inst->setAttr("ADORAConv", UnitAttr::get(topLoop.getContext())); });
+    // =========================================================================
+    // 🚨 全局自动添加 Pingpong 标签，使得所有访存节点合法通过 Mapper 映射！
+    // =========================================================================
+    topLoop.walk([&](Operation *inst) { 
+        inst->setAttr("ADORAConv", UnitAttr::get(topLoop.getContext())); 
+
+        if (isa<ADORA::DataBlockLoadOp>(inst) ||
+            isa<ADORA::DataBlockStoreOp>(inst) ||
+            isa<ADORA::LocalMemAllocOp>(inst) ||
+            isa<affine::AffineLoadOp>(inst) || 
+            isa<affine::AffineStoreOp>(inst)) {
+            inst->setAttr("Pingpong", UnitAttr::get(topLoop.getContext()));
+        }
+    });
 
     return topLoop;
 }
