@@ -45,146 +45,166 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
 {
     return [=](OpBuilder &builder, Location loc, ValueRange ivs) mutable
     {
-        llvm::outs() << "\n[DEBUG-DirectConv] Generating Ultra-Low IO OS-style Conv...\n";
+        llvm::outs() << "\n[DEBUG-DirectConv] Generating OS-style Conv with R,S as outer loops...\n";
 
-        Value iv_n = ivs[0], iv_k = ivs[1], iv_p = ivs[2], iv_q = ivs[3];
+        // 外层传进来了 6 个维度的循环变量
+        Value iv_n = ivs[0], iv_k = ivs[1], iv_p = ivs[2], iv_q = ivs[3], iv_r = ivs[4], iv_s = ivs[5];
         int64_t T_N = tileSizes[DimN], T_K = tileSizes[DimK], T_P = tileSizes[DimP], T_Q = tileSizes[DimQ];
-        int64_t T_H_in = (T_P - 1) * meta.strides[0] + (meta.bounds[DimR] - 1) * meta.dilations[0] + 1;
-        int64_t T_W_in = (T_Q - 1) * meta.strides[1] + (meta.bounds[DimS] - 1) * meta.dilations[1] + 1;
+
+        // 由于 r 和 s 在单词 kernel 调用中是固定的，X 只需要加载 T_P 和 T_Q 的大小，极大地缩小了 SPAD 占用！
+        int64_t T_H_in = (T_P - 1) * meta.strides[0] + 1;
+        int64_t T_W_in = (T_Q - 1) * meta.strides[1] + 1;
 
         unsigned OpId = 0;
-        MemRefType tileTypeX = MemRefType::get({T_N, meta.bounds[DimC], T_H_in, T_W_in}, meta.elementType);
-        MemRefType tileTypeW = MemRefType::get({T_K, meta.bounds[DimC], meta.bounds[DimR], meta.bounds[DimS]}, meta.elementType);
-        MemRefType tileTypeY = MemRefType::get({T_K, T_Q, T_P}, meta.elementType); // T_P 在最内层支持 Vector
+        SmallVector<ADORA::DataBlockStoreOp> stores;
 
-        // 1. DataBlockLoad X & W
-        auto mapX = AffineMap::get(3, 0, {builder.getAffineDimExpr(0), builder.getAffineConstantExpr(0), builder.getAffineDimExpr(1) * meta.strides[0] - meta.pads[0], builder.getAffineDimExpr(2) * meta.strides[1] - meta.pads[1]}, builder.getContext());
-        auto loadX = builder.create<ADORA::DataBlockLoadOp>(loc, actualInput, mapX, ValueRange{iv_n, iv_p, iv_q}, tileTypeX);
+        // 1. X BlockLoad
+        MemRefType tileTypeX = MemRefType::get({T_N, meta.bounds[DimC], T_H_in, T_W_in}, meta.elementType);
+        auto mapX = AffineMap::get(5, 0, {
+            builder.getAffineDimExpr(0),
+            builder.getAffineConstantExpr(0),
+            builder.getAffineDimExpr(1) * meta.strides[0] + builder.getAffineDimExpr(3) * meta.dilations[0] - meta.pads[0],
+            builder.getAffineDimExpr(2) * meta.strides[1] + builder.getAffineDimExpr(4) * meta.dilations[1] - meta.pads[1]
+        }, builder.getContext());
+        auto loadX = builder.create<ADORA::DataBlockLoadOp>(loc, actualInput, mapX, ValueRange{iv_n, iv_p, iv_q, iv_r, iv_s}, tileTypeX);
         loadX.setId(std::to_string(OpId++)); loadX.setKernelName("ConvDirect");
         ADORA::setPingpongAttr(loadX);
 
-        auto mapW = AffineMap::get(1, 0, {builder.getAffineDimExpr(0), builder.getAffineConstantExpr(0), builder.getAffineConstantExpr(0), builder.getAffineConstantExpr(0)}, builder.getContext());
-        auto loadW = builder.create<ADORA::DataBlockLoadOp>(loc, op.getW(), mapW, ValueRange{iv_k}, tileTypeW);
-        loadW.setId(std::to_string(OpId++)); loadW.setKernelName("ConvDirect");
-        ADORA::setPingpongAttr(loadW);
+        // 2. 维持 K 维度的多块切分 (Multiple BlockStore)
+        int K_chunk = (T_K >= 4 && T_K % 4 == 0) ? 4 : 1;
+        if (T_K == 16) K_chunk = 4;
+        int num_K_blocks = T_K / K_chunk;
 
-        // 2. DataBlockLoad Y_init & Alloc
-        auto mapY_block = AffineMap::get(4, 0, {builder.getAffineDimExpr(0), builder.getAffineDimExpr(1), builder.getAffineDimExpr(2), builder.getAffineDimExpr(3)}, builder.getContext());
-        auto yInit = builder.create<ADORA::DataBlockLoadOp>(loc, finalResult, mapY_block, ValueRange{iv_n, iv_k, iv_p, iv_q}, tileTypeY);
-        yInit.setId(std::to_string(OpId++)); yInit.setKernelName("ConvDirect");
-        ADORA::setPingpongAttr(yInit);
+        SmallVector<Value> wLoads, yInits, yAllocs;
 
-        auto yAlloc = builder.create<ADORA::LocalMemAllocOp>(loc, tileTypeY);
-        std::string allocID = std::to_string(OpId++); yAlloc.setId(allocID); yAlloc.setKernelName("ConvDirect");
-        ADORA::setPingpongAttr(yAlloc);
+        for (int kb = 0; kb < num_K_blocks; ++kb) {
+            // W BlockLoad (每次只加载当前确定的 r 和 s，大小为 1x1)
+            MemRefType typeW = MemRefType::get({K_chunk, meta.bounds[DimC], 1, 1}, meta.elementType);
+            auto mapW = AffineMap::get(3, 0, {
+                builder.getAffineDimExpr(0) + builder.getAffineConstantExpr(kb * K_chunk),
+                builder.getAffineConstantExpr(0),
+                builder.getAffineDimExpr(1), // iv_r
+                builder.getAffineDimExpr(2)  // iv_s
+            }, builder.getContext());
+            auto loadW = builder.create<ADORA::DataBlockLoadOp>(loc, op.getW(), mapW, ValueRange{iv_k, iv_r, iv_s}, typeW);
+            loadW.setId(std::to_string(OpId++)); loadW.setKernelName("ConvDirect");
+            ADORA::setPingpongAttr(loadW);
+            wLoads.push_back(loadW.getResult());
 
-        // 3. Kernel 硬件核心
-        SmallVector<int> device_bounds = { static_cast<int>(T_K), static_cast<int>(T_Q) }; 
+            // Y BlockLoad & Alloc
+            MemRefType typeY = MemRefType::get({K_chunk, T_Q, T_P}, meta.elementType);
+            auto mapY = AffineMap::get(4, 0, {
+                builder.getAffineDimExpr(0), builder.getAffineDimExpr(1) + builder.getAffineConstantExpr(kb * K_chunk),
+                builder.getAffineDimExpr(2), builder.getAffineDimExpr(3)
+            }, builder.getContext());
 
+            auto yInit = builder.create<ADORA::DataBlockLoadOp>(loc, finalResult, mapY, ValueRange{iv_n, iv_k, iv_p, iv_q}, typeY);
+            yInit.setId(std::to_string(OpId++)); yInit.setKernelName("ConvDirect");
+
+            auto yAlloc = builder.create<ADORA::LocalMemAllocOp>(loc, typeY);
+            std::string aId = std::to_string(OpId);
+            yAlloc.setId(aId); yAlloc.setKernelName("ConvDirect");
+
+            auto storeY = builder.create<ADORA::DataBlockStoreOp>(loc, yAlloc.getResult(), finalResult, mapY, ValueRange{iv_n, iv_k, iv_p, iv_q});
+            storeY.setId(std::to_string(OpId++));
+            storeY.setKernelName("ConvDirect");
+
+            // ADORA::setPingpongAttr(yInit);
+            yInits.push_back(yInit.getResult());
+            yAllocs.push_back(yAlloc.getResult());
+            stores.push_back(storeY);
+        }
+
+        // 3. Kernel body (现在内部严格只有3层嵌套：k_inner, q_inner, c_inner)
+        SmallVector<int> device_bounds = { static_cast<int>(K_chunk), static_cast<int>(T_Q) };
         auto deviceBodyBuilder = [&](OpBuilder &b3, Location microLoc, ValueRange dev_ivs) {
             Value k_inner = dev_ivs[0], q_inner = dev_ivs[1];
             mlir::Type dtype = meta.elementType;
 
-            // 💡 A: 寄存器赋初值 0.0 (消灭初始访存)
             mlir::Value zero = ADORA::getConstantOpAccordingToDataType(b3, microLoc, dtype, 0.0);
-            SmallVector<Value> initial_accs(T_P, zero);
+            SmallVector<Value> initial_accs(num_K_blocks * T_P, zero);
 
-            // 💡 B: 将 C, R, S 彻底下放为 MLIR 的 affine.for，将 IO 数量砍掉 90%！
+            // 唯一一层深度循环：c_inner
             auto cLoop = b3.create<affine::AffineForOp>(microLoc, 0, meta.bounds[DimC], 1, initial_accs);
             b3.setInsertionPointToStart(cLoop.getBody());
             Value c_i = cLoop.getInductionVar();
 
-            auto rLoop = b3.create<affine::AffineForOp>(microLoc, 0, meta.bounds[DimR], 1, cLoop.getRegionIterArgs());
-            b3.setInsertionPointToStart(rLoop.getBody());
-            Value r_i = rLoop.getInductionVar();
-
-            auto sLoop = b3.create<affine::AffineForOp>(microLoc, 0, meta.bounds[DimS], 1, rLoop.getRegionIterArgs());
-            b3.setInsertionPointToStart(sLoop.getBody());
-            Value s_i = sLoop.getInductionVar();
-
-            SmallVector<Value> current_accs;
-            for (auto arg : sLoop.getRegionIterArgs()) current_accs.push_back(arg);
-
-            // W 在 sLoop 内只读取 1 次！
-            auto mapWInner = AffineMap::get(4, 0, {b3.getAffineDimExpr(0), b3.getAffineDimExpr(1), b3.getAffineDimExpr(2), b3.getAffineDimExpr(3)}, b3.getContext());
-            auto wVal = b3.create<affine::AffineLoadOp>(microLoc, loadW.getResult(), mapWInner, ValueRange{k_inner, c_i, r_i, s_i});
-            ADORA::setPingpongAttr(wVal);
-
             SmallVector<Value> next_accs;
+            for (auto arg : cLoop.getRegionIterArgs()) next_accs.push_back(arg);
+
+            // 没有 R 和 S 的宏观展开！它们已经是外层循环了。
+            SmallVector<Value> xVals(T_P);
             for (int p = 0; p < T_P; ++p) {
-                // X 根据 p 展开，读取 T_P 次，极简 I/O
-                auto mapXInner = AffineMap::get(4, 0, {
-                    b3.getAffineConstantExpr(0), b3.getAffineDimExpr(0),
-                    b3.getAffineConstantExpr(p * meta.strides[0]) + b3.getAffineDimExpr(1) * meta.dilations[0],
-                    b3.getAffineDimExpr(2) * meta.strides[1] + b3.getAffineDimExpr(3) * meta.dilations[1]
+                auto mapXInner = AffineMap::get(2, 0, {
+                    b3.getAffineConstantExpr(0), b3.getAffineDimExpr(0), // n, c_i
+                    b3.getAffineConstantExpr(p * meta.strides[0]),
+                    b3.getAffineDimExpr(1) * meta.strides[1] // q_inner
                 }, b3.getContext());
+                xVals[p] = b3.create<affine::AffineLoadOp>(microLoc, loadX.getResult(), mapXInner, ValueRange{c_i, q_inner});
+                ADORA::setPingpongAttr(xVals[p].getDefiningOp());
+            }
 
-                auto xVal = b3.create<affine::AffineLoadOp>(microLoc, loadX.getResult(), mapXInner, ValueRange{c_i, r_i, q_inner, s_i});
-                ADORA::setPingpongAttr(xVal);
+            for (int kb = 0; kb < num_K_blocks; ++kb) {
+                auto mapWInner = AffineMap::get(2, 0, {
+                    b3.getAffineDimExpr(0), b3.getAffineDimExpr(1), // k_inner, c_i
+                    b3.getAffineConstantExpr(0), b3.getAffineConstantExpr(0)
+                }, b3.getContext());
+                auto wVal = b3.create<affine::AffineLoadOp>(microLoc, wLoads[kb], mapWInner, ValueRange{k_inner, c_i});
+                ADORA::setPingpongAttr(wVal);
 
-                auto mul = ADORA::genArithMulOpAccordingToDataType(b3, microLoc, xVal, wVal)->getResult(0);
-                auto add = ADORA::genArithAddOpAccordingToDataType(b3, microLoc, current_accs[p], mul)->getResult(0);
-                next_accs.push_back(add);
+                for (int p = 0; p < T_P; ++p) {
+                    auto mul = ADORA::genArithMulOpAccordingToDataType(b3, microLoc, xVals[p], wVal)->getResult(0);
+                    int acc_idx = kb * T_P + p;
+                    next_accs[acc_idx] = ADORA::genArithAddOpAccordingToDataType(b3, microLoc, next_accs[acc_idx], mul)->getResult(0);
+                }
             }
 
             b3.create<affine::AffineYieldOp>(microLoc, next_accs);
-            b3.setInsertionPointAfter(sLoop);
-            b3.create<affine::AffineYieldOp>(microLoc, sLoop.getResults());
-            b3.setInsertionPointAfter(rLoop);
-            b3.create<affine::AffineYieldOp>(microLoc, rLoop.getResults());
             b3.setInsertionPointAfter(cLoop);
 
             SmallVector<Value> final_accs;
             for (auto res : cLoop.getResults()) final_accs.push_back(res);
 
-            // 💡 C: 完美复刻 OSGemm 的写回逻辑 (块大小为 4 的 Interleaver + 标量余数)
-            int p = 0;
-            if (T_P >= 4) {
-                for (; p + 4 <= T_P; p += 4) {
-                    SmallVector<int64_t, 4> shape = {4};
-                    auto vecType = VectorType::get(shape, dtype);
-                    auto mapYVec = AffineMap::get(2, 0, {b3.getAffineDimExpr(0), b3.getAffineDimExpr(1), b3.getAffineConstantExpr(p)}, b3.getContext());
+            // Interleaver & Store (🚨向 OSGemm 靠拢：不在此处给向量操作施加 Pingpong)
+            for (int kb = 0; kb < num_K_blocks; ++kb) {
+                int p = 0;
+                if (T_P >= 4) {
+                    for (; p + 4 <= T_P; p += 4) {
+                        SmallVector<int64_t, 4> shape = {4};
+                        auto vecType = VectorType::get(shape, dtype);
+                        auto mapYVec = AffineMap::get(2, 0, {b3.getAffineDimExpr(0), b3.getAffineDimExpr(1), b3.getAffineConstantExpr(p)}, b3.getContext());
 
-                    // VectorLoad 读取初始 C
-                    auto vecLoadY = b3.create<affine::AffineVectorLoadOp>(microLoc, vecType, yInit.getResult(), mapYVec, ValueRange{k_inner, q_inner});
-                    ADORA::setPingpongAttr(vecLoadY);
+                        auto vecLoadY = b3.create<affine::AffineVectorLoadOp>(microLoc, vecType, yInits[kb], mapYVec, ValueRange{k_inner, q_inner});
 
-                    // Deinterleaver4
-                    OperationState deinterState(microLoc, "ADORA.deinterleaver");
-                    deinterState.addOperands(vecLoadY.getResult());
-                    deinterState.addTypes(SmallVector<Type>(4, dtype));
-                    deinterState.addAttribute("deinterleaveNumber", b3.getI32IntegerAttr(4));
-                    Operation* deinterOp = b3.create(deinterState);
+                        OperationState deinterState(microLoc, "ADORA.deinterleaver");
+                        deinterState.addOperands(vecLoadY.getResult());
+                        deinterState.addTypes(SmallVector<Type>(4, dtype));
+                        deinterState.addAttribute("deinterleaveNumber", b3.getI32IntegerAttr(4));
+                        Operation* deinterOp = b3.create(deinterState);
 
-                    // 4个标量独立相加
-                    SmallVector<mlir::Value> to_interleave;
-                    for(int i = 0; i < 4; ++i) {
-                        Value scalarAdd = ADORA::genArithAddOpAccordingToDataType(
-                            b3, microLoc, final_accs[p + i], deinterOp->getResult(i))->getResult(0);
-                        to_interleave.push_back(scalarAdd);
+                        SmallVector<mlir::Value> to_interleave;
+                        for(int i = 0; i < 4; ++i) {
+                            Value scalarAdd = ADORA::genArithAddOpAccordingToDataType(
+                                b3, microLoc, final_accs[kb * T_P + p + i], deinterOp->getResult(i))->getResult(0);
+                            to_interleave.push_back(scalarAdd);
+                        }
+
+                        OperationState interState(microLoc, "ADORA.interleaver");
+                        interState.addOperands(to_interleave);
+                        interState.addTypes(vecType);
+                        interState.addAttribute("interleaveNumber", b3.getI32IntegerAttr(4));
+                        Operation* interOp = b3.create(interState);
+
+                        b3.create<affine::AffineVectorStoreOp>(microLoc, interOp->getResult(0), yAllocs[kb], mapYVec, ValueRange{k_inner, q_inner});
                     }
-
-                    // Interleaver4 打包
-                    OperationState interState(microLoc, "ADORA.interleaver");
-                    interState.addOperands(to_interleave);
-                    interState.addTypes(vecType);
-                    interState.addAttribute("interleaveNumber", b3.getI32IntegerAttr(4));
-                    Operation* interOp = b3.create(interState);
-
-                    auto vecStore = b3.create<affine::AffineVectorStoreOp>(microLoc, interOp->getResult(0), yAlloc.getResult(), mapYVec, ValueRange{k_inner, q_inner});
-                    ADORA::setPingpongAttr(vecStore);
                 }
-            }
-            // 处理不足 4 的余数
-            for (; p < T_P; p++) {
-                auto mapYScalar = AffineMap::get(2, 0, {b3.getAffineDimExpr(0), b3.getAffineDimExpr(1), b3.getAffineConstantExpr(p)}, b3.getContext());
-                auto scalarLoadY = b3.create<affine::AffineLoadOp>(microLoc, yInit.getResult(), mapYScalar, ValueRange{k_inner, q_inner});
-                ADORA::setPingpongAttr(scalarLoadY);
+                for (; p < T_P; p++) {
+                    auto mapYScalar = AffineMap::get(2, 0, {b3.getAffineDimExpr(0), b3.getAffineDimExpr(1), b3.getAffineConstantExpr(p)}, b3.getContext());
+                    auto scalarLoadY = b3.create<affine::AffineLoadOp>(microLoc, yInits[kb], mapYScalar, ValueRange{k_inner, q_inner});
 
-                Value scalarAdd = ADORA::genArithAddOpAccordingToDataType(b3, microLoc, final_accs[p], scalarLoadY.getResult())->getResult(0);
-
-                auto scalarStore = b3.create<affine::AffineStoreOp>(microLoc, scalarAdd, yAlloc.getResult(), mapYScalar, ValueRange{k_inner, q_inner});
-                ADORA::setPingpongAttr(scalarStore);
+                    Value scalarAdd = ADORA::genArithAddOpAccordingToDataType(b3, microLoc, final_accs[kb * T_P + p], scalarLoadY.getResult())->getResult(0);
+                    auto scalarStore = b3.create<affine::AffineStoreOp>(microLoc, scalarAdd, yAllocs[kb], mapYScalar, ValueRange{k_inner, q_inner});
+                }
             }
 
             b3.create<affine::AffineYieldOp>(microLoc);
@@ -193,12 +213,10 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
         AffineForOp computeLoop = ADORA::GenerateOnDeviceNestedLoop(builder, loc, 2, device_bounds, deviceBodyBuilder);
         (void)ADORA::SpecifiedAffineFortoKernel(computeLoop, "ConvDirect");
 
-        // 4. BlockStore
-        auto storeY = builder.create<ADORA::DataBlockStoreOp>(loc, yAlloc.getResult(), finalResult, mapY_block, ValueRange{iv_n, iv_k, iv_p, iv_q});
-        storeY.setKernelName("ConvDirect"); storeY.setId(allocID);
-        ADORA::setPingpongAttr(storeY);
-        
-        builder.create<affine::AffineYieldOp>(loc);
+        affine::AffineYieldOp yield = builder.create<affine::AffineYieldOp>(loc);
+        for (auto store : stores) {
+            store.getOperation()->moveBefore(yield);
+        }
     };
 }
 
@@ -209,8 +227,9 @@ mlir::affine::AffineForOp LowerGenericDirectConv(OpBuilder &b, ConvOp op, Systol
     b.setInsertionPoint(op);
 
     ConvMetadata meta = getConvMetadata(op);
-    SmallVector<int, 4> safeLoopOrder = {DimN, DimK, DimP, DimQ};
-    if (config.loopOrder.size() >= 4) for (int i=0; i<4; ++i) safeLoopOrder[i] = config.loopOrder[i];
+
+    // 🚨 调度外围的 6 层嵌套循环：N, K, P, Q, 加上 R, S
+    SmallVector<int, 6> safeLoopOrder = {DimN, DimK, DimP, DimQ, DimR, DimS};
 
     SmallVector<int64_t, 7> tileSizes(7, 1);
     if (!config.tileSizes.empty()) {
@@ -220,20 +239,23 @@ mlir::affine::AffineForOp LowerGenericDirectConv(OpBuilder &b, ConvOp op, Systol
         }
     } else {
         tileSizes[DimN]=1; tileSizes[DimK]=4; tileSizes[DimP]=4; tileSizes[DimQ]=4;
+        tileSizes[DimR]=1; tileSizes[DimS]=1;
     }
 
     SmallVector<int> outerUBs, outerSteps;
-    for (int i=0; i<4; ++i) { outerUBs.push_back(meta.bounds[safeLoopOrder[i]]); outerSteps.push_back(tileSizes[safeLoopOrder[i]]); }
+    for (int i=0; i<6; ++i) {
+        outerUBs.push_back(meta.bounds[safeLoopOrder[i]]);
+        outerSteps.push_back(tileSizes[safeLoopOrder[i]]);
+    }
 
     Value finalResult = b.create<memref::AllocOp>(loc, mlir::cast<MemRefType>(op.getY().getType()));
 
-    AffineForOp topLoop = ADORA::OffDeviceNestedLoop(b, loc, 4, outerUBs, outerSteps, BuildTiledDirectConvBody(op, op.getX(), meta, tileSizes, safeLoopOrder, finalResult));
+    AffineForOp topLoop = ADORA::OffDeviceNestedLoop(b, loc, 6, outerUBs, outerSteps, BuildTiledDirectConvBody(op, op.getX(), meta, tileSizes, safeLoopOrder, finalResult));
     op.replaceAllUsesWith(finalResult);
 
-    topLoop.walk([&](Operation *inst) { 
-        inst->setAttr("ADORAConv", UnitAttr::get(topLoop.getContext())); 
-        if (isa<ADORA::DataBlockLoadOp, ADORA::DataBlockStoreOp, ADORA::LocalMemAllocOp, affine::AffineLoadOp, affine::AffineStoreOp, affine::AffineVectorLoadOp, affine::AffineVectorStoreOp>(inst))
-            inst->setAttr("Pingpong", UnitAttr::get(topLoop.getContext()));
+    // 🚨 废弃之前的全量赋 Pingpong 逻辑，依赖上方已针对标量单独触发的赋值
+    topLoop.walk([&](Operation *inst) {
+        inst->setAttr("ADORAConv", UnitAttr::get(topLoop.getContext()));
     });
 
     return topLoop;
