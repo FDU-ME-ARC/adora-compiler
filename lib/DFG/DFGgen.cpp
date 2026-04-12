@@ -2269,36 +2269,15 @@ void FixLinearAccessOfVectorNode(LLVMCDFG* CDFG, bool verbose = true){
   for(auto &elem : nodes){
     LLVMCDFGNode* node = elem.second;
     mlir::Operation* op = node->operation();
-    
-    bool isStore = (op->getName().getStringRef() == "affine.vector_store");
-    bool isLoad  = (op->getName().getStringRef() == "affine.vector_load");
-    
-    if(isStore || isLoad){
-      mlir::Operation* vecop = nullptr;
-      int ElementBytes = 2; // Default to bf16
-      ArrayRef<int64_t> memRefShape;
-      ArrayRef<int64_t> shape;
-      
-      if (isStore) {
-        mlir::affine::AffineVectorStoreOp vecstoreop = dyn_cast<mlir::affine::AffineVectorStoreOp>(op);
-        vecop = vecstoreop.getValue().getDefiningOp();
-        ElementBytes = vecstoreop.getMemRefType().getElementTypeBitWidth() / 8;
-        memRefShape = vecstoreop.getMemRefType().getShape();
-        shape = dyn_cast<mlir::VectorType>(op->getOperand(0).getType()).getShape();
-      } else {
-        mlir::affine::AffineVectorLoadOp vecloadop = dyn_cast<mlir::affine::AffineVectorLoadOp>(op);
-        vecop = node->outputNodes().empty() ? nullptr : node->outputNodes()[0]->operation();
-        ElementBytes = vecloadop.getMemRefType().getElementTypeBitWidth() / 8;
-        memRefShape = vecloadop.getMemRefType().getShape();
-        shape = dyn_cast<mlir::VectorType>(op->getResult(0).getType()).getShape();
-      }
+    if(op->getName().getStringRef() == "affine.vector_store"){
+      mlir::affine::AffineVectorStoreOp vecstoreop = dyn_cast<mlir::affine::AffineVectorStoreOp>(op);
+      mlir::Operation* vecop = vecstoreop.getValue().getDefiningOp();
+      int ElementBytes = vecstoreop.getMemRefType().getElementTypeBitWidth()/8;
 
-      if(!vecop) continue;
-
-      if(isa<ADORA::InterleaverOp>(vecop) || isa<ADORA::DeinterleaverOp>(vecop) || 
-         isa<arith::AddIOp>(vecop) || isa<arith::AddFOp>(vecop)){
-        
+      if(isa<ADORA::InterleaverOp>(vecop) || 
+        isa<arith::AddIOp>(vecop) || isa<arith::AddFOp>(vecop)){
         int vecnum = 1;
+        ArrayRef<int64_t> shape = dyn_cast<mlir::VectorType>(vecop->getResult(0).getType()).getShape();;
         int dimLargerThanOne = -1;
         for(int _ = 0; _ < shape.size(); _++){
           int _dim = shape[_];
@@ -2308,60 +2287,161 @@ void FixLinearAccessOfVectorNode(LLVMCDFG* CDFG, bool verbose = true){
             dimLargerThanOne = _;
           }
         }
-        if (dimLargerThanOne == -1) dimLargerThanOne = 0; // Fallback safety
+        assert(dimLargerThanOne != -1);
+        // if(isa<ADORA::InterleaverOp>(vecop)){
+        //   /// get the input num of interleaver
+        //   int interleaverNum = dyn_cast<ADORA::InterleaverOp>(vecop).getInterleaveNumber();
+        //   vecnum = interleaverNum;
+        // }
+        // else if(isa<arith::AddIOp>(vecop) || isa<arith::AddFOp>(vecop)){
+        //   shape = dyn_cast<mlir::VectorType>(vecop->getResult(0).getType()).getShape();
+        //   vecnum = 1;
+        //   for(auto _dim : shape){
+        //     vecnum *= _dim;
+        //   }
+        // }
+        // else{
+        //   assert(false && "Unsupported input of vector_store.");
+        // }
 
-        assert(node->isLSaffine());
+        /// fix linear access of extractop
+        assert(node->isLSaffine() && node->getTypeName() == "Output");
+        std::string linearAccess = node->getLinearAccess();
+
         std::stringstream ss(node->getLinearAccess());
         std::string step, count;
 
         SmallVector<std::pair<int64_t, int64_t>> newLinearAccess;
-        
-        // 计算底层硬件的向量跨幅 (比如转置访存时，跨幅会很大)
+        ArrayRef<int64_t> memRefShape =  vecstoreop.getMemRefType().getShape();
         int innermostStep = ElementBytes;
         for(int dim = memRefShape.size() - 1; dim > dimLargerThanOne; dim--){
           innermostStep *= memRefShape[dim];
-        }
-        
-        // 强制插入硬件层面的 Level 0 (向量内部展开)
+        }        
         newLinearAccess.push_back(std::pair(innermostStep, vecnum));
+        // newLinearAccess.push_back(std::pair( -1 * ElementBytes * interleaverNum, 1));
 
         int level = 0;
         while (std::getline(ss, step, ',')) {
           std::getline(ss, count, ',');
-          
-          int mlir_step = std::stoi(step);
-          int mlir_count = std::stoi(count);
-          
-          if(verbose) {
-            llvm::errs() << "\n[DEBUG-DFGGen] Vector " << (isStore ? "Store" : "Load") << " Level: " << level 
-                         << " | mlir_step: " << mlir_step 
-                         << " | mlir_count: " << mlir_count 
-                         << " | vecnum: " << vecnum 
-                         << " | count % vecnum = " << (mlir_count % vecnum);
-          }
-
           if(level == 0){
-            // =================================================================================
-            // BUG FIX: 硬件 AGU 采用的是累加地址跳步 (Cumulative Step)。
-            // 我们绝对不能去动 mlir_count！只要减去向量在内部迭代已经走掉的步长即可。
-            // =================================================================================
-            int newstep = mlir_step - innermostStep * (vecnum - 1);
-            newLinearAccess.push_back(std::pair(newstep, mlir_count));   
+            assert(std::stoi(step) % innermostStep == 0);
+            assert(std::stoi(count) % vecnum == 0);
+            int newstep = std::stoi(step) / innermostStep - newLinearAccess[0].first * (newLinearAccess[0].second - 1);
+            int newcount = std::stoi(count) / vecnum;
+            newLinearAccess.push_back(std::pair(newstep, newcount));   
+          }
+          else if(level == 1){
+            int newstep = std::stoi(step) 
+                          - newLinearAccess[1].first * (newLinearAccess[1].second - 1)
+                          - newLinearAccess[0].first * (newLinearAccess[0].second - 1) * (newLinearAccess[1].second);
+            int newcount = std::stoi(count);
+            newLinearAccess.push_back(std::pair(newstep, newcount));   
           }
           else {
-            newLinearAccess.push_back(std::pair(mlir_step, mlir_count));
+            newLinearAccess.push_back(std::pair(std::stoi(step), std::stoi(count)));
+          }
+          // if(level == 1){
+          //   int newstep = std::stoi(step) - ElementBytes * vecnum + ElementBytes;
+          //   newLinearAccess.push_back(std::pair(newstep, std::stoi(count)));            
+          // }
+          // else if(level != 0) {
+          //   newLinearAccess.push_back(std::pair(std::stoi(step), std::stoi(count)));
+          // }
+
+          level++;
+        }
+
+        assert (!newLinearAccess.empty());
+        
+        node->setLinearAccess(LinearAccessToStr(newLinearAccess));
+      }
+      else{
+        assert(false && "vectorstore op could only support input as interleaver op right now.");
+      }
+    }
+    else if(op->getName().getStringRef() == "affine.vector_load"){
+      mlir::affine::AffineVectorLoadOp vecloadop = dyn_cast<mlir::affine::AffineVectorLoadOp>(op);
+      // for(LLVMCDFGNode* outputnode : node->outputNodes()){
+      Operation* userop = node->outputNodes()[0]->operation();
+      // }
+      int ElementBytes = vecloadop.getMemRefType().getElementTypeBitWidth()/8;
+
+      if(isa<ADORA::DeinterleaverOp>(userop) || 
+        isa<arith::AddIOp>(userop) || isa<arith::AddFOp>(userop)){
+        int vecnum = 1;
+        ArrayRef<int64_t> shape = dyn_cast<mlir::VectorType>(op->getResult(0).getType()).getShape();
+        // if(isa<ADORA::DeinterleaverOp>(userop)){
+        //   /// get the input num of interleaver
+        //   int vecnum = dyn_cast<ADORA::DeinterleaverOp>(userop).getDeinterleaveNumber();
+        // }
+        // else if(isa<arith::AddIOp>(userop) || isa<arith::AddFOp>(userop)){
+        int dimLargerThanOne = -1;
+        for(int _ = 0; _ < shape.size(); _++){
+          int _dim = shape[_];
+          vecnum *= _dim;
+          if(_dim > 1) {
+            assert(dimLargerThanOne == -1); /// ensure only one dim is larger than 1
+            dimLargerThanOne = _;
+          }
+        }
+        assert(dimLargerThanOne != -1);
+        // }
+        // else{
+        //   assert(false && "Unsupported input of vector_store.");
+        // }
+
+        /// fix linear access of extractop
+        assert(node->isLSaffine() && node->getTypeName() == "Input");
+        std::string linearAccess = node->getLinearAccess();
+
+        std::stringstream ss(node->getLinearAccess());
+        std::string step, count;
+
+        SmallVector<std::pair<int64_t, int64_t>> newLinearAccess;
+        ArrayRef<int64_t> memRefShape =  vecloadop.getMemRefType().getShape();
+        int innermostStep = ElementBytes;
+        for(int dim = memRefShape.size() - 1; dim > dimLargerThanOne; dim--){
+          innermostStep *= memRefShape[dim];
+        }
+        newLinearAccess.push_back(std::pair(innermostStep, vecnum));
+        // newLinearAccess.push_back(std::pair( -1 * ElementBytes * interleaverNum, 1));
+
+        int level = 0;
+        while (std::getline(ss, step, ',')) {
+          std::getline(ss, count, ',');
+          if(level == 0){
+            assert(std::stoi(step) % innermostStep == 0);
+            assert(std::stoi(count) % vecnum == 0);
+            int newstep = std::stoi(step) / innermostStep - newLinearAccess[0].first * (newLinearAccess[0].second - 1);
+            int newcount = std::stoi(count) / vecnum;
+            newLinearAccess.push_back(std::pair(newstep, newcount));   
+          }
+          else if(level == 1){
+            int newstep = std::stoi(step) 
+                          - newLinearAccess[1].first * (newLinearAccess[1].second - 1)
+                          - newLinearAccess[0].first * (newLinearAccess[0].second - 1) * (newLinearAccess[1].second);
+            int newcount = std::stoi(count);
+            newLinearAccess.push_back(std::pair(newstep, newcount));   
+          }
+          else {
+            newLinearAccess.push_back(std::pair(std::stoi(step), std::stoi(count)));
           }
 
           level++;
         }
 
         assert (!newLinearAccess.empty());
+        
         node->setLinearAccess(LinearAccessToStr(newLinearAccess));
+      }
+      else{
+        assert(false && "vector_load op could only support input as interleaver op right now.");
       }
     }
   }
   return;
 }
+
 
 static void fuseMulAccToMAC(LLVMCDFG* CDFG, const std::string& mul_name, const std::string& acc_name, const std::string& mac_name){
   auto nodes = CDFG->nodes();
@@ -3195,7 +3275,7 @@ LLVMCDFG* mlir::ADORA::generateCDFGfromKernel(LLVMCDFG* &CDFG, ADORA::KernelOp k
   if(verbose) kernel.dump();
 
   /// For accumulation chain, move accumulation operation to the last using commutative law of addition/multiplication
-  // MoveAccumulationToLast(kernel);
+  MoveAccumulationToLast(kernel);
   if(verbose) kernel.dump();
 
   /// insert ISEL operator for loop carried value(not acc)
