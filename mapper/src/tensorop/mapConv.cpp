@@ -72,7 +72,8 @@ namespace mlir
             switch (config.algorithm)
             {
             case ComputeAlgorithm::Conv_Direct:
-                newfor = LowerGenericDirectConv(opbuilder, op, config);
+                // newfor = LowerDirectConv(opbuilder, op, config);
+                newfor = LowerDirectConvPipeline(opbuilder, op, config);
                 break;
 
             case ComputeAlgorithm::Conv_Im2Col:

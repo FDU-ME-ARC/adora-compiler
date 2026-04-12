@@ -3,7 +3,7 @@
 set(SPDLOG_NO_EXCEPTIONS ON)
 
 add_library(ADORATensorOpConvLower
-  GenericDirectConv.cpp
+  DirectConv.cpp
   Im2ColConv.cpp
 )
 

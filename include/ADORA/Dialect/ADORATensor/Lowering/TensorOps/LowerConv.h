@@ -46,7 +46,8 @@ ConvMetadata getConvMetadata(ConvOp op);
 
 /// @brief Lower ConvOp to affine loops using Direct Convolution algorithm.
 /// Supports arbitrary loop orders defined in SystolicConfig.
-mlir::affine::AffineForOp LowerGenericDirectConv(OpBuilder &b, ConvOp op, SystolicConfig config);
+mlir::affine::AffineForOp LowerDirectConv(OpBuilder &b, ConvOp op, SystolicConfig config);
+mlir::affine::AffineForOp LowerDirectConvPipeline(OpBuilder &b, ConvOp op, SystolicConfig config);
 
 // === 3. Future Interfaces (Placeholders) ===
 

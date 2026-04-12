@@ -14,6 +14,9 @@
 #include "llvm/Support/raw_ostream.h"
 #include <string>
 
+#include "mlir/Pass/PassManager.h"
+#include "ADORA/Dialect/ADORA/Transforms/Passes.h"
+
 using namespace ::mlir;
 using namespace ::mlir::affine;
 using namespace ::mlir::ADORA::ADORATensor;
@@ -168,9 +171,9 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
             // Interleaver & Store (🚨向 OSGemm 靠拢：不在此处给向量操作施加 Pingpong)
             for (int kb = 0; kb < num_K_blocks; ++kb) {
                 int p = 0;
-                if (T_P >= 4) {
-                    for (; p + 4 <= T_P; p += 4) {
-                        SmallVector<int64_t, 4> shape = {4};
+                if (T_P >= 3) {
+                    for (; p + 3 <= T_P; p += 3) {
+                        SmallVector<int64_t, 3> shape = {3};
                         auto vecType = VectorType::get(shape, dtype);
                         auto mapYVec = AffineMap::get(2, 0, {b3.getAffineDimExpr(0), b3.getAffineDimExpr(1), b3.getAffineConstantExpr(p)}, b3.getContext());
 
@@ -178,12 +181,12 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
 
                         OperationState deinterState(microLoc, "ADORA.deinterleaver");
                         deinterState.addOperands(vecLoadY.getResult());
-                        deinterState.addTypes(SmallVector<Type>(4, dtype));
-                        deinterState.addAttribute("deinterleaveNumber", b3.getI32IntegerAttr(4));
+                        deinterState.addTypes(SmallVector<Type>(3, dtype));
+                        deinterState.addAttribute("deinterleaveNumber", b3.getI32IntegerAttr(3));
                         Operation* deinterOp = b3.create(deinterState);
 
                         SmallVector<mlir::Value> to_interleave;
-                        for(int i = 0; i < 4; ++i) {
+                        for(int i = 0; i < 3; ++i) {
                             Value scalarAdd = ADORA::genArithAddOpAccordingToDataType(
                                 b3, microLoc, final_accs[kb * T_P + p + i], deinterOp->getResult(i))->getResult(0);
                             to_interleave.push_back(scalarAdd);
@@ -192,7 +195,7 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
                         OperationState interState(microLoc, "ADORA.interleaver");
                         interState.addOperands(to_interleave);
                         interState.addTypes(vecType);
-                        interState.addAttribute("interleaveNumber", b3.getI32IntegerAttr(4));
+                        interState.addAttribute("interleaveNumber", b3.getI32IntegerAttr(3));
                         Operation* interOp = b3.create(interState);
 
                         b3.create<affine::AffineVectorStoreOp>(microLoc, interOp->getResult(0), yAllocs[kb], mapYVec, ValueRange{k_inner, q_inner});
@@ -220,7 +223,7 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
     };
 }
 
-mlir::affine::AffineForOp LowerGenericDirectConv(OpBuilder &b, ConvOp op, SystolicConfig config)
+mlir::affine::AffineForOp LowerDirectConv(OpBuilder &b, ConvOp op, SystolicConfig config)
 {
     Location loc = op.getLoc();
     OpBuilder::InsertionGuard guard(b);
@@ -259,6 +262,100 @@ mlir::affine::AffineForOp LowerGenericDirectConv(OpBuilder &b, ConvOp op, Systol
     });
 
     return topLoop;
+}
+
+mlir::affine::AffineForOp LowerDirectConvPipeline(OpBuilder &b, ConvOp op, SystolicConfig config) {
+    Location loc = op.getLoc();
+    ConvMetadata meta = getConvMetadata(op);
+    
+    Value input = op.getX();
+    Value weight = op.getW();
+    
+    // 1. 创建输出分配 (Alloc)
+    auto outType = mlir::cast<MemRefType>(op.getY().getType());
+    Value finalResult = b.create<memref::AllocOp>(loc, outType);
+
+    // 2. 依次生成 7 层极其干净的纯量循环：N, K, P, Q, C, R, S
+    // 我们不做任何切块，全权信任后续的 AdjustMemoryFootprint Pass
+    auto nLoop = b.create<affine::AffineForOp>(loc, 0, meta.bounds[DimN]);
+    b.setInsertionPointToStart(nLoop.getBody());
+    
+    auto kLoop = b.create<affine::AffineForOp>(loc, 0, meta.bounds[DimK]);
+    b.setInsertionPointToStart(kLoop.getBody());
+    
+    auto pLoop = b.create<affine::AffineForOp>(loc, 0, meta.bounds[DimP]);
+    b.setInsertionPointToStart(pLoop.getBody());
+    
+    auto qLoop = b.create<affine::AffineForOp>(loc, 0, meta.bounds[DimQ]);
+    b.setInsertionPointToStart(qLoop.getBody());
+    
+    auto cLoop = b.create<affine::AffineForOp>(loc, 0, meta.bounds[DimC]);
+    b.setInsertionPointToStart(cLoop.getBody());
+    
+    auto rLoop = b.create<affine::AffineForOp>(loc, 0, meta.bounds[DimR]);
+    b.setInsertionPointToStart(rLoop.getBody());
+    
+    auto sLoop = b.create<affine::AffineForOp>(loc, 0, meta.bounds[DimS]);
+    b.setInsertionPointToStart(sLoop.getBody());
+
+    {
+        // 3. 进入最内层循环，执行标量级乘加运算
+        OpBuilder::InsertionGuard guard(b);
+        Value iv_n = nLoop.getInductionVar();
+        Value iv_k = kLoop.getInductionVar();
+        Value iv_p = pLoop.getInductionVar();
+        Value iv_q = qLoop.getInductionVar();
+        Value iv_c = cLoop.getInductionVar();
+        Value iv_r = rLoop.getInductionVar();
+        Value iv_s = sLoop.getInductionVar();
+
+        // 构造动态地址映射 (AffineMap) 代替手工算地址
+        // h_in = p * stride + r * dilation - pad
+        auto mapX = AffineMap::get(6, 0, {
+            b.getAffineDimExpr(0), // n
+            b.getAffineDimExpr(1), // c
+            b.getAffineDimExpr(2) * meta.strides[0] + b.getAffineDimExpr(3) * meta.dilations[0] - meta.pads[0], // h
+            b.getAffineDimExpr(4) * meta.strides[1] + b.getAffineDimExpr(5) * meta.dilations[1] - meta.pads[1]  // w
+        }, b.getContext());
+
+        auto mapW = AffineMap::get(4, 0, {
+            b.getAffineDimExpr(0), b.getAffineDimExpr(1), b.getAffineDimExpr(2), b.getAffineDimExpr(3) // k, c, r, s
+        }, b.getContext());
+
+        auto mapY = AffineMap::get(4, 0, {
+            b.getAffineDimExpr(0), b.getAffineDimExpr(1), b.getAffineDimExpr(2), b.getAffineDimExpr(3) // n, k, p, q
+        }, b.getContext());
+
+        // 纯标量内存读写与计算 (Load-Add-Store)
+        // 这里的冗余 Store 会被后续的 MoveLoopCarriedInitailValue 自动优化为寄存器驻留 (OS)
+        Value xVal = b.create<affine::AffineLoadOp>(loc, input, mapX, ValueRange{iv_n, iv_c, iv_p, iv_r, iv_q, iv_s});
+        Value wVal = b.create<affine::AffineLoadOp>(loc, weight, mapW, ValueRange{iv_k, iv_c, iv_r, iv_s});
+        Value yVal = b.create<affine::AffineLoadOp>(loc, finalResult, mapY, ValueRange{iv_n, iv_k, iv_p, iv_q});
+
+        Value mul = ADORA::genArithMulOpAccordingToDataType(b, loc, xVal, wVal)->getResult(0);
+        Value res = ADORA::genArithAddOpAccordingToDataType(b, loc, yVal, mul)->getResult(0);
+
+        b.create<affine::AffineStoreOp>(loc, res, finalResult, mapY, ValueRange{iv_n, iv_k, iv_p, iv_q});
+    }
+
+    // 4. 重构并打标签 (相当于手动触发了 AffineForToKernelPass)
+    b.setInsertionPointAfter(nLoop);
+    
+    // 调用开放的 C++ 接口，将我们构建的 7 层循环直接封装进 ADORA.kernel
+    if (mlir::succeeded(ADORA::SpecifiedAffineFortoKernel(nLoop))) {
+        // 给刚刚生成的 Kernel 打上标签，引导后续的 Pass 识别它
+        nLoop->getParentOp()->walk([&](ADORA::KernelOp kernel) {
+            kernel.setKernelName("ConvDirect_Auto");
+            kernel->setAttr("ADORAConv", b.getUnitAttr());
+        });
+    } else {
+        llvm::errs() << "[Warning] LowerDirectConvPipeline: Failed to wrap loops into Kernel.\n";
+    }
+
+    // 5. 替换掉原始的高层 ConvOp
+    op.replaceAllUsesWith(finalResult);
+
+    return nLoop;
 }
 
 } // namespace ADORATensor

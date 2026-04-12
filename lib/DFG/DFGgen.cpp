@@ -2324,6 +2324,8 @@ void FixLinearAccessOfVectorNode(LLVMCDFG* CDFG, bool verbose = true){
         while (std::getline(ss, step, ',')) {
           std::getline(ss, count, ',');
           if(level == 0){
+            llvm::errs() << "[DEBUG] std::stoi(count) = " << count 
+                 << ", vecnum = " << vecnum << "\n";
             assert(std::stoi(step) % innermostStep == 0);
             assert(std::stoi(count) % vecnum == 0);
             int newstep = std::stoi(step) / innermostStep - newLinearAccess[0].first * (newLinearAccess[0].second - 1);
@@ -2410,6 +2412,8 @@ void FixLinearAccessOfVectorNode(LLVMCDFG* CDFG, bool verbose = true){
         while (std::getline(ss, step, ',')) {
           std::getline(ss, count, ',');
           if(level == 0){
+            llvm::errs() << "[DEBUG] std::stoi(count) = " << count 
+                 << ", vecnum = " << vecnum << "\n";
             assert(std::stoi(step) % innermostStep == 0);
             assert(std::stoi(count) % vecnum == 0);
             int newstep = std::stoi(step) / innermostStep - newLinearAccess[0].first * (newLinearAccess[0].second - 1);
