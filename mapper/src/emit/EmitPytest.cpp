@@ -1653,7 +1653,7 @@ def safe_slice_1d(arr, flat_offset, result_shape, *args, **kwargs):
     _agu_meta = safe_slice_1d.meta
     arr_id = id(arr)
 
-    if arr.ndim == 4:
+    if arr.ndim == 4 and len(result_shape) == 2:
         dim0, dim1, dim2, dim3 = arr.shape
         if dim2 <= 11 and dim3 <= 11 and dim2 == dim3:
             K_out, C, R, S = arr.shape
@@ -1738,7 +1738,7 @@ def safe_slice_1d(arr, flat_offset, result_shape, *args, **kwargs):
             return res
 
     size = arr.size
-    length = np.prod(result_shape)
+    length = int(np.prod(result_shape))
     if flat_offset >= size: return np.zeros(result_shape, dtype=arr.dtype)
     valid_len = min(length, size - flat_offset)
     res = np.zeros(length, dtype=arr.dtype)
@@ -1757,7 +1757,8 @@ def apply_writeback_tasks(tasks):
         non_zeros = np.count_nonzero(data_block.view(np.uint8))
         print(f"[DEBUG 探针] 写回拼装: 物理偏移 {flat_offset} | 提取到有效非零字节: {non_zeros}/{data_block.nbytes}")
 
-        if arr.ndim == 4:
+        # 如果是直接卷积的 3D data_block (比如 4x9x4)，直接走下面的 else 物理空间展平写回！
+        if arr.ndim == 4 and data_block.ndim == 2:
             N_dim, K_out, P, Q = arr.shape
             m_len, n_len = data_block.shape
             k_out_start = (flat_offset // (P * Q)) % K_out
