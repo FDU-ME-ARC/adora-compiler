@@ -290,35 +290,35 @@ namespace mlir
         }
       }
 
-      // Reduce input transfer volume by kernel_size factor
-      int64_t transferVolumnDirectConv(DataflowStrategy s, int64_t M, int64_t N, int64_t K,
-                                       int64_t row, int64_t col, int64_t KH, int64_t KW)
-      {
-        double kernel_size = (double)(KH * KW);
-        if (kernel_size < 1.0)
-          kernel_size = 1.0;
+      // // Reduce input transfer volume by kernel_size factor
+      // int64_t transferVolumnDirectConv(DataflowStrategy s, int64_t M, int64_t N, int64_t K,
+      //                                  int64_t row, int64_t col, int64_t KH, int64_t KW)
+      // {
+      //   double kernel_size = (double)(KH * KW);
+      //   if (kernel_size < 1.0)
+      //     kernel_size = 1.0;
 
-        switch (s)
-        {
-        case DataflowStrategy::InputStationary:
-          // IS Formula: MNK(1/N + 1/M + 1/col)
-          // 1/N term corresponds to Input Matrix (MK). Scale by 1/kernel_size
-          return (int64_t)((long double)M * K * N * (1.0 / N / kernel_size + 1.0 / M + 1.0 / col));
+      //   switch (s)
+      //   {
+      //   case DataflowStrategy::InputStationary:
+      //     // IS Formula: MNK(1/N + 1/M + 1/col)
+      //     // 1/N term corresponds to Input Matrix (MK). Scale by 1/kernel_size
+      //     return (int64_t)((long double)M * K * N * (1.0 / N / kernel_size + 1.0 / M + 1.0 / col));
 
-        case DataflowStrategy::WeightStationary:
-          // WS Formula: MNK(1/col + 1/M + 1/K)
-          // 1/col term corresponds to Input Streaming. Scale by 1/kernel_size
-          return (int64_t)((long double)M * K * N * (1.0 / col / kernel_size + 1.0 / M + 1.0 / K));
+      //   case DataflowStrategy::WeightStationary:
+      //     // WS Formula: MNK(1/col + 1/M + 1/K)
+      //     // 1/col term corresponds to Input Streaming. Scale by 1/kernel_size
+      //     return (int64_t)((long double)M * K * N * (1.0 / col / kernel_size + 1.0 / M + 1.0 / K));
 
-        case DataflowStrategy::OutputStationary:
-          // OS Formula: MNK(1/N + 1/row + 1/K)
-          // 1/N term corresponds to Input Matrix (MK). Scale by 1/kernel_size
-          return (int64_t)((long double)M * K * N * (1.0 / N / kernel_size + 1.0 / row + 1.0 / K));
+      //   case DataflowStrategy::OutputStationary:
+      //     // OS Formula: MNK(1/N + 1/row + 1/K)
+      //     // 1/N term corresponds to Input Matrix (MK). Scale by 1/kernel_size
+      //     return (int64_t)((long double)M * K * N * (1.0 / N / kernel_size + 1.0 / row + 1.0 / K));
 
-        default:
-          return transferVolumn(s, M, N, K, row, col);
-        }
-      }
+      //   default:
+      //     return transferVolumn(s, M, N, K, row, col);
+      //   }
+      // }
 
       // ==============================================================================
       // 3. Search Solvers
@@ -343,7 +343,7 @@ namespace mlir
       };
 
       // Generic DSE Solver (Shared by GEMM and Conv)
-      static std::optional<Cand> solveDSE(
+      static std::optional<Cand> solveDSEGemmLike(
           int64_t M, int64_t N, int64_t K, int64_t dByte,
           int num_pe, int num_iob, int bank_byte, int BandByteWidth,
           DataflowStrategy selected_strategy,
@@ -391,23 +391,7 @@ namespace mlir
 
                 // Compute Metrics
                 int64_t EC = execCycles(stationarykind, M, N, K, row, col, T0, T1, num_pe, num_iob);
-
-                int64_t TV = 0;
-                if (selected_algo == ComputeAlgorithm::Conv_Direct && KH > 0 && KW > 0)
-                {
-                  // Apply reduced TV model for Direct Conv
-                  TV = transferVolumnDirectConv(stationarykind, M, N, K, row, col, KH, KW) * dByte;
-                }
-                else if (selected_algo == ComputeAlgorithm::Conv_Im2Col || selected_algo == ComputeAlgorithm::GEMM_Standard)
-                {
-                  // Standard GEMM / Im2Col
-                  TV = transferVolumn(stationarykind, M, N, K, row, col) * dByte;
-                }
-                else if (selected_algo == ComputeAlgorithm::Conv_Winograd)
-                {
-                  // TODO: Winograd TV model
-                  llvm::errs() << "[AutoSetConvStrategy] Winograd TV model not implemented.";
-                }
+                int64_t TV = transferVolumn(stationarykind, M, N, K, row, col) * dByte;
 
                 int64_t TX = ceilDiv(TV, std::max(1, BandByteWidth));
                 int64_t LAT = std::max<int64_t>(EC, TX);
@@ -418,7 +402,7 @@ namespace mlir
                 auto better = [&](const Cand &a, const Cand &b)
                 {
                   // 1. Latency dominant (allow 4% margin)
-                  if ((double)abs(b.LAT - a.LAT) / (double)b.LAT <= 0.04)
+                  if ((double)std::abs(b.LAT - a.LAT) / (double)b.LAT <= 0.04)
                   {
                     // 2. If latency is similar, prefer larger T1 (better for inner loops)
                     return a.T1 >= b.T1;
@@ -436,6 +420,96 @@ namespace mlir
                 if (!best || better(cand, *best))
                   best = cand;
               }
+            }
+          }
+        }
+        return best;
+      }
+
+      // ==============================================================================
+      // Precise Physical Cost Model for Direct Convolution
+      // ==============================================================================
+      static std::optional<Cand> solveDSEDirectConv(
+          int64_t N_batch, int64_t IC, int64_t OH, int64_t OW, int64_t OC,
+          int64_t KH, int64_t KW, int64_t stride_h, int64_t stride_w,
+          int64_t dilation_h, int64_t dilation_w,
+          int64_t dByte, int num_pe, int num_iob, int bank_byte, int BandByteWidth,
+          DataflowStrategy selected_strategy)
+      {
+        std::optional<Cand> best;
+        auto pairs = findFeasibleSpatialMap(num_pe, num_iob, 30000);
+
+        DataflowStrategy stationarykind = DataflowStrategy::OutputStationary;
+        if (selected_strategy != DataflowStrategy::Undefine)
+        {
+          stationarykind = selected_strategy;
+        }
+
+        for (auto [rRaw, cRaw] : pairs)
+        {
+          int64_t T_K = std::min<int64_t>(rRaw, OC);
+          int64_t T_Q = std::min<int64_t>(cRaw, OW);
+
+          if (T_K <= 0 || T_Q <= 0 || !legalRowCol(stationarykind, std::make_pair(T_K, T_Q), num_pe, num_iob))
+            continue;
+
+          auto TN_cands = getAllDivisor(N_batch);
+          auto TP_cands = getAllDivisor(OH);
+
+          for (int T_N : TN_cands)
+          {
+            for (int T_P : TP_cands)
+            {
+
+              // 1. Precise SRAM Capacity Model (Dilation Corrected)
+              // Calculate the EFFECTIVE receptive field of the kernel in the input tensor
+              int64_t effective_KH = dilation_h * (KH - 1) + 1;
+              int64_t effective_KW = dilation_w * (KW - 1) + 1;
+
+              // The physical input window height/width needed for the output tile
+              int64_t T_H_in = (T_P - 1) * stride_h + effective_KH;
+              int64_t T_W_in = (T_Q - 1) * stride_w + effective_KW;
+
+              // X block size must account for the sparse but wide Dilation footprint in SPAD
+              int64_t X_tile_size = T_N * IC * T_H_in * T_W_in;
+              int64_t W_tile_size = T_K * IC * KH * KW; // Weights are dense in memory
+              int64_t Y_tile_size = T_N * T_K * T_P * T_Q;
+
+              int64_t total_sram_bytes = (X_tile_size + W_tile_size + Y_tile_size) * dByte;
+
+              if (total_sram_bytes > bank_byte / 2)
+              {
+                continue;
+              }
+
+              // 2. Transfer Volume (TV)
+              int64_t outer_iters = ceilDiv(N_batch, T_N) * ceilDiv(OC, T_K) * ceilDiv(OH, T_P) * ceilDiv(OW, T_Q);
+              int64_t TV = outer_iters * (X_tile_size + W_tile_size + 2 * Y_tile_size) * dByte;
+              int64_t TX = ceilDiv(TV, std::max(1, BandByteWidth));
+
+              // 3. Execution Cycles (EC)
+              int64_t mac_per_tile = T_N * T_P * IC * KH * KW;
+              int cgra_col = num_iob / 2;
+              int cgra_row = num_pe / std::max(1, cgra_col);
+              int64_t S = pipeFill(cgra_row, cgra_col);
+              int64_t reconfig = 3 * T_K + T_Q + S;
+
+              int64_t EC = outer_iters * (mac_per_tile + reconfig);
+              int64_t LAT = std::max<int64_t>(EC, TX);
+
+              Cand cand{ComputeAlgorithm::Conv_Direct, stationarykind, T_N, T_K, T_P, T_Q, EC, TX, LAT};
+
+              auto better = [&](const Cand &a, const Cand &b)
+              {
+                if ((double)std::abs(b.LAT - a.LAT) / (double)b.LAT <= 0.04)
+                {
+                  return a.TX < b.TX;
+                }
+                return a.LAT < b.LAT;
+              };
+
+              if (!best || better(cand, *best))
+                best = cand;
             }
           }
         }
@@ -476,8 +550,8 @@ namespace mlir
         assert(shapeC[0] == M && shapeC[1] == N && "C shape mismatch with A/B");
 
         // GEMM defaults to Standard algorithm
-        auto best = solveDSE(M, N, K, dByte, num_pe, num_iob, bank_byte, BandByteWidth,
-                             _strategy, ComputeAlgorithm::GEMM_Standard);
+        auto best = solveDSEGemmLike(M, N, K, dByte, num_pe, num_iob, bank_byte, BandByteWidth,
+                                     _strategy, ComputeAlgorithm::GEMM_Standard);
 
         if (best)
         {
@@ -505,7 +579,6 @@ namespace mlir
         auto weightVal = convOp.getW();
 
         int dByte = getDataBytes(inputVal.getType());
-
         auto inputShape = getShape(inputVal.getType());   // [N, IC, H, W]
         auto weightShape = getShape(weightVal.getType()); // [OC, IC, KH, KW]
 
@@ -526,10 +599,9 @@ namespace mlir
         int64_t KW = weightShape[3];
 
         int64_t stride_h = 1, stride_w = 1;
-        int64_t pad_h_total = 0, pad_w_total = 0; // total = top + bottom / left + right
+        int64_t pad_h_total = 0, pad_w_total = 0;
         int64_t dilation_h = 1, dilation_w = 1;
 
-        // Parse Strides
         if (auto stridesAttr = convOp.getStridesAttr())
         {
           auto vals = stridesAttr.getValue();
@@ -540,7 +612,6 @@ namespace mlir
           }
         }
 
-        // Parse Dilations
         if (auto dilationsAttr = convOp.getDilationsAttr())
         {
           auto vals = dilationsAttr.getValue();
@@ -551,81 +622,75 @@ namespace mlir
           }
         }
 
-        // Parse Pads (ONNX format: [top, left, bottom, right])
         if (auto padsAttr = convOp.getPadsAttr())
         {
           auto vals = padsAttr.getValue();
           if (vals.size() == 4)
           {
-            int64_t top = vals[0].cast<IntegerAttr>().getInt();
-            int64_t left = vals[1].cast<IntegerAttr>().getInt();
-            int64_t bottom = vals[2].cast<IntegerAttr>().getInt();
-            int64_t right = vals[3].cast<IntegerAttr>().getInt();
-            pad_h_total = top + bottom;
-            pad_w_total = left + right;
+            pad_h_total = vals[0].cast<IntegerAttr>().getInt() + vals[2].cast<IntegerAttr>().getInt();
+            pad_w_total = vals[1].cast<IntegerAttr>().getInt() + vals[3].cast<IntegerAttr>().getInt();
           }
         }
 
-        // Compute Output Height / Width
-        // Formula: OH = (H + pad_h_total - dilation * (KH - 1) - 1) / stride + 1
         int64_t effective_KH = dilation_h * (KH - 1) + 1;
         int64_t effective_KW = dilation_w * (KW - 1) + 1;
 
         int64_t OH = (H + pad_h_total - effective_KH) / stride_h + 1;
         int64_t OW = (W + pad_w_total - effective_KW) / stride_w + 1;
 
-        // Map to GEMM dimensions (for Im2Col estimation)
-        // M: total number of output pixels (Batch * H * W)
-        // K: kernel volume (IC * KH * KW)
-        // N: output channels (OC)
+        // Dimensions mapped for Im2Col (Virtual GEMM)
         int64_t M_gemm = N_batch * OH * OW;
         int64_t K_gemm = IC * KH * KW;
         int64_t N_gemm = OC;
 
-        std::vector<ComputeAlgorithm> algos;
+        std::optional<Cand> bestGlobal;
+        std::optional<Cand> bestIm2Col;
+        std::optional<Cand> bestDirect;
+
+        // Fast-path heuristic: 1x1 convolutions have NO memory amplification.
+        // Im2Col completely out-performs Direct Conv due to perfect matrix multiplication structure.
+        bool is_1x1_conv = (KH == 1 && KW == 1 && pad_h_total == 0 && pad_w_total == 0);
+
         if (_force_algo != ComputeAlgorithm::Undefine)
         {
-          algos.push_back(_force_algo);
+          if (_force_algo == ComputeAlgorithm::Conv_Im2Col)
+          {
+            bestGlobal = solveDSEGemmLike(M_gemm, N_gemm, K_gemm, dByte, num_pe, num_iob, bank_byte, BandByteWidth, _strategy, ComputeAlgorithm::Conv_Im2Col);
+          }
+          else if (_force_algo == ComputeAlgorithm::Conv_Direct)
+          {
+            bestGlobal = solveDSEDirectConv(N_batch, IC, OH, OW, OC, KH, KW, stride_h, stride_w, dilation_h, dilation_w, dByte, num_pe, num_iob, bank_byte, BandByteWidth, _strategy);
+          }
+        }
+        else if (is_1x1_conv)
+        {
+          bestGlobal = solveDSEGemmLike(M_gemm, N_gemm, K_gemm, dByte, num_pe, num_iob, bank_byte, BandByteWidth, _strategy, ComputeAlgorithm::Conv_Im2Col);
         }
         else
         {
-          algos.push_back(ComputeAlgorithm::Conv_Direct);
-          algos.push_back(ComputeAlgorithm::Conv_Im2Col);
-          // Winograd (optimized for specific conditions)
-          if (KH == 3 && KW == 3 && stride_h == 1 && stride_w == 1 &&
-              dilation_h == 1 && dilation_w == 1)
+          bestIm2Col = solveDSEGemmLike(M_gemm, N_gemm, K_gemm, dByte, num_pe, num_iob, bank_byte, BandByteWidth, _strategy, ComputeAlgorithm::Conv_Im2Col);
+
+          bestDirect = solveDSEDirectConv(N_batch, IC, OH, OW, OC, KH, KW, stride_h, stride_w, dilation_h, dilation_w, dByte, num_pe, num_iob, bank_byte, BandByteWidth, _strategy);
+
+          // Final Decision: Duel between Im2Col and DirectConv
+          if (bestIm2Col && bestDirect)
           {
-            algos.push_back(ComputeAlgorithm::Conv_Winograd);
-          }
-        }
-
-        std::optional<Cand> bestGlobal;
-
-        for (auto algo : algos)
-        {
-          // Pass KH/KW only for Direct Conv and non-1x1 to trigger input reuse optimization
-          int64_t pass_KH = (algo == ComputeAlgorithm::Conv_Direct) ? KH : 0;
-          int64_t pass_KW = (algo == ComputeAlgorithm::Conv_Direct) ? KW : 0;
-
-          auto res = solveDSE(M_gemm, N_gemm, K_gemm, dByte,
-                              num_pe, num_iob, bank_byte, BandByteWidth,
-                              _strategy, algo, pass_KH, pass_KW);
-
-          if (res)
-          {
-            auto betterGlobal = [&](const Cand &a, const Cand &b)
+            if ((double)std::abs(bestIm2Col->LAT - bestDirect->LAT) / (double)std::max(bestIm2Col->LAT, bestDirect->LAT) <= 0.04)
             {
-              if ((double)abs(b.LAT - a.LAT) / (double)b.LAT <= 0.04)
-                return a.T1 >= b.T1;
-              if (a.LAT != b.LAT)
-                return a.LAT < b.LAT;
-              return a.EC < b.EC;
-            };
-
-            if (!bestGlobal || betterGlobal(*res, *bestGlobal))
-            {
-              bestGlobal = res;
+              bestGlobal = (bestIm2Col->TX <= bestDirect->TX) ? bestIm2Col : bestDirect;
             }
+            else
+            {
+              bestGlobal = (bestIm2Col->LAT < bestDirect->LAT) ? bestIm2Col : bestDirect;
+            }
+          }
+          else if (bestIm2Col)
+          {
+            bestGlobal = bestIm2Col;
+          }
+          else if (bestDirect)
+          {
+            bestGlobal = bestDirect;
           }
         }
 
@@ -635,9 +700,13 @@ namespace mlir
           ADORATensor::SystolicImplInterface Sinterface(convOp);
           Sinterface.setAlgorithm(ch.algorithm);
           Sinterface.setStationaryKind(ch.stationaryKind);
+
+          // The Tile Size attributes seamlessly bridge to the Lowering passes
+          // For Im2Col: T0, T1, row, col maps to GEMM's spatial/temporal bounds
+          // For Direct: T0->T_N, T1->T_K, row->T_P, col->T_Q perfectly aligning with GenericDirectConv
           Sinterface.setTileSize(ArrayRef<int64_t>({ch.T0, ch.T1, ch.row, ch.col}));
 
-          llvm::errs() << "Best Conv strategy: ";
+          llvm::errs() << "[DSE] Best Conv strategy won by: " << (ch.algorithm == ComputeAlgorithm::Conv_Direct ? "Direct Conv" : "Im2Col") << "\n";
           ch.dump();
         }
         else
