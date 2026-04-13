@@ -267,6 +267,8 @@ mlir::affine::AffineForOp LowerDirectConv(OpBuilder &b, ConvOp op, SystolicConfi
 mlir::affine::AffineForOp LowerDirectConvPipeline(OpBuilder &b, ConvOp op, SystolicConfig config) {
     Location loc = op.getLoc();
     ConvMetadata meta = getConvMetadata(op);
+    OpBuilder::InsertionGuard guard(b);
+    b.setInsertionPoint(op);
     
     Value input = op.getX();
     Value weight = op.getW();
@@ -338,23 +340,11 @@ mlir::affine::AffineForOp LowerDirectConvPipeline(OpBuilder &b, ConvOp op, Systo
         b.create<affine::AffineStoreOp>(loc, res, finalResult, mapY, ValueRange{iv_n, iv_k, iv_p, iv_q});
     }
 
-    // 4. 重构并打标签 (相当于手动触发了 AffineForToKernelPass)
     b.setInsertionPointAfter(nLoop);
-    
-    // 调用开放的 C++ 接口，将我们构建的 7 层循环直接封装进 ADORA.kernel
-    if (mlir::succeeded(ADORA::SpecifiedAffineFortoKernel(nLoop))) {
-        // 给刚刚生成的 Kernel 打上标签，引导后续的 Pass 识别它
-        nLoop->getParentOp()->walk([&](ADORA::KernelOp kernel) {
-            kernel.setKernelName("ConvDirect_Auto");
-            kernel->setAttr("ADORAConv", b.getUnitAttr());
-        });
-    } else {
-        llvm::errs() << "[Warning] LowerDirectConvPipeline: Failed to wrap loops into Kernel.\n";
-    }
 
     // 5. 替换掉原始的高层 ConvOp
     op.replaceAllUsesWith(finalResult);
-
+    nLoop->dump();
     return nLoop;
 }
 

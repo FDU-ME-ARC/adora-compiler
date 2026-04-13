@@ -390,18 +390,30 @@ chooseAndApplyUnrollStrategyWithDeps(ADORA::KernelOp kernel, mlir::ModuleOp& m){
     llvm::SourceMgr sourceMgr;
     sourceMgr.AddNewSourceBuffer(std::move(file), SMLoc());
     mlir::OwningOpRef<mlir::ModuleOp> final_m = parseSourceFile<ModuleOp>(sourceMgr, m.getContext()); 
+    if (!final_m) {
+      llvm::errs() << "Failed to parse selected design-point module: "
+                   << final_FilePath << "\n";
+      signalPassFailure();
+      return LogicalResult::failure();
+    }
     mlir::ModuleOp moduleop = final_m.get();
-    SymbolTable symbolTable(moduleop.getOperation());
-    
-    // m.replace
-    // for(int index = 0; index < m.getOps<func::FuncOp>().size(); index++){
-    //   func::FuncOp oldfunc = *(m.getOps<func::FuncOp>()[index]);
-    //   func::FuncOp newfunc = *(m.getOps<func::FuncOp>()[index]);
-    //   newfunc.getOperation()->moveBefore(oldfunc);
-    //   oldfunc.getOperation()->erase();
-    // }
-    func::FuncOp oldfunc = *(m.getOps<func::FuncOp>().begin());
-    func::FuncOp newfunc = *(moduleop.getOps<func::FuncOp>().begin());
+
+    // Replace the function that owns the current kernel by symbol name.
+    // Do not replace the first function blindly: module order may be
+    // @main_graph then @kernel_func, and replacing by index can miss the kernel.
+    func::FuncOp oldfunc = kernel->getParentOfType<func::FuncOp>();
+    if (!oldfunc) {
+      llvm::errs() << "Cannot locate parent function for kernel.\n";
+      signalPassFailure();
+      return LogicalResult::failure();
+    }
+    func::FuncOp newfunc = moduleop.lookupSymbol<func::FuncOp>(oldfunc.getSymName());
+    if (!newfunc) {
+      llvm::errs() << "Cannot locate function '" << oldfunc.getSymName()
+                   << "' in selected design-point module.\n";
+      signalPassFailure();
+      return LogicalResult::failure();
+    }
     newfunc.getOperation()->moveBefore(oldfunc);
     oldfunc.getOperation()->erase();
   }

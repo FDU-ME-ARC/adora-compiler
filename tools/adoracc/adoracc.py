@@ -30,6 +30,14 @@ def require_tool(tool: str) -> str:
     return path
 
 
+def require_tool_prefer_local(tool: str) -> str:
+    script_dir = Path(__file__).resolve().parent
+    local_tool = script_dir / tool
+    if local_tool.is_file() and os.access(local_tool, os.X_OK):
+        return str(local_tool)
+    return require_tool(tool)
+
+
 def run_command(
     args: list[str],
     cwd: Path | None = None,
@@ -218,6 +226,9 @@ def build_pipeline(
     kernel_opt = dirs["kernels_opt"] / f"{base_name}_opt.mlir"
     kernel_opt_cmd = [
         tools["cgra-opt"],
+        "--adora-simplify-affine-loop-levels",
+        "--canonicalize",
+        "-cse",
         "--adora-simplify-loadstore",
         "--adora-math-rewrite",
         (
@@ -316,7 +327,7 @@ def main() -> int:
 
     tools: dict[str, str] = {
         # "mlir-opt": require_tool("mlir-opt"),
-        "cgra-opt": require_tool("cgra-opt"),
+        "cgra-opt": require_tool_prefer_local("cgra-opt"),
     }
     if suffix == ".C":
         tools["cgeist"] = require_tool("cgeist")

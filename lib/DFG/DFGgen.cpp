@@ -659,8 +659,8 @@ void MoveAccumulationToLast(ADORA::KernelOp kernel){
         /// Adjust consumer of iter operand
         assert(getAllUsesInBlock(IterRegionOperand, forop.getBody()).size() == 1);
         mlir::Operation* IterArgConsumer = getAllUsesInBlock(IterRegionOperand, forop.getBody())[0];
-        // IterArgConsumer->dump();
-        if(isa<affine::AffineYieldOp>(IterArgConsumer))
+        IterArgConsumer->dump();
+        if(isa<affine::AffineYieldOp>(IterArgConsumer) || isa<affine::AffineForOp>(IterArgConsumer))
           continue;
         assert(isa<arith::AddFOp>(IterArgConsumer));
         mlir::Value AnotherOperand = IterArgConsumer->getOperand(getAnotherOperandIdx(IterArgConsumer, IterRegionOperand));
@@ -684,7 +684,7 @@ void MoveAccumulationToLast(ADORA::KernelOp kernel){
         // what is this for?
         // if(isa<affine::AffineForOp>(IterArgConsumer->getParentOp()))
         //   continue;   
-        if(isa<affine::AffineYieldOp>(IterArgConsumer))
+        if(isa<affine::AffineYieldOp>(IterArgConsumer) || isa<affine::AffineForOp>(IterArgConsumer))
           continue;
         
         assert(isa<arith::AddIOp>(IterArgConsumer));
@@ -706,7 +706,7 @@ void MoveAccumulationToLast(ADORA::KernelOp kernel){
         assert(getAllUsesInBlock(IterRegionOperand, forop.getBody()).size() == 1);
         mlir::Operation* IterArgConsumer = getAllUsesInBlock(IterRegionOperand, forop.getBody())[0];
         
-        if(isa<affine::AffineYieldOp>(IterArgConsumer))
+        if(isa<affine::AffineYieldOp>(IterArgConsumer) || isa<affine::AffineForOp>(IterArgConsumer))
           continue;
 
         assert(isa<arith::MulFOp>(IterArgConsumer));
@@ -728,7 +728,7 @@ void MoveAccumulationToLast(ADORA::KernelOp kernel){
         assert(getAllUsesInBlock(IterRegionOperand, forop.getBody()).size() == 1);
         mlir::Operation* IterArgConsumer = getAllUsesInBlock(IterRegionOperand, forop.getBody())[0];
         
-        if(isa<affine::AffineYieldOp>(IterArgConsumer))
+        if(isa<affine::AffineYieldOp>(IterArgConsumer) || isa<affine::AffineForOp>(IterArgConsumer))
           continue;
                   
         assert(isa<arith::MulIOp>(IterArgConsumer));

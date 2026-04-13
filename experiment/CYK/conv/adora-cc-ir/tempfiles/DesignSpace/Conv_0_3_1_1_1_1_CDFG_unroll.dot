@@ -1,0 +1,31 @@
+Digraph G {
+Input0[opcode = "Input", ref_name="Conv_0:1", size="512", offset="0,-34", pattern="0,3,2,16,-30,16,-30,16", color = black];
+Input1[opcode = "Input", ref_name="Conv_0:2", size="288", offset="0,0", pattern="6,3,-12,16,-12,16,6,16", color = black];
+BFMUL162[opcode = "BFMUL16", color = black];
+Input4[opcode = "Input", ref_name="Conv_0:1", size="512", offset="0,-32", pattern="0,3,2,16,-30,16,-30,16", color = black];
+Input5[opcode = "Input", ref_name="Conv_0:2", size="288", offset="0,2", pattern="6,3,-12,16,-12,16,6,16", color = black];
+BFMUL166[opcode = "BFMUL16", color = black];
+BFADD167[opcode = "BFADD16", color = black];
+Input9[opcode = "Input", ref_name="Conv_0:1", size="512", offset="0,-30", pattern="0,3,2,16,-30,16,-30,16", color = black];
+Input10[opcode = "Input", ref_name="Conv_0:2", size="288", offset="0,4", pattern="6,3,-12,16,-12,16,6,16", color = black];
+BFMUL1611[opcode = "BFMUL16", color = black];
+BFADD1612[opcode = "BFADD16", color = black];
+BFACC1613[opcode = "BFACC16", acc_params="0,3,1,4096", acc_first=1, color = black];
+Input16[opcode = "Input", ref_name="Conv_0:0", size="8192", offset="0,0", pattern="0,3,2,16,2,16,2,16", color = purple];
+BFADD1618[opcode = "BFADD16", color = purple];
+Output19[opcode = "Output", ref_name="Conv_0:3", size="8192", offset="0,0", pattern="0,3,2,16,2,16,2,16", color = purple];
+Input0 -> BFMUL162[color = black, style = bold, operand = 0, label = "Op=0"];
+Input1 -> BFMUL162[color = black, style = bold, operand = 1, label = "Op=1"];
+Input4 -> BFMUL166[color = black, style = bold, operand = 0, label = "Op=0"];
+Input5 -> BFMUL166[color = black, style = bold, operand = 1, label = "Op=1"];
+BFMUL162 -> BFADD167[color = black, style = bold, operand = 0, label = "Op=0"];
+BFMUL166 -> BFADD167[color = black, style = bold, operand = 1, label = "Op=1"];
+Input9 -> BFMUL1611[color = black, style = bold, operand = 0, label = "Op=0"];
+Input10 -> BFMUL1611[color = black, style = bold, operand = 1, label = "Op=1"];
+BFADD167 -> BFADD1612[color = black, style = bold, operand = 0, label = "Op=0"];
+BFMUL1611 -> BFADD1612[color = black, style = bold, operand = 1, label = "Op=1"];
+BFADD1612 -> BFACC1613[color = black, style = bold, operand = 0, label = "Op=0"];
+Input16 -> BFADD1618[color = black, style = bold, operand = 1, label = "Op=1"];
+BFADD1618 -> Output19[color = black, style = bold, operand = 0, label = "Op=0"];
+BFACC1613 -> BFADD1618[color = black, style = bold, operand = 0, label = "Op=0"];
+}

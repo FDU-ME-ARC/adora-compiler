@@ -1,0 +1,15 @@
+Digraph G {
+Input0[opcode = "Input", ref_name="Conv_0:1", size="512", offset="0,-34", pattern="2,3,-4,3,-2,16,-34,16,-34,16", color = black];
+Input1[opcode = "Input", ref_name="Conv_0:2", size="288", offset="0,0", pattern="2,3,2,3,-16,16,-16,16,2,16", color = black];
+BFMUL162[opcode = "BFMUL16", color = black];
+BFACC163[opcode = "BFACC16", acc_params="0,9,1,4096", acc_first=1, color = black];
+Input8[opcode = "Input", ref_name="Conv_0:0", size="8192", offset="0,0", pattern="0,3,0,3,2,16,2,16,2,16", color = blue];
+BFADD1610[opcode = "BFADD16", color = blue];
+Output11[opcode = "Output", ref_name="Conv_0:3", size="8192", offset="0,0", pattern="0,3,0,3,2,16,2,16,2,16", color = blue];
+Input0 -> BFMUL162[color = black, style = bold, operand = 0, label = "Op=0"];
+Input1 -> BFMUL162[color = black, style = bold, operand = 1, label = "Op=1"];
+BFMUL162 -> BFACC163[color = black, style = bold, operand = 0, label = "Op=0"];
+Input8 -> BFADD1610[color = black, style = bold, operand = 1, label = "Op=1"];
+BFADD1610 -> Output11[color = black, style = bold, operand = 0, label = "Op=0"];
+BFACC163 -> BFADD1610[color = black, style = bold, operand = 0, label = "Op=0"];
+}
