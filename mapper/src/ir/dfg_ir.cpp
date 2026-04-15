@@ -651,7 +651,7 @@ DFG* DFGIR::parseDFGJFromMLIRCDFG(LLVMCDFG * CDFG){
                 auto& visitedPorts = visited_edgeidx[std::make_pair(edge->src(), edge->dst())];
 
                 if (std::find(visitedPorts.begin(), visitedPorts.end(), dstPorts[_]) == visitedPorts.end()) {
-                    visitedPorts.push_back(dstPort);
+                    visitedPorts.push_back(dstPorts[_]);
                     dstPort = dstPorts[_];
                     break; 
                 }
