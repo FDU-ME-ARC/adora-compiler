@@ -3258,7 +3258,7 @@ LLVMCDFG* mlir::ADORA::generateCDFGfromKernel(LLVMCDFG* &CDFG, ADORA::KernelOp k
   lowerSCFIfToSelect(kernel);
   if(verbose) {
     llvm::errs() << "[ADORA] Applied If-Conversion (scf.if -> arith.select).\n";
-    kernel.dump(); // 打印 IR 查看转换结果
+    kernel.dump(); 
   }
   // [Add] End
 

@@ -50,11 +50,9 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
     {
         llvm::outs() << "\n[DEBUG-DirectConv] Generating OS-style Conv with R,S as outer loops...\n";
 
-        // 外层传进来了 6 个维度的循环变量
         Value iv_n = ivs[0], iv_k = ivs[1], iv_p = ivs[2], iv_q = ivs[3], iv_r = ivs[4], iv_s = ivs[5];
         int64_t T_N = tileSizes[DimN], T_K = tileSizes[DimK], T_P = tileSizes[DimP], T_Q = tileSizes[DimQ];
 
-        // 由于 r 和 s 在单词 kernel 调用中是固定的，X 只需要加载 T_P 和 T_Q 的大小，极大地缩小了 SPAD 占用！
         int64_t T_H_in = (T_P - 1) * meta.strides[0] + 1;
         int64_t T_W_in = (T_Q - 1) * meta.strides[1] + 1;
 
@@ -73,7 +71,7 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
         loadX.setId(std::to_string(OpId++)); loadX.setKernelName("ConvDirect");
         ADORA::setPingpongAttr(loadX);
 
-        // 2. 维持 K 维度的多块切分 (Multiple BlockStore)
+        // Multiple BlockStore
         int K_chunk = (T_K >= 4 && T_K % 4 == 0) ? 4 : 1;
         if (T_K == 16) K_chunk = 4;
         int num_K_blocks = T_K / K_chunk;
@@ -81,7 +79,7 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
         SmallVector<Value> wLoads, yInits, yAllocs;
 
         for (int kb = 0; kb < num_K_blocks; ++kb) {
-            // W BlockLoad (每次只加载当前确定的 r 和 s，大小为 1x1)
+            // W BlockLoad
             MemRefType typeW = MemRefType::get({K_chunk, meta.bounds[DimC], 1, 1}, meta.elementType);
             auto mapW = AffineMap::get(3, 0, {
                 builder.getAffineDimExpr(0) + builder.getAffineConstantExpr(kb * K_chunk),
@@ -118,7 +116,7 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
             stores.push_back(storeY);
         }
 
-        // 3. Kernel body (现在内部严格只有3层嵌套：k_inner, q_inner, c_inner)
+        // 3. Kernel body (k_inner, q_inner, c_inner)
         SmallVector<int> device_bounds = { static_cast<int>(K_chunk), static_cast<int>(T_Q) };
         auto deviceBodyBuilder = [&](OpBuilder &b3, Location microLoc, ValueRange dev_ivs) {
             Value k_inner = dev_ivs[0], q_inner = dev_ivs[1];
@@ -127,7 +125,7 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
             mlir::Value zero = ADORA::getConstantOpAccordingToDataType(b3, microLoc, dtype, 0.0);
             SmallVector<Value> initial_accs(num_K_blocks * T_P, zero);
 
-            // 唯一一层深度循环：c_inner
+            // c_inner
             auto cLoop = b3.create<affine::AffineForOp>(microLoc, 0, meta.bounds[DimC], 1, initial_accs);
             b3.setInsertionPointToStart(cLoop.getBody());
             Value c_i = cLoop.getInductionVar();
@@ -135,7 +133,6 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
             SmallVector<Value> next_accs;
             for (auto arg : cLoop.getRegionIterArgs()) next_accs.push_back(arg);
 
-            // 没有 R 和 S 的宏观展开！它们已经是外层循环了。
             SmallVector<Value> xVals(T_P);
             for (int p = 0; p < T_P; ++p) {
                 auto mapXInner = AffineMap::get(2, 0, {
@@ -168,7 +165,7 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
             SmallVector<Value> final_accs;
             for (auto res : cLoop.getResults()) final_accs.push_back(res);
 
-            // Interleaver & Store (🚨向 OSGemm 靠拢：不在此处给向量操作施加 Pingpong)
+            // Interleaver & Store
             for (int kb = 0; kb < num_K_blocks; ++kb) {
                 int p = 0;
                 if (T_P >= 3) {
@@ -231,7 +228,7 @@ mlir::affine::AffineForOp LowerDirectConv(OpBuilder &b, ConvOp op, SystolicConfi
 
     ConvMetadata meta = getConvMetadata(op);
 
-    // 🚨 调度外围的 6 层嵌套循环：N, K, P, Q, 加上 R, S
+    // 6 Off device loop：N, K, P, Q, and R, S
     SmallVector<int, 6> safeLoopOrder = {DimN, DimK, DimP, DimQ, DimR, DimS};
 
     SmallVector<int64_t, 7> tileSizes(7, 1);
@@ -256,7 +253,6 @@ mlir::affine::AffineForOp LowerDirectConv(OpBuilder &b, ConvOp op, SystolicConfi
     AffineForOp topLoop = ADORA::OffDeviceNestedLoop(b, loc, 6, outerUBs, outerSteps, BuildTiledDirectConvBody(op, op.getX(), meta, tileSizes, safeLoopOrder, finalResult));
     op.replaceAllUsesWith(finalResult);
 
-    // 🚨 废弃之前的全量赋 Pingpong 逻辑，依赖上方已针对标量单独触发的赋值
     topLoop.walk([&](Operation *inst) {
         inst->setAttr("ADORAConv", UnitAttr::get(topLoop.getContext()));
     });
@@ -273,12 +269,10 @@ mlir::affine::AffineForOp LowerDirectConvPipeline(OpBuilder &b, ConvOp op, Systo
     Value input = op.getX();
     Value weight = op.getW();
     
-    // 1. 创建输出分配 (Alloc)
     auto outType = mlir::cast<MemRefType>(op.getY().getType());
     Value finalResult = b.create<memref::AllocOp>(loc, outType);
 
-    // 2. 依次生成 7 层极其干净的纯量循环：N, K, P, Q, C, R, S
-    // 我们不做任何切块，全权信任后续的 AdjustMemoryFootprint Pass
+    // 7 loops：N, K, P, Q, C, R, S
     auto nLoop = b.create<affine::AffineForOp>(loc, 0, meta.bounds[DimN]);
     b.setInsertionPointToStart(nLoop.getBody());
     
@@ -301,7 +295,6 @@ mlir::affine::AffineForOp LowerDirectConvPipeline(OpBuilder &b, ConvOp op, Systo
     b.setInsertionPointToStart(sLoop.getBody());
 
     {
-        // 3. 进入最内层循环，执行标量级乘加运算
         OpBuilder::InsertionGuard guard(b);
         Value iv_n = nLoop.getInductionVar();
         Value iv_k = kLoop.getInductionVar();
@@ -311,7 +304,6 @@ mlir::affine::AffineForOp LowerDirectConvPipeline(OpBuilder &b, ConvOp op, Systo
         Value iv_r = rLoop.getInductionVar();
         Value iv_s = sLoop.getInductionVar();
 
-        // 构造动态地址映射 (AffineMap) 代替手工算地址
         // h_in = p * stride + r * dilation - pad
         auto mapX = AffineMap::get(6, 0, {
             b.getAffineDimExpr(0), // n
@@ -328,8 +320,7 @@ mlir::affine::AffineForOp LowerDirectConvPipeline(OpBuilder &b, ConvOp op, Systo
             b.getAffineDimExpr(0), b.getAffineDimExpr(1), b.getAffineDimExpr(2), b.getAffineDimExpr(3) // n, k, p, q
         }, b.getContext());
 
-        // 纯标量内存读写与计算 (Load-Add-Store)
-        // 这里的冗余 Store 会被后续的 MoveLoopCarriedInitailValue 自动优化为寄存器驻留 (OS)
+        // Load-Add-Store
         Value xVal = b.create<affine::AffineLoadOp>(loc, input, mapX, ValueRange{iv_n, iv_c, iv_p, iv_r, iv_q, iv_s});
         Value wVal = b.create<affine::AffineLoadOp>(loc, weight, mapW, ValueRange{iv_k, iv_c, iv_r, iv_s});
         Value yVal = b.create<affine::AffineLoadOp>(loc, finalResult, mapY, ValueRange{iv_n, iv_k, iv_p, iv_q});
@@ -342,7 +333,6 @@ mlir::affine::AffineForOp LowerDirectConvPipeline(OpBuilder &b, ConvOp op, Systo
 
     b.setInsertionPointAfter(nLoop);
 
-    // 5. 替换掉原始的高层 ConvOp
     op.replaceAllUsesWith(finalResult);
     nLoop->dump();
     return nLoop;

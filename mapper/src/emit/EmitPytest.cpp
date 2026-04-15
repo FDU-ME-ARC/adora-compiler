@@ -275,16 +275,11 @@ namespace
           if (flat_offset.empty())
             flat_offset = "0";
 
-          // ==========================================
-          // 新增：【非启发式判定】基于 AST 的严格变量名判定
-          // 在 ADORA 的 Conv lowering 中，权重固定来源为 arg_1
-          // ==========================================
           std::string role = "\"input\"";
           if (Memref_BaseAddr.find("arg_1") != std::string::npos) {
               role = "\"weight\"";
           }
 
-          // 将 role 参数注入到生成的 Python 函数中
           load_data << "idata.append(safe_slice_1d(" << Memref_BaseAddr << ", " << flat_offset << ", (";
           for (size_t j = 0; j < ResultShape.size(); ++j)
           {
@@ -517,7 +512,6 @@ namespace
 
           store_data << pad << "odata.append(tmp_out)\n";
 
-          // 动态收集 N 维起点，生成元组 (x, y, z...)，交由通用引擎推导
           std::string starts_str = "(";
           for (int j = 0; j < DRAM_Offset_EachDim.size(); j++) {
               std::string dim_val = DRAM_Offset_EachDim[j];
@@ -1121,8 +1115,9 @@ namespace
       std::string memref = _pytestemitter->lookupName(op.getMemref());
       // if (memref == "")
       // {
-      //   // 如果查找不到 memref 的名字，说明它通常是一个 Device-only 的 buffer（如 LocalMemAlloc），
-      //   // Host 端的 Python 脚本不能直接对其赋值。为了保证 Python 语法合法，直接 emit `pass`。
+      //   // If the memref name is not found, it is likely a device-only buffer
+      //   // (e.g., LocalMemAlloc). Such buffers cannot be directly assigned from
+      //   // host-side Python code. Emit `pass` to maintain valid Python syntax.
       //   indent() << "pass  # Host cannot directly store to device memref, skipping.\n";
       //   return true;
       // }
@@ -1422,7 +1417,7 @@ namespace
 
     bool visitOp(arith::CmpIOp op)
     {
-      std::string type = "bool"; // CmpI 结果是 bool 类型
+      std::string type = "bool"; 
       std::string Lhs = _pytestemitter->lookupName(op.getLhs());
       if (Lhs == "")
         Lhs = ConstOpToValueStr[op.getLhs()];
