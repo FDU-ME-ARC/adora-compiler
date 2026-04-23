@@ -478,8 +478,8 @@ namespace mlir
         /////////////////////
         AffineForOp loop = GenerateOnDeviceNestedLoop(
             builder, loc,
-            /*level*/ 2,
-            /*upper bounds*/ {temporal_count_dim_m, temporal_count_dim_n}, //// K -> M
+            /*level*/ 1,
+            /*upper bounds*/ {temporal_count_dim_m}, //// K -> M
             /*BodyBuilder*/ BodyOfTiledWithInputStationary(A_in, B_in, C_in, C_out, tile_row_size, tile_col_size, temporal_count_dim_n));
 
         SpecifiedAffineFortoKernel(loop, "GEMMIS");

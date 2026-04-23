@@ -659,8 +659,8 @@ void MoveAccumulationToLast(ADORA::KernelOp kernel){
         /// Adjust consumer of iter operand
         assert(getAllUsesInBlock(IterRegionOperand, forop.getBody()).size() == 1);
         mlir::Operation* IterArgConsumer = getAllUsesInBlock(IterRegionOperand, forop.getBody())[0];
-        // IterArgConsumer->dump();
-        if(isa<affine::AffineYieldOp>(IterArgConsumer))
+        IterArgConsumer->dump();
+        if(isa<affine::AffineYieldOp>(IterArgConsumer) || isa<affine::AffineForOp>(IterArgConsumer))
           continue;
         assert(isa<arith::AddFOp>(IterArgConsumer));
         mlir::Value AnotherOperand = IterArgConsumer->getOperand(getAnotherOperandIdx(IterArgConsumer, IterRegionOperand));
@@ -684,7 +684,7 @@ void MoveAccumulationToLast(ADORA::KernelOp kernel){
         // what is this for?
         // if(isa<affine::AffineForOp>(IterArgConsumer->getParentOp()))
         //   continue;   
-        if(isa<affine::AffineYieldOp>(IterArgConsumer))
+        if(isa<affine::AffineYieldOp>(IterArgConsumer) || isa<affine::AffineForOp>(IterArgConsumer))
           continue;
         
         assert(isa<arith::AddIOp>(IterArgConsumer));
@@ -706,7 +706,7 @@ void MoveAccumulationToLast(ADORA::KernelOp kernel){
         assert(getAllUsesInBlock(IterRegionOperand, forop.getBody()).size() == 1);
         mlir::Operation* IterArgConsumer = getAllUsesInBlock(IterRegionOperand, forop.getBody())[0];
         
-        if(isa<affine::AffineYieldOp>(IterArgConsumer))
+        if(isa<affine::AffineYieldOp>(IterArgConsumer) || isa<affine::AffineForOp>(IterArgConsumer))
           continue;
 
         assert(isa<arith::MulFOp>(IterArgConsumer));
@@ -728,7 +728,7 @@ void MoveAccumulationToLast(ADORA::KernelOp kernel){
         assert(getAllUsesInBlock(IterRegionOperand, forop.getBody()).size() == 1);
         mlir::Operation* IterArgConsumer = getAllUsesInBlock(IterRegionOperand, forop.getBody())[0];
         
-        if(isa<affine::AffineYieldOp>(IterArgConsumer))
+        if(isa<affine::AffineYieldOp>(IterArgConsumer) || isa<affine::AffineForOp>(IterArgConsumer))
           continue;
                   
         assert(isa<arith::MulIOp>(IterArgConsumer));
@@ -2324,6 +2324,8 @@ void FixLinearAccessOfVectorNode(LLVMCDFG* CDFG, bool verbose = true){
         while (std::getline(ss, step, ',')) {
           std::getline(ss, count, ',');
           if(level == 0){
+            llvm::errs() << "[DEBUG] std::stoi(count) = " << count 
+                 << ", vecnum = " << vecnum << "\n";
             assert(std::stoi(step) % innermostStep == 0);
             assert(std::stoi(count) % vecnum == 0);
             int newstep = std::stoi(step) / innermostStep - newLinearAccess[0].first * (newLinearAccess[0].second - 1);
@@ -2410,6 +2412,8 @@ void FixLinearAccessOfVectorNode(LLVMCDFG* CDFG, bool verbose = true){
         while (std::getline(ss, step, ',')) {
           std::getline(ss, count, ',');
           if(level == 0){
+            llvm::errs() << "[DEBUG] std::stoi(count) = " << count 
+                 << ", vecnum = " << vecnum << "\n";
             assert(std::stoi(step) % innermostStep == 0);
             assert(std::stoi(count) % vecnum == 0);
             int newstep = std::stoi(step) / innermostStep - newLinearAccess[0].first * (newLinearAccess[0].second - 1);
@@ -3254,7 +3258,7 @@ LLVMCDFG* mlir::ADORA::generateCDFGfromKernel(LLVMCDFG* &CDFG, ADORA::KernelOp k
   lowerSCFIfToSelect(kernel);
   if(verbose) {
     llvm::errs() << "[ADORA] Applied If-Conversion (scf.if -> arith.select).\n";
-    kernel.dump(); // 打印 IR 查看转换结果
+    kernel.dump(); 
   }
   // [Add] End
 

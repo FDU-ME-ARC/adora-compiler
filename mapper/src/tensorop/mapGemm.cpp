@@ -165,6 +165,8 @@ bool TensorDataflowGen::visitOp(ADORATensor::GemmOp op){
   // mlir::Operation* loweredIR = op->getNextNode();
   MapNestedForOrKernel(mapper, newfor, _OpNameFile_str);
 
+  op.erase();
+
   return true;
 }
 

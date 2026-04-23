@@ -1756,6 +1756,8 @@ void AdjustMemoryFootprintPass::runOnOperation()
       LLVM_DEBUG(llvm::errs() << "[dubug] Before ExplicitKernelDataBLockLoadStore: \n";FuncOp.dump(););
       FuncOp.walk([&](ADORA::KernelOp kernel)
       {
+        // if(kernel->hasAttr("ADORAGemm")) return;
+
         ExplicitKernelDataBLockLoadStore(kernel);
       });
       // FuncOp.dump();
@@ -1765,6 +1767,8 @@ void AdjustMemoryFootprintPass::runOnOperation()
       /// of most-out loop in Kernel{...}
       FuncOp.walk([&](ADORA::KernelOp kernel)
       {
+        // if(kernel->hasAttr("ADORAGemm")) return;
+
         EliminateOuterLoopAffineTrans(kernel);
       });
       

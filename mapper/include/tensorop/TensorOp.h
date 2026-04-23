@@ -77,6 +77,7 @@ public:
   void setEmitter(VitisSDKEmitter* _) {sdkEmitter = _;}
 
   bool visitOp(ADORATensor::GemmOp op);
+  bool visitOp(ADORATensor::ConvOp op);
 
   bool visitInvalidOp(Operation* op) override {
     return false;

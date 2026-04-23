@@ -444,7 +444,7 @@ int main(int argc, char **argv) {
   moduleop.walk([&](func::FuncOp func) {
     SmallVector<ADORA::KernelOp> kernels;
     func.walk([&](ADORA::KernelOp kernel) {
-      if(kernel->hasAttr("ADORAGemm"))
+      if(kernel->hasAttr("ADORAGemm") ||kernel->hasAttr("ADORAConv"))
         return WalkResult::advance();
       kernels.push_back(kernel);
       return WalkResult::advance();

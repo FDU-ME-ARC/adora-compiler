@@ -10,7 +10,7 @@ func.func @test_os_gemm_bug(%A: memref<36x12xf32>, %B: memref<12x36xf32>, %C: me
   %0 = "ADORATensor.Gemm"(%A, %B, %C) {
       algorithm = "GEMM_Standard",
       stationary_kind = "OutputStationary",
-      tile_size = array<i64: 1, 1, 6, 6>
+      tile_size = array<i64: 1, 12, 6, 6>
   } : (memref<36x12xf32>, memref<12x36xf32>, memref<36x36xf32>) -> memref<36x36xf32>
   
   return %0 : memref<36x36xf32>

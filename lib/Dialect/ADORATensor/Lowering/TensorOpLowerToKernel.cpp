@@ -55,6 +55,8 @@ namespace mlir
           newfor = TiledOutputStationaryGemm(opbuilder, op, tilesize);
         }
 
+        op.erase();
+
         return true;
       }
 
@@ -71,9 +73,10 @@ namespace mlir
         {
         case ComputeAlgorithm::Conv_Direct:
           // Invoke the Direct Conv generator
-          // LowerGenericDirectConv reads config.loopOrder to decide whether
+          // LowerDirectConv reads config.loopOrder to decide whether
           // to generate OS (P,Q outer) or WS (R,S outer)
-          newfor = LowerGenericDirectConv(opbuilder, op, config);
+          // newfor = LowerDirectConv(opbuilder, op, config);
+          newfor = LowerDirectConvPipeline(opbuilder, op, config);
           break;
 
         case ComputeAlgorithm::Conv_Im2Col:
@@ -95,6 +98,8 @@ namespace mlir
           llvm::errs() << "[Error] Unknown Conv Algorithm.\n";
           return false;
         }
+
+        op.erase();
 
         return true;
       }

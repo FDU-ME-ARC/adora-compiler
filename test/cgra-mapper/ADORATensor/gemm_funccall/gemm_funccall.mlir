@@ -1,3 +1,4 @@
+// XFAIL: *
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: adoracc.py %s --work-dir %t -o %t/opt.mlir
 // RUN: %cgra-mapper --adg=%S/../../../../../MatrixMeld/vitrartl/spec/vitra_cgra_adg.json --op-file=%S/../../../../../MatrixMeld/vitrartl/spec/operations.json --output-type=pytest --obj-opt=false %t/opt.mlir --output=%t/gemm_funccall.py

@@ -1441,18 +1441,59 @@ LogicalResult mlir::ADORA::simplifyLoopLevelsInRegion(mlir::Region& region, bool
     mlir::OpBuilder b(forop.getOperation());
     Location loc = forop.getLoc();
     int tc = getConstantTripCount(forop).value_or(0);
-    if(tc == 1 && forop.getNumResults() == 0){
-      AffineBound lb = forop.getLowerBound();
-      AffineMap lbMap = lb.getMap();
-      if(lb.getNumOperands() == 0 
-          && lbMap.getResults().size() == 1
-          && lbMap.getResult(0).getKind() == AffineExprKind::Constant){
-        /// replace the loop iter var with a constant
-        int lb_value = lbMap.getResult(0).dyn_cast<AffineConstantExpr>().getValue();
-        mlir::Value constlb = b.create<arith::ConstantOp>(loc, b.getIndexAttr(lb_value));
-        forop.getInductionVar().replaceAllUsesWith(constlb);
+    AffineBound lb = forop.getLowerBound();
+    AffineMap lbMap = lb.getMap();
+    bool isSingleTrip = (tc == 1);
+    if (!isSingleTrip) {
+      AffineBound ub = forop.getUpperBound();
+      AffineMap ubMap = ub.getMap();
+      if (lbMap.getNumResults() == 1 &&
+          ubMap.getNumResults() == 1 &&
+          lbMap.getNumDims() == ubMap.getNumDims() &&
+          lbMap.getNumSymbols() == ubMap.getNumSymbols() &&
+          lb.getNumOperands() == ub.getNumOperands()) {
+        bool sameOperands = true;
+        for (unsigned i = 0; i < lb.getNumOperands(); ++i) {
+          if (lb.getOperand(i) != ub.getOperand(i)) {
+            sameOperands = false;
+            break;
+          }
+        }
+        if (sameOperands) {
+          AffineExpr lbExpr = lbMap.getResult(0);
+          AffineExpr ubExpr = ubMap.getResult(0);
+          isSingleTrip = (ubExpr == lbExpr + 1);
+        }
+      }
+    }
+
+    if (isSingleTrip) {
+      if (lbMap.getNumResults() == 1) {
+        Value ivValue;
+        if (lb.getNumOperands() == 0 &&
+            lbMap.getResult(0).getKind() == AffineExprKind::Constant) {
+          // Replace the IV with the constant lower bound.
+          int lbValue = lbMap.getResult(0).dyn_cast<AffineConstantExpr>().getValue();
+          ivValue = b.create<arith::ConstantOp>(loc, b.getIndexAttr(lbValue));
+        } else {
+          // For non-constant bounds (e.g. %i to %i + 1), the single iteration
+          // still executes with IV = lower_bound.
+          ivValue = b.create<AffineApplyOp>(loc, lbMap, lb.getOperands());
+        }
+        forop.getInductionVar().replaceAllUsesWith(ivValue);
         
         Block* loopBlock = forop.getBody();
+        auto yieldOp = dyn_cast<AffineYieldOp>(loopBlock->getTerminator());
+        if (!yieldOp)
+          return WalkResult::advance();
+
+        // For loops with iter_args, a single-trip loop enters the body with
+        // region iter-args equal to init values.
+        ValueRange initOperands = forop.getInits();
+        ValueRange regionIterArgs = forop.getRegionIterArgs();
+        for (size_t idx = 0; idx < regionIterArgs.size(); ++idx) {
+          regionIterArgs[idx].replaceAllUsesWith(initOperands[idx]);
+        }
         // assert(isa<AffineYieldOp>(loopBlock->getTerminator()));
         // loopBlock->getTerminator()->erase();
   
@@ -1472,6 +1513,12 @@ LogicalResult mlir::ADORA::simplifyLoopLevelsInRegion(mlir::Region& region, bool
         for(auto operation : ops_tomove){
           operation->moveBefore(forop);
         }
+
+        // Replace for-results with yielded values in the single executed
+        // iteration.
+        for (unsigned idx = 0; idx < forop.getNumResults(); ++idx) {
+          forop.getResult(idx).replaceAllUsesWith(yieldOp.getOperand(idx));
+        }
         // forop->getBlock()->dump();
         /// Erase the forOp itself.
         to_erase.push_back(forop);
@@ -1489,6 +1536,7 @@ LogicalResult mlir::ADORA::simplifyLoopLevelsInRegion(mlir::Region& region, bool
   for(AffineForOp& op : to_erase)
     op.erase();
 
+  return success();
 }
 
 

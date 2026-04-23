@@ -13,7 +13,7 @@ void Configuration::addCfgData(std::map<int, CfgData> &cfg, const CfgDataLoc &lo
     while(len > 0){
         loc_data.data.push_back(uint32_t(val&0xffffffff));
         len -= 32;
-        val >> 32;
+        val >>= 32;
     }
     cfg[loc.low] = loc_data;
 }
