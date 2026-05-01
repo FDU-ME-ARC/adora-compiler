@@ -32,6 +32,7 @@ private:
 
     // @jhlou: pre set constraints
     std::map <DFGNode*, std::vector<ADGNode*>> _prePlacementConstraints;
+    std::string _agentTraceContext = "";
 protected:
     Mapping* _mapping = nullptr;
     IOScheduler* _sched;
@@ -121,6 +122,8 @@ public:
     void preestablishPlacementConstraints(DFGNode* dfgnode, std::vector<ADGNode*> adgnodes);
     std::vector<ADGNode*> getPlacementConstraints(DFGNode* dfgnode);
     void clearPlacementConstraints(){_prePlacementConstraints.clear();};
+    void setAgentTraceContext(const std::string& context){ _agentTraceContext = context; }
+    const std::string& agentTraceContext(){ return _agentTraceContext; }
 };
 
 

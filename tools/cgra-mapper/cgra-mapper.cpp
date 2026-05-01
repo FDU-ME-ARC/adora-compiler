@@ -37,11 +37,13 @@
 #include <getopt.h>
 #include <atomic>
 #include <algorithm>
+#include <filesystem>
 
 #include "op/operations.h"
 #include "ir/adg_ir.h"
 #include "ir/dfg_ir.h"
 #include "mapper/mapper_sa.h"
+#include "mapper/agent_trace.h"
 #include "spdlog/spdlog.h"
 #include "spdlog/cfg/argv.h"
 #include "emit/EmitCGRACall.h"
@@ -193,6 +195,26 @@ int main(int argc, char **argv) {
     cl::desc("Allow N mapping jobs at once within each func.func (default to be 1)"),
     cl::value_desc("[N]"),
     cl::init(1));
+
+  static cl::opt<bool> emitAgentTrace(
+    "emit-agent-trace",
+    cl::Optional,
+    cl::desc("emit mapper-agent trace JSONL sidecar artifacts"),
+    cl::init(false));
+
+  static cl::opt<std::string> agentTraceRoot(
+    "agent-trace-root",
+    cl::Optional,
+    cl::desc("root directory for mapper-agent trace artifacts"),
+    cl::value_desc("path"),
+    cl::init("mapper_agent_trace"));
+
+  static cl::opt<std::string> agentTracePolicyId(
+    "agent-trace-policy-id",
+    cl::Optional,
+    cl::desc("policy id recorded in mapper-agent trace"),
+    cl::value_desc("string"),
+    cl::init("compiler_logged"));
   // spdlog::cfg::helpers::load_levels("true");
 
   InitLLVM y(argc, argv);
@@ -213,6 +235,18 @@ int main(int argc, char **argv) {
   // Parse pass names in main to ensure static initialization completed.
   cl::ParseCommandLineOptions(argc, argv, helpHeader);
   MlirOptMainConfig config = MlirOptMainConfig::createFromCLOptions();
+
+  if(emitAgentTrace){
+    std::string stem = std::filesystem::path(std::string(inputFilename)).stem().string();
+    if(stem.empty()) stem = "stdin";
+    std::string runId = stem + "_" + std::to_string(std::time(nullptr));
+    AgentTrace::configure(agentTraceRoot, runId);
+    AgentTrace::emit(
+      "cgra_mapper",
+      "start",
+      "{\"input\":\"" + agentTraceJsonEscape(std::string(inputFilename)) + "\",\"adg\":\"" + agentTraceJsonEscape(std::string(adg_fn)) + "\",\"op_file\":\"" + agentTraceJsonEscape(std::string(op_fn)) + "\",\"output_type\":\"" + agentTraceJsonEscape(std::string(emit_type)) + "\",\"policy_id\":\"" + agentTraceJsonEscape(std::string(agentTracePolicyId)) + "\",\"max_iters\":" + std::to_string((int)max_iters) + ",\"timeout_ms\":" + std::to_string((int)timeout_ms) + "}"
+    );
+  }
 
 
 
@@ -372,6 +406,14 @@ int main(int argc, char **argv) {
     if(kernelName.empty()){
       kernelName = "kernel_" + std::to_string(kernel_cnt.fetch_add(1));
     }
+    mapper->setAgentTraceContext(kernelName);
+    if(AgentTrace::enabled()){
+      AgentTrace::emit(
+        "cgra_mapper",
+        "kernel_start",
+        "{\"kernel\":\"" + agentTraceJsonEscape(kernelName) + "\"}"
+      );
+    }
     LLVMCDFG *CDFG = new LLVMCDFG(kernelName, GeneralOpNameFile_str);
     {
       std::lock_guard<std::mutex> lock(mlir_mutex);
@@ -414,6 +456,13 @@ int main(int argc, char **argv) {
     std::filesystem::create_directory(kernelName + "_map_result");
     CDFG->CDFGtoDOT(kernelName + "_map_result/before_map_" + CDFG->name_str() + "_CDFG.dot");
     bool succeed = mapper->execute(/*dumpCallFunc=*/false, /*dumpMappedViz*/true, /*resultDir=*/kernelName + "_map_result");
+    if(AgentTrace::enabled()){
+      AgentTrace::emit(
+        "cgra_mapper",
+        "kernel_end",
+        "{\"kernel\":\"" + agentTraceJsonEscape(kernelName) + "\",\"succeed\":" + std::string(succeed ? "true" : "false") + "}"
+      );
+    }
     // std::filesystem::create_directory("map_result");
     // CDFG->CDFGtoDOT("map_result/before_map_" + CDFG->name_str() + "_CDFG.dot");
     // bool succeed = mapper->execute(/*dumpCallFunc=*/false, /*dumpMappedViz*/true, /*resultDir=*/"map_result");
@@ -517,6 +566,10 @@ int main(int argc, char **argv) {
     delete mapper;
 
   // delete adg;
+
+  if(AgentTrace::enabled()){
+    AgentTrace::emit("cgra_mapper", "end", "{}");
+  }
 
   return 0; 
 }

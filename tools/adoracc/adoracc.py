@@ -14,8 +14,11 @@ import shutil
 import subprocess
 import sys
 import re
+import time
 from datetime import datetime
 from pathlib import Path
+
+from trajectory_emitter import emit_trajectory
 
 PIPELINE_LOG_NAME = "pipeline.log"
 
@@ -42,11 +45,12 @@ def run_command(
     args: list[str],
     cwd: Path | None = None,
     log_dir: Path | None = None,
-) -> None:
+) -> float:
     print("+", " ".join(args))
+    start = time.perf_counter()
     if log_dir is None:
         subprocess.run(args, cwd=cwd, check=True)
-        return
+        return (time.perf_counter() - start) * 1000.0
 
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / PIPELINE_LOG_NAME
@@ -65,6 +69,7 @@ def run_command(
             stderr=subprocess.STDOUT,
             text=True,
         )
+    return (time.perf_counter() - start) * 1000.0
 
 
 def prepare_ir_dirs(root: Path) -> dict[str, Path]:
@@ -151,15 +156,22 @@ def build_pipeline(
     enable_unroll: bool,
     adg_path: Path | None,
     output_path: Path | None,   # NEW
-) -> None:
+) -> dict[str, object]:
     base_name = input_path.stem
     mlir_input = input_path
 
     log_dir = dirs["tempfiles"]
+    stage_metrics_ms: dict[str, float] = {
+        "cgeist_ms": 0.0,
+        "normalize_ms": 0.0,
+        "kernel_extract_ms": 0.0,
+        "kernel_opt_ms": 0.0,
+        "dfg_gen_ms": 0.0,
+    }
 
     if input_path.suffix.upper() == ".C":
         cgeist_output = dirs["ir"] / f"{base_name}.mlir"
-        run_command(
+        stage_metrics_ms["cgeist_ms"] = run_command(
             [
                 tools["cgeist"],
                 "-O2",
@@ -184,7 +196,7 @@ def build_pipeline(
         f.write(cleaned)
 
     normalized = dirs["temp_dfg"] / f"{base_name}_normalized.mlir"
-    run_command(
+    stage_metrics_ms["normalize_ms"] = run_command(
         [
             tools["cgra-opt"],
             "--allow-unregistered-dialect",
@@ -221,7 +233,7 @@ def build_pipeline(
             str(kernel_mlir),
         ]
     )
-    run_command([tools["cgra-opt"]] + kernel_passes, log_dir=log_dir)
+    stage_metrics_ms["kernel_extract_ms"] = run_command([tools["cgra-opt"]] + kernel_passes, log_dir=log_dir)
 
     kernel_opt = dirs["kernels_opt"] / f"{base_name}_opt.mlir"
     kernel_opt_cmd = [
@@ -243,7 +255,7 @@ def build_pipeline(
     kernel_opt_cmd.extend([str(kernel_mlir), "-o", str(kernel_opt)])
     # Run with cwd=dirs["tempfiles"] when unroll is enabled so AutoUnroll creates
     # DesignSpace under adora-cc-ir/tempfiles/DesignSpace
-    run_command(
+    stage_metrics_ms["kernel_opt_ms"] = run_command(
         kernel_opt_cmd,
         cwd=dirs["tempfiles"] if enable_unroll else None,
         log_dir=log_dir,
@@ -263,7 +275,7 @@ def build_pipeline(
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(kernel_opt_text)
 
-    run_command(
+    stage_metrics_ms["dfg_gen_ms"] = run_command(
         [
             tools["cgra-opt"],
             "--adora-kernel-dfg-gen",
@@ -273,8 +285,21 @@ def build_pipeline(
         log_dir=log_dir,
     )
 
+    copied_dfgs: list[str] = []
     for dot_file in dirs["temp_dfg"].glob("*_CDFG.dot"):
         shutil.copy(dot_file, dirs["dfgs"] / dot_file.name)
+        copied_dfgs.append(str((dirs["dfgs"] / dot_file.name).resolve()))
+
+    total_ms = sum(stage_metrics_ms.values())
+    return {
+        "mlir_input": str(Path(mlir_input).resolve()),
+        "normalized": str(normalized.resolve()),
+        "kernel_mlir": str(kernel_mlir.resolve()),
+        "kernel_opt": str(kernel_opt.resolve()),
+        "dfg_files": copied_dfgs,
+        "total_ms": total_ms,
+        **stage_metrics_ms,
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -306,6 +331,23 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Write the optimized kernel MLIR (after kernel optimization) to this file. "
              "If not provided, print to stdout.",
+    )
+    parser.add_argument(
+        "--emit-trajectory",
+        action="store_true",
+        help="Emit one schema-shaped trajectory episode for this compile invocation.",
+    )
+    parser.add_argument(
+        "--trajectory-root",
+        type=Path,
+        default=None,
+        help="Root directory where data/episodes, data/observations, and data/metrics are written. Defaults to --work-dir.",
+    )
+    parser.add_argument(
+        "--trajectory-policy-id",
+        type=str,
+        default="compiler_logged",
+        help="Policy identifier recorded in the emitted episode summary.",
     )
     return parser.parse_args()
 
@@ -346,7 +388,7 @@ def main() -> int:
     dirs = prepare_ir_dirs(args.work_dir.resolve())
 
     try:
-        build_pipeline(input_path, tools, dirs, args.enable_unroll, adg_path, output_path)
+        pipeline_metadata = build_pipeline(input_path, tools, dirs, args.enable_unroll, adg_path, output_path)
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -360,6 +402,18 @@ def main() -> int:
             file=sys.stderr,
         )
         return exc.returncode
+
+    if args.emit_trajectory:
+        trajectory_root = args.trajectory_root.resolve() if args.trajectory_root else args.work_dir.resolve()
+        summary_path = emit_trajectory(
+            trajectory_root=trajectory_root,
+            input_path=input_path,
+            dirs=dirs,
+            adg_path=adg_path,
+            pipeline_metadata=pipeline_metadata,
+            policy_id=args.trajectory_policy_id,
+        )
+        print(f"Trajectory summary: {summary_path}", file=sys.stderr)
 
     print(f"Final optimal mlir file: {dirs['kernels_opt']}", file=sys.stderr)
     print(f"CDFG output directory: {dirs['dfgs']}", file=sys.stderr)

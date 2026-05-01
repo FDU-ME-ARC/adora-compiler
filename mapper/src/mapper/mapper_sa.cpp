@@ -1,5 +1,6 @@
 
 #include "mapper/mapper_sa.h"
+#include "mapper/agent_trace.h"
 
 MapperSA::MapperSA(ADG* adg, int timeout, int maxIter, bool objOpt) : Mapper(adg){
     setTimeOut(timeout);
@@ -19,11 +20,25 @@ MapperSA::~MapperSA(){}
 
 // map the DFG to the ADG, mapper API
 bool MapperSA::mapper(){
+    if(AgentTrace::enabled()){
+        AgentTrace::emit(
+            "mapper",
+            "mapper_sa_start",
+            "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"obj_opt\":" + std::string(_objOpt ? "true" : "false") + "}"
+        );
+    }
     bool succeed;
     if(_objOpt){ // objective optimization
         succeed = pnrSyncOpt();
     }else{
         succeed = pnrSync(MAX_TEMP, _maxIters, 3*_maxIters, true) == 1;
+    }
+    if(AgentTrace::enabled()){
+        AgentTrace::emit(
+            "mapper",
+            "mapper_sa_end",
+            "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"succeed\":" + std::string(succeed ? "true" : "false") + "}"
+        );
     }
     return succeed;
 }
@@ -102,10 +117,24 @@ bool MapperSA::pnrSyncOpt(){
 int MapperSA::pnrSync(float T0, int maxItersPerTemp, int maxItersNoImprv, bool modifyDfg){     
     int res = 1;
     ADG* adg = _mapping->getADG();
+    if(AgentTrace::enabled()){
+        AgentTrace::emit(
+            "mapper_repair",
+            "pnr_sync_start",
+            "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"modify_dfg\":" + std::string(modifyDfg ? "true" : "false") + ",\"ii\":" + std::to_string(_mapping->II()) + "}"
+        );
+    }
     while(!pnrSyncSameDfg(T0, maxItersPerTemp, maxItersNoImprv)){
         int II = _mapping->II();
         if(_mapping->evaluateII() > II || (_mapping->backViolation() == 1)){
             spdlog::warn("Increase II from {0} to {1}", II, II+1); 
+            if(AgentTrace::enabled()){
+                AgentTrace::emit(
+                    "mapper_repair",
+                    "increase_ii",
+                    "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"from\":" + std::to_string(II) + ",\"to\":" + std::to_string(II+1) + ",\"evaluate_ii\":" + std::to_string(_mapping->evaluateII()) + ",\"back_violation\":" + std::to_string(_mapping->backViolation()) + "}"
+                );
+            }
             _mapping->setII(II+1);
             continue;
         }
@@ -116,6 +145,13 @@ int MapperSA::pnrSync(float T0, int maxItersPerTemp, int maxItersNoImprv, bool m
             break;
         }          
         spdlog::warn("Insert pass-through nodes into DFG");                            
+        if(AgentTrace::enabled()){
+            AgentTrace::emit(
+                "mapper_repair",
+                "insert_pass_nodes",
+                "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"total_violation\":" + std::to_string(_mapping->totalViolation()) + ",\"max_violation\":" + std::to_string(_mapping->maxViolation()) + ",\"num_vio_edges\":" + std::to_string(_mapping->numVioEdges()) + "}"
+            );
+        }
         DFG* newDfg = new DFG();
         _mapping->insertPassDfgNodes(newDfg); // insert pass-through nodes into DFG         
         // newDfg->print();                
@@ -133,6 +169,13 @@ int MapperSA::pnrSync(float T0, int maxItersPerTemp, int maxItersNoImprv, bool m
         spdlog::info("Max latency: {}", _mapping->maxLat());       
     }else{
         spdlog::info("PnR and Data Synchronization failed!");
+    }
+    if(AgentTrace::enabled()){
+        AgentTrace::emit(
+            "mapper_repair",
+            "pnr_sync_end",
+            "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"result\":" + std::to_string(res) + ",\"ii\":" + std::to_string(_mapping->II()) + ",\"max_latency\":" + std::to_string(_mapping->maxLat()) + "}"
+        );
     }
     return res;
 }
@@ -160,6 +203,13 @@ bool MapperSA::pnrSyncSameDfg(float T0, int maxIterPerTemp, int maxItersNoImprv)
         for(int iter = 0; iter < maxIterPerTemp; iter++){
             totalIter++;
             if(runningTimeMS() > getTimeOut()){
+                if(AgentTrace::enabled()){
+                    AgentTrace::emit(
+                        "mapper_repair",
+                        "timeout",
+                        "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"total_iter\":" + std::to_string(totalIter) + ",\"running_time_ms\":" + std::to_string(runningTimeMS()) + "}"
+                    );
+                }
                 exit = true;
                 break;
             }
@@ -168,6 +218,13 @@ bool MapperSA::pnrSyncSameDfg(float T0, int maxIterPerTemp, int maxItersNoImprv)
             bool pnrSucceed = incrPnR(curMapping);
             if(!pnrSucceed){ // current PnR failed 
                 spdlog::debug("PnR failed once!");
+                if(AgentTrace::enabled()){
+                    AgentTrace::emit(
+                        "mapper_repair",
+                        "pnr_attempt_failed",
+                        "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"total_iter\":" + std::to_string(totalIter) + ",\"temp\":" + std::to_string(temp) + "}"
+                    );
+                }
                 continue; // retry based on current status
             }
             spdlog::info("PnR succeed, start data synchronization");
@@ -180,6 +237,13 @@ bool MapperSA::pnrSyncSameDfg(float T0, int maxIterPerTemp, int maxItersNoImprv)
             // newVio = curMapping->totalViolation() * curMapping->numVioEdges(); // latency violations
             newVio = (curMapping->evaluateII() - curMapping->II()) * 1000;
             newVio += std::abs(curMapping->totalViolation()) * curMapping->numVioEdges(); // latency violations
+            if(AgentTrace::enabled()){
+                AgentTrace::emit(
+                    "mapper_repair",
+                    "pnr_attempt_evaluated",
+                    "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"total_iter\":" + std::to_string(totalIter) + ",\"temp\":" + std::to_string(temp) + ",\"new_violation\":" + std::to_string(newVio) + ",\"old_violation\":" + std::to_string(oldVio) + ",\"min_violation\":" + std::to_string(minVio) + ",\"ii\":" + std::to_string(curMapping->II()) + ",\"evaluate_ii\":" + std::to_string(curMapping->evaluateII()) + ",\"total_latency_violation\":" + std::to_string(curMapping->totalViolation()) + ",\"num_vio_edges\":" + std::to_string(curMapping->numVioEdges()) + "}"
+                );
+            }
            
             if(newVio == 0){
                 succeed = true;
@@ -190,6 +254,13 @@ bool MapperSA::pnrSyncSameDfg(float T0, int maxIterPerTemp, int maxItersNoImprv)
             spdlog::info("Violation cost: {}", newVio);
             int difVio = newVio - oldVio;
             if(metropolis(difVio, temp)){ // accept new solution according to the Metropolis rule
+                if(AgentTrace::enabled()){
+                    AgentTrace::emit(
+                        "mapper_repair",
+                        "metropolis_accept",
+                        "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"total_iter\":" + std::to_string(totalIter) + ",\"diff_violation\":" + std::to_string(difVio) + ",\"temp\":" + std::to_string(temp) + "}"
+                    );
+                }
                 if(newVio < minVio){ // get better result
                     minVio = newVio;
                     lastImprvIter = totalIter;
@@ -199,6 +270,13 @@ bool MapperSA::pnrSyncSameDfg(float T0, int maxIterPerTemp, int maxItersNoImprv)
                 *lastAcceptMapping = *curMapping; // can keep trying based on current status            
                 oldVio = newVio;
             }else{
+                if(AgentTrace::enabled()){
+                    AgentTrace::emit(
+                        "mapper_repair",
+                        "metropolis_reject",
+                        "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"total_iter\":" + std::to_string(totalIter) + ",\"diff_violation\":" + std::to_string(difVio) + ",\"temp\":" + std::to_string(temp) + "}"
+                    );
+                }
                 *curMapping = *lastAcceptMapping; // keep trying based on last accept status  
             }
         }
@@ -380,9 +458,23 @@ bool MapperSA::incrPnR(Mapping* mapping){
             spdlog::debug("Mapping DFG node {0}, id: {1}", dfgNode->name(), id);   
             // find candidate ADG nodes for this DFG node
             auto nodeCandidates = findCandidates(mapping, dfgNode, 30, 10);
+            if(AgentTrace::enabled()){
+                AgentTrace::emit(
+                    "mapper_select_node",
+                    "ready_node_candidates",
+                    "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"dfg_node_id\":" + std::to_string(dfgNode->id()) + ",\"dfg_node_name\":\"" + agentTraceJsonEscape(dfgNode->name()) + "\",\"operation\":\"" + agentTraceJsonEscape(dfgNode->operation()) + "\",\"candidate_count\":" + std::to_string(nodeCandidates.size()) + "}"
+                );
+            }
             if(nodeCandidates.empty() || tryCandidates(mapping, dfgNode, nodeCandidates) == -1){
                 // std::cout << "Cannot map DFG node " << dfgNode->id() << std::endl;
                 spdlog::debug("Cannot map DFG node {0} : {1}", dfgNode->id(), dfgNode->name());
+                if(AgentTrace::enabled()){
+                    AgentTrace::emit(
+                        "mapper_place_node",
+                        "map_node_failed",
+                        "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"dfg_node_id\":" + std::to_string(dfgNode->id()) + ",\"dfg_node_name\":\"" + agentTraceJsonEscape(dfgNode->name()) + "\",\"candidate_count\":" + std::to_string(nodeCandidates.size()) + "}"
+                    );
+                }
                 // Graphviz viz(mapping, "results");
                 // viz.printDFGEdgePath();
                 return false;
@@ -418,9 +510,30 @@ int MapperSA::tryCandidates(Mapping* mapping, DFGNode* dfgNode, const std::vecto
     // std::vector<int> sortedIdx = sortCandidates(mapping, dfgNode, candidates);
     int idx = 0;
     for(auto& candidate : candidates){
+        if(AgentTrace::enabled()){
+            AgentTrace::emit(
+                "mapper_place_node",
+                "try_candidate",
+                "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"dfg_node_id\":" + std::to_string(dfgNode->id()) + ",\"dfg_node_name\":\"" + agentTraceJsonEscape(dfgNode->name()) + "\",\"operation\":\"" + agentTraceJsonEscape(dfgNode->operation()) + "\",\"candidate_index\":" + std::to_string(idx) + ",\"adg_node_id\":" + std::to_string(candidate->id()) + ",\"adg_node_name\":\"" + agentTraceJsonEscape(candidate->name()) + "\",\"adg_node_type\":\"" + agentTraceJsonEscape(candidate->type()) + "\"}"
+            );
+        }
         if(mapping->mapDfgNode(dfgNode, candidate)){         
             // spdlog::debug("Map DFG node {0} to ADG node {1}", dfgNode->name(), candidate->name());   
+            if(AgentTrace::enabled()){
+                AgentTrace::emit(
+                    "mapper_place_node",
+                    "candidate_accepted",
+                    "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"dfg_node_id\":" + std::to_string(dfgNode->id()) + ",\"candidate_index\":" + std::to_string(idx) + ",\"adg_node_id\":" + std::to_string(candidate->id()) + "}"
+                );
+            }
             return idx;
+        }
+        if(AgentTrace::enabled()){
+            AgentTrace::emit(
+                "mapper_place_node",
+                "candidate_rejected",
+                "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"dfg_node_id\":" + std::to_string(dfgNode->id()) + ",\"candidate_index\":" + std::to_string(idx) + ",\"adg_node_id\":" + std::to_string(candidate->id()) + ",\"rejection_reason\":\"map_or_route_failed\"}"
+            );
         }
         idx++;
         spdlog::debug("Cannot map DFG node {0} to ADG node {1}", dfgNode->name(), candidate->name());
@@ -508,6 +621,19 @@ std::vector<ADGNode*> MapperSA::findCandidates(Mapping* mapping, DFGNode* dfgNod
     std::vector<ADGNode*> sortedCandidates;
     for(int i = 0; i < cdtNum; i++){
         sortedCandidates.push_back(candidates[sortedIdx[i]]);
+    }
+    if(AgentTrace::enabled()){
+        std::string candidateIds = "[";
+        for(size_t i = 0; i < sortedCandidates.size(); ++i){
+            if(i) candidateIds += ",";
+            candidateIds += std::to_string(sortedCandidates[i]->id());
+        }
+        candidateIds += "]";
+        AgentTrace::emit(
+            "mapper_place_node",
+            "candidate_list",
+            "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"dfg_node_id\":" + std::to_string(dfgNode->id()) + ",\"operation\":\"" + agentTraceJsonEscape(dfgNode->operation()) + "\",\"candidate_ids\":" + candidateIds + "}"
+        );
     }
     return sortedCandidates;
 }

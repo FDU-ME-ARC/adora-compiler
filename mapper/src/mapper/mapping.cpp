@@ -1,5 +1,6 @@
 
 #include "mapper/mapping.h"
+#include "mapper/agent_trace.h"
 
 
 // reset mapping intermediate result and status
@@ -211,6 +212,13 @@ bool Mapping::mapDfgNodeNoRoute(DFGNode* dfgNode, ADGNode* adgNode){
 // map DFG node to ADG node and route the input/output edges connected to already-mapped DFG nodes
 // map the connected input/output nodes alongside
 bool Mapping::mapDfgNode(DFGNode* dfgNode, ADGNode* targetAdgNode){
+    if(AgentTrace::enabled()){
+        AgentTrace::emit(
+            "mapper_place_node",
+            "map_dfg_node_start",
+            "{\"dfg_node_id\":" + std::to_string(dfgNode->id()) + ",\"dfg_node_name\":\"" + agentTraceJsonEscape(dfgNode->name()) + "\",\"operation\":\"" + agentTraceJsonEscape(dfgNode->operation()) + "\",\"target_adg_node_id\":" + std::to_string(targetAdgNode->id()) + ",\"target_adg_node_name\":\"" + agentTraceJsonEscape(targetAdgNode->name()) + "\",\"target_adg_node_type\":\"" + agentTraceJsonEscape(targetAdgNode->type()) + "\"}"
+        );
+    }
     bool succeed = true;
     // if(_dfg->isIONode(dfgNode->id())){ // pre-map IO node to prevent duplicate mapping during mapping the connected IO nodes
     //     succeed = mapDfgNodeNoRoute(dfgNode, targetAdgNode);
@@ -237,6 +245,13 @@ bool Mapping::mapDfgNode(DFGNode* dfgNode, ADGNode* targetAdgNode){
         //     routed = true; 
         }
         if(!succeed){
+            if(AgentTrace::enabled()){
+                AgentTrace::emit(
+                    "mapper_route_edge",
+                    "route_input_edge_failed",
+                    "{\"dfg_node_id\":" + std::to_string(dfgNode->id()) + ",\"edge_id\":" + std::to_string(edge->id()) + ",\"src_id\":" + std::to_string(edge->srcId()) + ",\"dst_id\":" + std::to_string(edge->dstId()) + ",\"target_adg_node_id\":" + std::to_string(targetAdgNode->id()) + "}"
+                );
+            }
             break;
         }else if(routed){
             routedEdges.push_back(edge); // cache the routed edge
@@ -261,6 +276,13 @@ bool Mapping::mapDfgNode(DFGNode* dfgNode, ADGNode* targetAdgNode){
                 //     routed = true; 
                 }
                 if(!succeed){
+                    if(AgentTrace::enabled()){
+                        AgentTrace::emit(
+                            "mapper_route_edge",
+                            "route_output_edge_failed",
+                            "{\"dfg_node_id\":" + std::to_string(dfgNode->id()) + ",\"edge_id\":" + std::to_string(edge->id()) + ",\"src_id\":" + std::to_string(edge->srcId()) + ",\"dst_id\":" + std::to_string(edge->dstId()) + ",\"target_adg_node_id\":" + std::to_string(targetAdgNode->id()) + "}"
+                        );
+                    }
                     break;
                 }else if(routed){
                     routedEdges.push_back(edge); // cache the routed edge
@@ -330,12 +352,26 @@ bool Mapping::mapDfgNode(DFGNode* dfgNode, ADGNode* targetAdgNode){
         for(auto re : routedEdges){ // unroute all the routed edges
             unrouteDfgEdge(re);
         }
+        if(AgentTrace::enabled()){
+            AgentTrace::emit(
+                "mapper_place_node",
+                "map_dfg_node_failed",
+                "{\"dfg_node_id\":" + std::to_string(dfgNode->id()) + ",\"target_adg_node_id\":" + std::to_string(targetAdgNode->id()) + ",\"routed_edge_count\":" + std::to_string(routedEdges.size()) + "}"
+            );
+        }
         return false;
     }
     // if(succeed && !_dfg->isIONode(dfgNode->id())){
     // map the DFG node to this targetAdgNode
     bool res = mapDfgNodeNoRoute(dfgNode, targetAdgNode);
     assert(res);
+    if(AgentTrace::enabled()){
+        AgentTrace::emit(
+            "mapper_place_node",
+            "map_dfg_node_success",
+            "{\"dfg_node_id\":" + std::to_string(dfgNode->id()) + ",\"target_adg_node_id\":" + std::to_string(targetAdgNode->id()) + ",\"routed_edge_count\":" + std::to_string(routedEdges.size()) + ",\"num_node_mapped\":" + std::to_string(_numNodeMapped) + "}"
+        );
+    }
     // }
     
     return succeed;

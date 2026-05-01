@@ -1,5 +1,6 @@
 
 #include "mapper/mapper.h"
+#include "mapper/agent_trace.h"
 
 
 Mapper::Mapper(ADG* adg): _adg(adg) {
@@ -296,6 +297,19 @@ void Mapper::sortDfgNodeInPlaceOrder(){
         // int cnt = calCandidatesCnt(node, 50);
         // candidatesCnt[node->id()] = cnt;
     }
+    if(AgentTrace::enabled()){
+        std::string order = "[";
+        for(size_t i = 0; i < dfgNodeIdPlaceOrder.size(); ++i){
+            if(i) order += ",";
+            order += std::to_string(dfgNodeIdPlaceOrder[i]);
+        }
+        order += "]";
+        AgentTrace::emit(
+            "mapper_select_node",
+            "sort_dfg_node_order",
+            "{\"kernel\":\"" + agentTraceJsonEscape(_agentTraceContext) + "\",\"order\":" + order + "}"
+        );
+    }
     // std::cout << std::endl;
     // sort DFG nodes according to their candidate numbers
     // std::random_shuffle(dfgNodeIds.begin(), dfgNodeIds.end()); // randomly sort will cause long routing paths
@@ -384,12 +398,33 @@ bool Mapper::preMapCheck(ADG* adg, DFG* dfg){
 // mapper with running time
 bool Mapper::mapperTimed(){
     setStartTime();
+    if(AgentTrace::enabled()){
+        AgentTrace::emit(
+            "mapper",
+            "mapper_timed_start",
+            "{\"kernel\":\"" + agentTraceJsonEscape(_agentTraceContext) + "\"}"
+        );
+    }
     // check if the DFG can be mapped to the ADG according to the resources
     if(!preMapCheck(getADG(), getDFG())){
+        if(AgentTrace::enabled()){
+            AgentTrace::emit(
+                "mapper",
+                "pre_map_check_failed",
+                "{\"kernel\":\"" + agentTraceJsonEscape(_agentTraceContext) + "\"}"
+            );
+        }
         return false;
     }
     std::cout << "Pre-map checking passed!\n";
     bool succeed = mapper();
+    if(AgentTrace::enabled()){
+        AgentTrace::emit(
+            "mapper",
+            "mapper_timed_end",
+            "{\"kernel\":\"" + agentTraceJsonEscape(_agentTraceContext) + "\",\"succeed\":" + std::string(succeed ? "true" : "false") + ",\"running_time_ms\":" + std::to_string(runningTimeMS()) + "}"
+        );
+    }
     std::cout << "Running time(s): " << runningTimeMS()/1000 << std::endl;
     return succeed;
 }
@@ -401,6 +436,13 @@ bool Mapper::mapperTimed(){
 // resultDir: mapped result directory
 bool Mapper::execute(bool dumpCallFunc, bool dumpMappedViz, std::string resultDir){
     std::cout << "Start mapping >>>>>>\n";
+    if(AgentTrace::enabled()){
+        AgentTrace::emit(
+            "mapper",
+            "execute_start",
+            "{\"kernel\":\"" + agentTraceJsonEscape(_agentTraceContext) + "\",\"result_dir\":\"" + agentTraceJsonEscape(resultDir) + "\"}"
+        );
+    }
     bool res = mapperTimed();
     if(res){
         std::string dir;
@@ -439,6 +481,13 @@ bool Mapper::execute(bool dumpCallFunc, bool dumpMappedViz, std::string resultDi
         std::cout << "Succeed to map DFG to ADG!<<<<<<\n";
     } else{
         std::cout << "Fail to map DFG to ADG!<<<<<<\n";
+    }
+    if(AgentTrace::enabled()){
+        AgentTrace::emit(
+            "mapper",
+            "execute_end",
+            "{\"kernel\":\"" + agentTraceJsonEscape(_agentTraceContext) + "\",\"succeed\":" + std::string(res ? "true" : "false") + "}"
+        );
     }
     return res;
 }
