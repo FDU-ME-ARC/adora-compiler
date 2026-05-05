@@ -1,9 +1,3 @@
-# This file allows users to call find_package(ADORA) and pick up our targets.
-
 @PACKAGE_INIT@
-
-include(CMakeFindDependencyMacro)
-
-find_dependency(MLIR REQUIRED CONFIG)
 
 include("${CMAKE_CURRENT_LIST_DIR}/ADORATargets.cmake")

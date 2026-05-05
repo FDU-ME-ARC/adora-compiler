@@ -28,6 +28,7 @@ add_library(CGRAMapperLIB
 
   src/mapper/io_scheduler.cpp
   src/mapper/agent_trace.cpp
+  src/mapper/online_ranker.cpp
   src/mapper/mapper_sa.cpp
   src/mapper/mapper.cpp
   src/mapper/mapping.cpp

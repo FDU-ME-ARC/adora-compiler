@@ -1,6 +1,8 @@
 
 #include "mapper/mapper_sa.h"
 #include "mapper/agent_trace.h"
+#include "mapper/online_ranker.h"
+#include <sstream>
 
 MapperSA::MapperSA(ADG* adg, int timeout, int maxIter, bool objOpt) : Mapper(adg){
     setTimeOut(timeout);
@@ -508,8 +510,71 @@ bool MapperSA::incrPnR(Mapping* mapping){
 int MapperSA::tryCandidates(Mapping* mapping, DFGNode* dfgNode, const std::vector<ADGNode*>& candidates){
     // // sort candidates according to their distances with the mapped src and dst ADG nodes of this DFG node 
     // std::vector<int> sortedIdx = sortCandidates(mapping, dfgNode, candidates);
+
+    // Optionally consult an online ranker (LLM or other agent) before iterating.
+    // The ranker proposes an index into `candidates`; we move that candidate to
+    // the front of a working copy so it is tried first. If the proposed index
+    // fails routing, the remaining mapper-sorted order serves as fallback. This
+    // keeps mapper-owned legality intact while letting the agent steer the
+    // initial placement order using a global DFG view.
+    std::vector<ADGNode*> orderedCandidates(candidates);
+    if(OnlineRanker::enabled() && !candidates.empty()){
+        std::ostringstream req;
+        req << "{\"schema_version\":\"mapper-online-v0\","
+            << "\"phase\":\"mapper_place_node\","
+            << "\"request_id\":\"" << agentTraceJsonEscape(AgentTrace::runId()) << ":"
+            << dfgNode->id() << ":" << OnlineRanker::budgetUsed() << "\","
+            << "\"decision_site\":{\"kernel\":\"" << agentTraceJsonEscape(agentTraceContext())
+            << "\",\"dfg_node_id\":" << dfgNode->id()
+            << ",\"dfg_node_name\":\"" << agentTraceJsonEscape(dfgNode->name())
+            << "\",\"operation\":\"" << agentTraceJsonEscape(dfgNode->operation()) << "\"},"
+            << "\"legal_candidates\":[";
+        for(size_t i = 0; i < candidates.size(); ++i){
+            auto* c = candidates[i];
+            if(i) req << ",";
+            req << "{\"action_type\":\"place_adg_node\",\"payload\":{"
+                << "\"adg_node_id\":" << c->id()
+                << ",\"candidate_index\":" << i
+                << ",\"adg_node_name\":\"" << agentTraceJsonEscape(c->name())
+                << "\",\"adg_node_type\":\"" << agentTraceJsonEscape(c->type()) << "\"}}";
+        }
+        req << "],\"dfg_global_context\":{"
+            << "\"kernel\":\"" << agentTraceJsonEscape(agentTraceContext()) << "\","
+            << "\"dfg_node_count\":" << mapping->getDFG()->nodes().size() << ","
+            << "\"dfg_edge_count\":" << mapping->getDFG()->edges().size() << ","
+            << "\"mapped_count\":" << mapping->numNodeMapped() << ","
+            << "\"current_dfg_node_id\":" << dfgNode->id()
+            << "}";
+        auto adgCtx = OnlineRanker::adgContext();
+        if(!adgCtx.adg_hash.empty() || !adgCtx.adg_summary_path.empty()){
+            req << ",\"adg_ref\":{"
+                << "\"adg_hash\":\"" << agentTraceJsonEscape(adgCtx.adg_hash) << "\","
+                << "\"adg_summary_ref\":\"" << agentTraceJsonEscape(adgCtx.adg_summary_path) << "\"}";
+        }
+        req << "}";
+
+        auto decision = OnlineRanker::rank(req.str(), static_cast<int>(candidates.size()));
+        std::ostringstream evt;
+        evt << "{\"kernel\":\"" << agentTraceJsonEscape(agentTraceContext())
+            << "\",\"dfg_node_id\":" << dfgNode->id()
+            << ",\"used\":" << (decision.used ? "true" : "false")
+            << ",\"succeeded\":" << (decision.succeeded ? "true" : "false")
+            << ",\"selected_index\":" << decision.selected_index
+            << ",\"used_fallback\":" << (decision.used_fallback ? "true" : "false")
+            << ",\"rationale\":\"" << agentTraceJsonEscape(decision.rationale)
+            << "\",\"error\":\"" << agentTraceJsonEscape(decision.error) << "\"}";
+        if(AgentTrace::enabled()){
+            AgentTrace::emit("mapper_place_node", "online_decision", evt.str());
+        }
+        if(decision.succeeded && decision.selected_index > 0){
+            auto chosen = orderedCandidates[decision.selected_index];
+            orderedCandidates.erase(orderedCandidates.begin() + decision.selected_index);
+            orderedCandidates.insert(orderedCandidates.begin(), chosen);
+        }
+    }
+
     int idx = 0;
-    for(auto& candidate : candidates){
+    for(auto& candidate : orderedCandidates){
         if(AgentTrace::enabled()){
             AgentTrace::emit(
                 "mapper_place_node",

@@ -44,6 +44,7 @@
 #include "ir/dfg_ir.h"
 #include "mapper/mapper_sa.h"
 #include "mapper/agent_trace.h"
+#include "mapper/online_ranker.h"
 #include "spdlog/spdlog.h"
 #include "spdlog/cfg/argv.h"
 #include "emit/EmitCGRACall.h"
@@ -215,6 +216,54 @@ int main(int argc, char **argv) {
     cl::desc("policy id recorded in mapper-agent trace"),
     cl::value_desc("string"),
     cl::init("compiler_logged"));
+
+  static cl::opt<bool> agentOnlinePlacement(
+    "agent-online-placement",
+    cl::Optional,
+    cl::desc("call an online ranker before each mapper_place_node decision"),
+    cl::init(false));
+
+  static cl::opt<std::string> agentRankerCmd(
+    "agent-ranker-cmd",
+    cl::Optional,
+    cl::desc("shell-quoted command that runs the online ranker (stdin/stdout JSON)"),
+    cl::value_desc("cmd"),
+    cl::init(""));
+
+  static cl::opt<int> agentRankerTimeoutMs(
+    "agent-ranker-timeout-ms",
+    cl::Optional,
+    cl::desc("hard timeout for one ranker call"),
+    cl::value_desc("ms"),
+    cl::init(15000));
+
+  static cl::opt<int> agentOnlineBudget(
+    "agent-online-budget",
+    cl::Optional,
+    cl::desc("max number of placement decisions sent to the ranker (-1 = unlimited)"),
+    cl::value_desc("int"),
+    cl::init(-1));
+
+  static cl::opt<std::string> agentOnlineLog(
+    "agent-online-log",
+    cl::Optional,
+    cl::desc("JSONL log of every ranker request/response (optional)"),
+    cl::value_desc("path"),
+    cl::init(""));
+
+  static cl::opt<std::string> agentRankerMode(
+    "agent-ranker-mode",
+    cl::Optional,
+    cl::desc("ranker process mode: 'once' (subprocess per call) or 'daemon' (one long-lived child)"),
+    cl::value_desc("once|daemon"),
+    cl::init("once"));
+
+  static cl::opt<std::string> agentAdgSummary(
+    "agent-adg-summary",
+    cl::Optional,
+    cl::desc("if set, dump a compact ADG description JSON to this path and reference it from every online request (mapper-adg-v0)"),
+    cl::value_desc("path"),
+    cl::init(""));
   // spdlog::cfg::helpers::load_levels("true");
 
   InitLLVM y(argc, argv);
@@ -246,6 +295,35 @@ int main(int argc, char **argv) {
       "start",
       "{\"input\":\"" + agentTraceJsonEscape(std::string(inputFilename)) + "\",\"adg\":\"" + agentTraceJsonEscape(std::string(adg_fn)) + "\",\"op_file\":\"" + agentTraceJsonEscape(std::string(op_fn)) + "\",\"output_type\":\"" + agentTraceJsonEscape(std::string(emit_type)) + "\",\"policy_id\":\"" + agentTraceJsonEscape(std::string(agentTracePolicyId)) + "\",\"max_iters\":" + std::to_string((int)max_iters) + ",\"timeout_ms\":" + std::to_string((int)timeout_ms) + "}"
     );
+  }
+
+  if(agentOnlinePlacement){
+    if(std::string(agentRankerCmd).empty()){
+      llvm::errs() << "[agent-online-placement] --agent-ranker-cmd is required when online placement is enabled\n";
+      return 1;
+    }
+    OnlineRanker::Mode mode = OnlineRanker::Mode::Once;
+    std::string modeStr = std::string(agentRankerMode);
+    if(modeStr == "daemon"){
+      mode = OnlineRanker::Mode::Daemon;
+    } else if(modeStr != "once"){
+      llvm::errs() << "[agent-online-placement] --agent-ranker-mode must be 'once' or 'daemon'\n";
+      return 1;
+    }
+    OnlineRanker::configure(std::string(agentRankerCmd),
+                            (int)agentRankerTimeoutMs,
+                            (int)agentOnlineBudget,
+                            std::string(agentOnlineLog),
+                            mode);
+    if(AgentTrace::enabled()){
+      std::ostringstream cfg;
+      cfg << "{\"ranker_cmd\":\"" << agentTraceJsonEscape(std::string(agentRankerCmd))
+          << "\",\"timeout_ms\":" << (int)agentRankerTimeoutMs
+          << ",\"budget\":" << (int)agentOnlineBudget
+          << ",\"mode\":\"" << agentTraceJsonEscape(modeStr)
+          << "\",\"log\":\"" << agentTraceJsonEscape(std::string(agentOnlineLog)) << "\"}";
+      AgentTrace::emit("cgra_mapper", "online_ranker_configured", cfg.str());
+    }
   }
 
 
@@ -326,6 +404,30 @@ int main(int argc, char **argv) {
 
   ADG* subadg = adg->inducedSubgraphByFirstNTiles(specifictilenum);
   subadg->print();
+
+  // Dump a compact ADG description for the online ranker (see online_schema.py
+  // mapper-adg-v0). The mapper sends `adg_ref = {adg_hash, adg_summary_ref}`
+  // on every placement request so a long-lived ranker can cache by hash.
+  if(agentOnlinePlacement && !std::string(agentAdgSummary).empty()){
+    OnlineRanker::AdgContext ctx;
+    ctx.adg_summary_path = std::string(agentAdgSummary);
+    ctx.adg_hash = dumpAdgSummary(subadg, ctx.adg_summary_path);
+    if(ctx.adg_hash.empty()){
+      llvm::errs() << "[agent-adg-summary] failed to write " << ctx.adg_summary_path << "\n";
+      return 1;
+    }
+    OnlineRanker::setAdgContext(ctx);
+    if(AgentTrace::enabled()){
+      std::ostringstream cfg;
+      cfg << "{\"adg_summary_ref\":\"" << agentTraceJsonEscape(ctx.adg_summary_path)
+          << "\",\"adg_hash\":\"" << agentTraceJsonEscape(ctx.adg_hash)
+          << "\",\"node_count\":" << subadg->nodes().size()
+          << ",\"num_gpe_nodes\":" << subadg->numGpeNodes()
+          << ",\"num_iob_nodes\":" << subadg->numIobNodes()
+          << ",\"tile_num\":" << subadg->tileNum() << "}";
+      AgentTrace::emit("cgra_mapper", "adg_summary_emitted", cfg.str());
+    }
+  }
 
   //////////////////////////////////////////
   /// Pre-set mapping

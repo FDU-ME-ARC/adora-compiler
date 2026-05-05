@@ -1,0 +1,17 @@
+Digraph G {
+Input2[opcode = "Input", ref_name="merge:0", size="8", offset="0,0", pattern="0,4,2,4", color = purple];
+Input3[opcode = "Input", ref_name="merge:1", size="8", offset="0,0", pattern="0,4,2,4", color = purple];
+Input4[opcode = "Input", ref_name="merge:2", size="8", offset="0,0", pattern="0,4,2,4", color = purple];
+Input5[opcode = "Input", ref_name="merge:3", size="8", offset="0,0", pattern="0,4,2,4", color = purple];
+INTLV46[opcode = "INTLV4", acc_params="0,1,1,1", acc_first=1, color = purple];
+Input7[opcode = "Input", ref_name="merge:5", size="8", offset="0,0", pattern="2,4,-6,1,-6,4", color = purple];
+ADD8[opcode = "ADD", color = purple];
+Output9[opcode = "Output", ref_name="merge:4", size="32", offset="0,0", pattern="2,4,-6,1,2,4", color = purple];
+Input2 -> INTLV46[color = black, style = bold, operand = 0, label = "Op=0"];
+Input3 -> INTLV46[color = black, style = bold, operand = 1, label = "Op=1"];
+Input4 -> INTLV46[color = black, style = bold, operand = 2, label = "Op=2"];
+Input5 -> INTLV46[color = black, style = bold, operand = 3, label = "Op=3"];
+INTLV46 -> ADD8[color = black, style = bold, operand = 0, label = "Op=0"];
+Input7 -> ADD8[color = black, style = bold, operand = 1, label = "Op=1"];
+ADD8 -> Output9[color = black, style = bold, operand = 0, label = "Op=0"];
+}
