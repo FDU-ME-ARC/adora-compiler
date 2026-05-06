@@ -96,6 +96,15 @@ if [[ ! -f "${BUILD_DIR}/build.ninja" ]]; then
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 fi
 
+  # cmake -S "/data00/home/loujiahang/agent/aicb-agent/adora-compiler" -B "/data00/home/loujiahang/agent/aicb-agent/adora-compiler/build" -GNinja \
+  #   -DCMAKE_INSTALL_PREFIX="/data00/home/loujiahang/agent/aicb-agent/adora-compiler/build" \
+  #   -DCMAKE_BUILD_TYPE=Debug \
+  #   -DMLIR_DIR="/data00/home/loujiahang/CGRVOPT/llvm-project-onnx/build/lib/cmake/mlir" \
+  #   -DLLVM_BUILD_DIR="/data00/home/loujiahang/CGRVOPT/llvm-project-onnx/build" \
+  #   -DLLVM_INSTALL_DIR="" \
+  #   -DMLIR_ENABLE_BINDINGS_PYTHON=ON \
+  #   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
 echo "Building ADORA (jobs=${ADORA_JOBS})..."
 cmake --build "${BUILD_DIR}" --target install check-adora --parallel "${ADORA_JOBS}"
 echo "Done."
