@@ -17,6 +17,11 @@
 #include "ir/adg_ir.h"
 #include "ir/dfg_ir.h"
 #include "mapper/mapper_sa.h"
+#include "mapper/agent_trace.h"
+#include "mapper/online_ranker.h"
+#include "mapper/pipeline_scheduler.h"
+
+#include <sstream>
 
 using namespace ::mlir::ADORA::ADORATensor;
 using namespace ::mlir::affine;
@@ -66,6 +71,31 @@ namespace mlir
 
             // 1. Get Systolic configuration (uniformly parse algorithm, loopOrder, tileSizes, etc.)
             SystolicConfig config = parseSystolicConfig(op);
+
+            // --- runtime-online-v0 §2 pipeline_schedule_select emission (Conv) ---
+            // See Agent-Compiler-notes/MainLine/pipeline_schedule_api.md. The
+            // call is advisory in v0: the compiler still dispatches on
+            // `config.dataflow` to preserve existing attribute invariants.
+            {
+                mlir::ADORA::PipelineScheduleRequest req;
+                req.op_kind = (config.algorithm == ComputeAlgorithm::Conv_Direct)
+                                  ? "conv_direct"
+                                  : "conv_im2col";
+                req.tile_size.assign(config.tileSizes.begin(), config.tileSizes.end());
+                const std::string defaultName =
+                    getDataflowStrategyStrRef(config.dataflow).str();
+                req.candidates.push_back({defaultName, /*double_buffer=*/true,
+                                          /*prefetch_depth=*/1});
+                for (const char* alt :
+                     {"WeightStationary", "InputStationary", "OutputStationary"}) {
+                    if (defaultName != alt) {
+                        req.candidates.push_back({std::string(alt), true, 1});
+                    }
+                }
+                (void)mlir::ADORA::schedulePipeline(req);
+            }
+            // --- end hook ---
+
             AffineForOp newfor;
 
             // 2. Dispatch to the corresponding Lowering function based on the convolution algorithm

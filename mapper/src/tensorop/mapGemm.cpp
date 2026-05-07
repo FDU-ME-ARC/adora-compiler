@@ -15,6 +15,11 @@
 #include "ir/adg_ir.h"
 #include "ir/dfg_ir.h"
 #include "mapper/mapper_sa.h"
+#include "mapper/agent_trace.h"
+#include "mapper/online_ranker.h"
+#include "mapper/pipeline_scheduler.h"
+
+#include <sstream>
 
 using namespace ::mlir::ADORA::ADORATensor;
 using namespace ::mlir::affine;
@@ -141,6 +146,26 @@ bool TensorDataflowGen::visitOp(ADORATensor::GemmOp op){
   SystolicImplInterface SystolicPara(op);
   ArrayRef<int64_t> tilesize = SystolicPara.getTileSize();
   StringRef strategy = SystolicPara.getStationaryKind();
+
+  // --- runtime-online-v0 §2 pipeline_schedule_select emission (Gemm) ---
+  // See Agent-Compiler-notes/MainLine/pipeline_schedule_api.md. Helper builds
+  // the JSON, calls the ranker, emits AgentTrace. Result is advisory: we keep
+  // `strategy` as the dispatch key to preserve upstream attribute invariants.
+  {
+    mlir::ADORA::PipelineScheduleRequest req;
+    req.op_kind = "gemm";
+    req.tile_size.assign(tilesize.begin(), tilesize.end());
+    const std::string defaultName = strategy.str();
+    req.candidates.push_back({defaultName, /*double_buffer=*/true, /*prefetch_depth=*/1});
+    for (const char* alt : {"WeightStationary", "InputStationary", "OutputStationary"}) {
+      if (defaultName != alt) {
+        req.candidates.push_back({std::string(alt), true, 1});
+      }
+    }
+    (void)mlir::ADORA::schedulePipeline(req);
+  }
+  // --- end hook ---
+
   AffineForOp newfor;
   if(strategy == getDataflowStrategyStrRef(DataflowStrategy::WeightStationary)){
     newfor = TiledWeightStationaryGemm(opbuilder, op, tilesize); 

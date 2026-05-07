@@ -1,14 +1,129 @@
 
 #include "mapper/mapper.h"
 #include "mapper/agent_trace.h"
+#include "mapper/online_ranker.h"
 
+#include <sstream>
+#include <vector>
+#include <atomic>
+
+namespace {
+
+struct TileVariant {
+    const char* name;
+    int tile_num;
+};
+
+// Static table of legal tile variants. The ADG that was actually handed to us
+// is always included as the first candidate (and as the default fallback); the
+// remaining entries are advisory for the online ranker.
+static const TileVariant kTileVariantCatalog[] = {
+    {"vitrartl_1x1", 1},
+    {"vitrartl_2x2", 4},
+    {"vitrartl_4x4", 16},
+    {"vitrartl_6x6", 36},
+    {"vitrartl_8x8", 64},
+};
+
+static std::atomic<bool> g_tile_variant_fired{false};
+
+void maybeEmitTileVariantSelect(ADG* adg) {
+    if (adg == nullptr) {
+        return;
+    }
+    if (g_tile_variant_fired.exchange(true)) {
+        return; // one request per compile session
+    }
+    if (!OnlineRanker::enabled()) {
+        return;
+    }
+
+    const int current_tile_num = adg->tileNum();
+    const int num_gpe = adg->numGpeNodes();
+    const int num_iob = adg->numIobNodes();
+
+    // Build candidate list: current ADG first, then catalog entries that
+    // differ from the current tile count (de-duplicated).
+    std::vector<TileVariant> candidates;
+    candidates.push_back({"current_adg", current_tile_num});
+    for (const auto& v : kTileVariantCatalog) {
+        if (v.tile_num == current_tile_num) continue;
+        candidates.push_back(v);
+    }
+
+    std::ostringstream req;
+    req << "{\"schema_version\":\"runtime-online-v0\","
+        << "\"phase\":\"tile_variant_select\","
+        << "\"request_id\":\"" << agentTraceJsonEscape(AgentTrace::runId())
+        << ":tile_variant:" << OnlineRanker::budgetUsed() << "\","
+        << "\"decision_site\":{\"hook\":\"mapper_initialize\","
+        << "\"current_tile_num\":" << current_tile_num
+        << ",\"num_gpe_nodes\":" << num_gpe
+        << ",\"num_iob_nodes\":" << num_iob << "},"
+        << "\"legal_candidates\":[";
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        if (i) req << ",";
+        req << "{\"action_type\":\"select_tile_variant\",\"payload\":{"
+            << "\"candidate_index\":" << i
+            << ",\"variant_name\":\"" << agentTraceJsonEscape(candidates[i].name) << "\""
+            << ",\"tile_num\":" << candidates[i].tile_num
+            << ",\"is_current\":" << (candidates[i].tile_num == current_tile_num ? "true" : "false")
+            << "}}";
+    }
+    req << "],\"arch_context\":{"
+        << "\"current_tile_num\":" << current_tile_num
+        << ",\"num_gpe_nodes\":" << num_gpe
+        << ",\"num_iob_nodes\":" << num_iob
+        << "}";
+    auto adgCtx = OnlineRanker::adgContext();
+    if (!adgCtx.adg_hash.empty() || !adgCtx.adg_summary_path.empty()) {
+        req << ",\"adg_ref\":{"
+            << "\"adg_hash\":\"" << agentTraceJsonEscape(adgCtx.adg_hash) << "\","
+            << "\"adg_summary_ref\":\"" << agentTraceJsonEscape(adgCtx.adg_summary_path) << "\"}";
+    }
+    req << "}";
+
+    auto decision = OnlineRanker::rank(req.str(), static_cast<int>(candidates.size()));
+
+    // Determine which variant index was chosen. The agent returns an index into
+    // `legal_candidates`; out-of-range / failure -> keep current ADG (index 0).
+    int chosen = 0;
+    if (decision.succeeded &&
+        decision.selected_index >= 0 &&
+        decision.selected_index < static_cast<int>(candidates.size())) {
+        chosen = decision.selected_index;
+    }
+
+    std::ostringstream evt;
+    evt << "{\"used\":" << (decision.used ? "true" : "false")
+        << ",\"succeeded\":" << (decision.succeeded ? "true" : "false")
+        << ",\"selected_index\":" << decision.selected_index
+        << ",\"used_fallback\":" << (decision.used_fallback ? "true" : "false")
+        << ",\"applied_index\":" << chosen
+        << ",\"applied_variant\":\"" << agentTraceJsonEscape(candidates[chosen].name) << "\""
+        << ",\"applied_tile_num\":" << candidates[chosen].tile_num
+        << ",\"current_tile_num\":" << current_tile_num
+        << ",\"advisory_only\":true"
+        << ",\"rationale\":\"" << agentTraceJsonEscape(decision.rationale) << "\""
+        << ",\"error\":\"" << agentTraceJsonEscape(decision.error) << "\"}";
+    if (AgentTrace::enabled()) {
+        AgentTrace::emit("tile_variant_select", "online_decision", evt.str());
+    }
+    // NOTE: we do not rebind the architecture here — the ADG handed to the
+    // mapper is authoritative. The hook is advisory telemetry until the CLI
+    // layer is refactored to consume the agent's tile_num recommendation.
+}
+
+} // namespace
 
 Mapper::Mapper(ADG* adg): _adg(adg) {
+    maybeEmitTileVariantSelect(adg);
     initializeAdg();
     _sched = new IOScheduler(adg);
 }
 
 Mapper::Mapper(ADG* adg, DFG* dfg): _adg(adg), _dfg(dfg) {
+    maybeEmitTileVariantSelect(adg);
     initializeAdg();
     initializeDfg();
     _mapping = new Mapping(adg, dfg);

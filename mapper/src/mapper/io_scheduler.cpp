@@ -1,4 +1,48 @@
 #include "mapper/io_scheduler.h"
+#include "mapper/agent_trace.h"
+#include "mapper/online_ranker.h"
+
+#include <sstream>
+#include <vector>
+
+namespace {
+
+struct SpadBankCand {
+    int bank_id;
+    int iob_idx;
+    int start;
+    int end;
+    int status;   // 0: both free; 1: old avail, older not; 2: older avail, old not; 3: both not
+    int cand_dep; // expected dfgIoInfo.dep if this candidate wins
+    bool is_default; // true iff this is the bank the greedy path selected
+};
+
+static std::string dumpBankWindow(const std::vector<spadBankStatus>& v) {
+    std::ostringstream o;
+    o << "[";
+    for (size_t i = 0; i < v.size(); ++i) {
+        if (i) o << ",";
+        o << "{\"iob\":" << v[i].iob
+          << ",\"used\":" << v[i].used
+          << ",\"start\":" << v[i].start
+          << ",\"end\":" << v[i].end << "}";
+    }
+    o << "]";
+    return o.str();
+}
+
+static std::string serialiseBankWindow(
+    const std::vector<spadBankStatus>& cur,
+    const std::vector<spadBankStatus>& old_,
+    const std::vector<spadBankStatus>& older) {
+    std::ostringstream o;
+    o << "{\"cur\":" << dumpBankWindow(cur)
+      << ",\"old\":" << dumpBankWindow(old_)
+      << ",\"older\":" << dumpBankWindow(older) << "}";
+    return o.str();
+}
+
+} // namespace
 
 IOScheduler::IOScheduler(ADG *adg)
 {
@@ -161,7 +205,108 @@ void IOScheduler::ioSchedule(Mapping *mapping)
                 allocated = true;
             }
         }
-        assert(allocated); 
+        assert(allocated);
+
+        // --- runtime-online-v0 §1 allocate_spad_banks emission ---
+        // The greedy above has resolved (selBank, selStart, ioInfo.dep). We
+        // expose the same candidate set (availBanks with their computed
+        // status/selStart) to the online ranker. For this landing the hook is
+        // advisory telemetry: the greedy's pick stays authoritative so
+        // conflict-free allocation is preserved by the mapper.
+        if (OnlineRanker::enabled() && !availBanks.empty()) {
+            std::vector<SpadBankCand> cands;
+            cands.reserve(availBanks.size());
+            // index 0 must be the greedy default so out-of-range agent
+            // responses fall back to it.
+            SpadBankCand def;
+            def.bank_id = selBank;
+            def.iob_idx = iobIdx;
+            def.start = selStart;
+            def.end = selStart + memSize;
+            def.status = 0;
+            def.cand_dep = ioInfo.dep;
+            def.is_default = true;
+            cands.push_back(def);
+            for (size_t bi = 0; bi < availBanks.size(); ++bi) {
+                int bank = availBanks[bi];
+                if (bank == selBank) continue;
+                SpadBankCand c;
+                c.bank_id = bank;
+                c.iob_idx = iobIdx;
+                c.status = (bi < bankStatus.size()) ? bankStatus[bi].first : 0;
+                c.start = (bi < bankStatus.size()) ? bankStatus[bi].second : 0;
+                c.end = c.start + memSize;
+                c.cand_dep = 0;
+                c.is_default = false;
+                cands.push_back(c);
+            }
+
+            std::ostringstream req;
+            req << "{\"schema_version\":\"runtime-online-v0\","
+                << "\"phase\":\"allocate_spad_banks\","
+                << "\"request_id\":\"" << agentTraceJsonEscape(AgentTrace::runId())
+                << ":allocate_spad_banks:" << _task_id << ":" << id
+                << ":" << OnlineRanker::budgetUsed() << "\","
+                << "\"task_id\":" << _task_id << ","
+                << "\"dfg_io_id\":" << id << ","
+                << "\"dfg_io_info\":{"
+                << "\"is_store\":" << (isStore ? "true" : "false")
+                << ",\"mem_size\":" << memSize
+                << ",\"iob_idx\":" << iobIdx
+                << "},"
+                << "\"bank_status_window\":"
+                << serialiseBankWindow(_cur_bank_status, _old_bank_status, _older_bank_status)
+                << ",\"legal_candidates\":[";
+            for (size_t i = 0; i < cands.size(); ++i) {
+                if (i) req << ",";
+                const auto& c = cands[i];
+                req << "{\"action_type\":\"assign_spad_bank\","
+                    << "\"bank_id\":" << c.bank_id
+                    << ",\"iob_idx\":" << c.iob_idx
+                    << ",\"base_offset\":" << c.start
+                    << ",\"size_bytes\":" << (c.end - c.start)
+                    << ",\"status\":" << c.status
+                    << ",\"cand_dep\":" << c.cand_dep
+                    << ",\"is_default\":" << (c.is_default ? "true" : "false")
+                    << "}";
+            }
+            req << "]";
+            auto adgCtx = OnlineRanker::adgContext();
+            if (!adgCtx.adg_hash.empty()) {
+                req << ",\"adg_ref\":{\"adg_hash\":\""
+                    << agentTraceJsonEscape(adgCtx.adg_hash) << "\"}";
+            }
+            req << "}";
+
+            auto decision = OnlineRanker::rank(req.str(), static_cast<int>(cands.size()));
+            int chosenIdx = 0;
+            if (decision.succeeded
+                && decision.selected_index >= 0
+                && decision.selected_index < static_cast<int>(cands.size())) {
+                chosenIdx = decision.selected_index;
+            }
+            if (AgentTrace::enabled()) {
+                std::ostringstream evt;
+                evt << "{\"task_id\":" << _task_id
+                    << ",\"dfg_io_id\":" << id
+                    << ",\"used\":" << (decision.used ? "true" : "false")
+                    << ",\"succeeded\":" << (decision.succeeded ? "true" : "false")
+                    << ",\"selected_index\":" << decision.selected_index
+                    << ",\"applied_index\":" << chosenIdx
+                    << ",\"applied_bank_id\":" << cands[chosenIdx].bank_id
+                    << ",\"default_bank_id\":" << selBank
+                    << ",\"used_fallback\":" << (decision.used_fallback ? "true" : "false")
+                    << ",\"advisory_only\":true"
+                    << ",\"rationale\":\"" << agentTraceJsonEscape(decision.rationale) << "\""
+                    << ",\"error\":\"" << agentTraceJsonEscape(decision.error) << "\"}";
+                AgentTrace::emit("allocate_spad_banks", "runtime_decision", evt.str());
+            }
+            // NOTE: we do not override (selBank, selStart, ioInfo.dep) yet —
+            // the greedy's pick is authoritative for this landing. Overriding
+            // will require unwinding _dep_cost/_ex_dep counters consistently.
+        }
+        // --- end hook ---
+
         ioInfo.addr = selBank * sizeofBank + selStart;
         ioInfo.iobAddr = ((selBank - minBank) * sizeofBank + selStart) / dataByte;    
         ioInfo.dep = 0;/// Really?  
