@@ -243,22 +243,29 @@ void analyzeDependencyInGraph(TaskGraph* graph){
   }
 }
 
-/// @brief P4.0 — Serialize a TaskGraph's datablock edges into an ArrayAttr
-/// of DictionaryAttr rows, ready to be appended to `adora.dep_summary`.
-/// Each row:   { block_idx: i64, src: i64, dst: i64, kind: str, overlap: i1 }
+/// @brief P4.0 — Serialize a TaskGraph's datablock edges into ONE grouped
+/// DictionaryAttr of the form:
+///   { block_idx: i64, edges: [ { src, dst, kind, overlap } ... ] }
+/// This is the single row appended to the top-level `adora.dep_summary`
+/// ArrayAttr. `block_idx` is stored once per block instead of once per edge.
 static void appendDepEdgesToAttrList(TaskGraph* graph, int blockIdx,
                                      mlir::MLIRContext* ctx,
                                      SmallVectorImpl<mlir::Attribute>& out) {
   mlir::Builder b(ctx);
+  SmallVector<mlir::Attribute> edgeAttrs;
+  edgeAttrs.reserve(graph->depEdges().size());
   for (const auto& e : graph->depEdges()) {
-    SmallVector<mlir::NamedAttribute, 5> fields;
-    fields.push_back(b.getNamedAttr("block_idx", b.getI64IntegerAttr(blockIdx)));
-    fields.push_back(b.getNamedAttr("src",       b.getI64IntegerAttr(graph->getNodeId(e.src))));
-    fields.push_back(b.getNamedAttr("dst",       b.getI64IntegerAttr(graph->getNodeId(e.dst))));
-    fields.push_back(b.getNamedAttr("kind",      b.getStringAttr(toString(e.kind))));
-    fields.push_back(b.getNamedAttr("overlap",   b.getBoolAttr(e.mustOverlap)));
-    out.push_back(b.getDictionaryAttr(fields));
+    SmallVector<mlir::NamedAttribute, 4> fields;
+    fields.push_back(b.getNamedAttr("src",     b.getI64IntegerAttr(graph->getNodeId(e.src))));
+    fields.push_back(b.getNamedAttr("dst",     b.getI64IntegerAttr(graph->getNodeId(e.dst))));
+    fields.push_back(b.getNamedAttr("kind",    b.getStringAttr(toString(e.kind))));
+    fields.push_back(b.getNamedAttr("overlap", b.getBoolAttr(e.mustOverlap)));
+    edgeAttrs.push_back(b.getDictionaryAttr(fields));
   }
+  SmallVector<mlir::NamedAttribute, 2> blockFields;
+  blockFields.push_back(b.getNamedAttr("block_idx", b.getI64IntegerAttr(blockIdx)));
+  blockFields.push_back(b.getNamedAttr("edges", b.getArrayAttr(edgeAttrs)));
+  out.push_back(b.getDictionaryAttr(blockFields));
 }
 
 ////////////////////////////////////////////////////

@@ -1,69 +1,98 @@
 //===----------------------------------------------------------------------===//
 // DepSummaryView.cpp — parser impl for P4.0's `adora.dep_summary`.
+//
+// Attribute schema (grouped form, produced by ScheduleAdoraTasks):
+//   adora.dep_summary = [
+//     { block_idx: i64, edges: [
+//         { src: i64, dst: i64, kind: str, overlap: i1 },
+//         ... ] },
+//     ...
+//   ]
 //===----------------------------------------------------------------------===//
 #include "ADORA/Dialect/ADORA/Transforms/TaskGraph/DepSummaryView.h"
+
+#include "llvm/Support/Debug.h"
+
+#define DEBUG_TYPE "adora-dep-summary-view"
 
 namespace mlir {
 namespace ADORA {
 
-// Extract an integer from a NamedAttribute list of a DictionaryAttr.
-// Returns true on success and writes to `out`. Accepts IntegerAttr (signed
-// or unsigned) — DictionaryAttr::get("foo") returns the Attribute or nullptr.
-static bool tryGetInt(DictionaryAttr dict, StringRef name, int64_t &out) {
+namespace {
+
+/// Generic lookup + dyn_cast on a DictionaryAttr field.
+/// Using the free mlir::dyn_cast form per LLVM 17+ guidance (old member-form
+/// is deprecated). Returns nullptr on miss or wrong type.
+template <typename AttrT>
+static AttrT tryGet(DictionaryAttr dict, StringRef name) {
+  if (!dict)
+    return nullptr;
   auto a = dict.get(name);
-  if (!a) return false;
-  auto intAttr = a.dyn_cast<IntegerAttr>();
-  if (!intAttr) return false;
-  out = intAttr.getInt();
-  return true;
+  if (!a)
+    return nullptr;
+  return mlir::dyn_cast<AttrT>(a);
 }
 
-static bool tryGetBool(DictionaryAttr dict, StringRef name, bool &out) {
-  auto a = dict.get(name);
-  if (!a) return false;
-  auto boolAttr = a.dyn_cast<BoolAttr>();
-  if (!boolAttr) return false;
-  out = boolAttr.getValue();
-  return true;
-}
+} // namespace
 
-static bool tryGetStr(DictionaryAttr dict, StringRef name, std::string &out) {
-  auto a = dict.get(name);
-  if (!a) return false;
-  auto strAttr = a.dyn_cast<StringAttr>();
-  if (!strAttr) return false;
-  out = strAttr.getValue().str();
+static bool decodeEdge(DictionaryAttr edgeDict, int64_t blockIdx,
+                       DepSummaryRecord &out) {
+  auto srcA = tryGet<IntegerAttr>(edgeDict, "src");
+  auto dstA = tryGet<IntegerAttr>(edgeDict, "dst");
+  auto kndA = tryGet<StringAttr >(edgeDict, "kind");
+  auto ovlA = tryGet<BoolAttr   >(edgeDict, "overlap");
+  if (!srcA || !dstA || !kndA || !ovlA)
+    return false;
+  auto parsed = parseDepKind(kndA.getValue());
+  if (!parsed) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "adora.dep_summary: unknown kind '" << kndA.getValue()
+               << "' for edge in block " << blockIdx << " — dropped\n");
+    return false;
+  }
+  out.blockIdx    = blockIdx;
+  out.srcNodeId   = srcA.getInt();
+  out.dstNodeId   = dstA.getInt();
+  out.kind        = *parsed;
+  out.mustOverlap = ovlA.getValue();
   return true;
 }
 
 SmallVector<DepSummaryRecord> parseDepSummary(ArrayAttr arr) {
   SmallVector<DepSummaryRecord> out;
-  if (!arr) return out;
-  out.reserve(arr.size());
-  for (Attribute elem : arr) {
-    auto dict = elem.dyn_cast<DictionaryAttr>();
-    if (!dict) continue;
-    DepSummaryRecord rec{};
-    std::string kindStr;
-    if (!tryGetInt (dict, "block_idx", rec.blockIdx))    continue;
-    if (!tryGetInt (dict, "src",       rec.srcNodeId))   continue;
-    if (!tryGetInt (dict, "dst",       rec.dstNodeId))   continue;
-    if (!tryGetStr (dict, "kind",      kindStr))         continue;
-    if (!tryGetBool(dict, "overlap",   rec.mustOverlap)) continue;
-    auto parsed = parseDepKind(kindStr);
-    if (!parsed) continue; // unknown kind string — drop row
-    rec.kind = *parsed;
-    out.push_back(std::move(rec));
+  if (!arr)
+    return out;
+  for (Attribute groupElem : arr) {
+    auto group = mlir::dyn_cast<DictionaryAttr>(groupElem);
+    if (!group)
+      continue;
+    auto blkA = tryGet<IntegerAttr>(group, "block_idx");
+    auto edgesA = tryGet<ArrayAttr>(group, "edges");
+    if (!blkA || !edgesA)
+      continue;
+    int64_t blockIdx = blkA.getInt();
+    out.reserve(out.size() + edgesA.size());
+    for (Attribute edgeElem : edgesA) {
+      auto edgeDict = mlir::dyn_cast<DictionaryAttr>(edgeElem);
+      if (!edgeDict)
+        continue;
+      DepSummaryRecord rec{};
+      if (decodeEdge(edgeDict, blockIdx, rec))
+        out.push_back(std::move(rec));
+    }
   }
   return out;
 }
 
 SmallVector<DepSummaryRecord> parseDepSummary(Operation *op) {
-  if (!op) return {};
+  if (!op)
+    return {};
   auto attr = op->getAttr(getDepSummaryAttrName());
-  if (!attr) return {};
-  auto arr = attr.dyn_cast<ArrayAttr>();
-  if (!arr) return {};
+  if (!attr)
+    return {};
+  auto arr = mlir::dyn_cast<ArrayAttr>(attr);
+  if (!arr)
+    return {};
   return parseDepSummary(arr);
 }
 
