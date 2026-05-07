@@ -6,6 +6,7 @@ add_mlir_dialect_library(MLIRADORATransforms
 
   TaskGraph/TaskNode.cpp
   TaskGraph/TaskGraph.cpp
+  TaskGraph/DepSummaryView.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJ_INCLUDE_DIR}/ADORA/Dialect/ADORA/IR
