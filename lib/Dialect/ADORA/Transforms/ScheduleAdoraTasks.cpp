@@ -158,10 +158,116 @@ void generateTaskGraphFromBlock(TaskGraph* graph, mlir::Block* block){
 
 }
 
-/// @brief 
-/// @param graph 
+/// @brief Fill P1.0 DataBlock-level dependencies into the TaskGraph.
+///
+/// RAW (store -> later load) is already wired in generateTaskGraphFromBlock
+/// via ops' SSA use-def chain, so we do NOT re-emit it here to avoid double
+/// edges. This pass additionally surfaces:
+///
+///   - RAR (load  -> later load ) : same backing memref + (exact | overlap)
+///   - WAW (store -> later store) : same backing memref + (exact | overlap)
+///   - WAR (load  -> later store) : same backing memref + (exact | overlap)
+///
+/// IR lexical order is taken from mlir::Operation::isBeforeInBlock when the
+/// two ops share a block (always the case inside this pass: both live under
+/// the same kernel-containing block). For each hit we:
+///
+///   1. record a DataBlockDepEdge on the graph (consumed by P4.0 serializer),
+///   2. add a depType::Depend connection between the two TaskNodes (consumed
+///      by the downstream scheduler).
+///
+/// Complexity: O(N^2) on node count; acceptable for typical kernel graphs.
+/// @param graph  task graph produced by generateTaskGraphFromBlock
 void analyzeDependencyInGraph(TaskGraph* graph){
-  //// firstly, 
+  auto nodes = graph->getAllNodes();
+  const size_t N = nodes.size();
+
+  auto lexicallyBefore = [](mlir::Operation* a, mlir::Operation* b) -> bool {
+    if (!a || !b) return false;
+    if (a->getBlock() != b->getBlock()) return false;
+    return a->isBeforeInBlock(b);
+  };
+
+  auto emit = [&](TaskNode* src, TaskNode* dst,
+                  DataBlockDepKind kind, bool exact) {
+    graph->addDepEdge({src, dst, kind, exact});
+    addConnectionBetweenTwoNode(src, dst, /*dep=*/depType::Depend);
+  };
+
+  for (size_t i = 0; i < N; ++i) {
+    for (size_t j = 0; j < N; ++j) {
+      if (i == j) continue;
+      TaskNode* ni = nodes[i];
+      TaskNode* nj = nodes[j];
+
+      // Require a concrete IR ordering ni -> nj.
+      if (!lexicallyBefore(ni->getOperation(), nj->getOperation()))
+        continue;
+
+      // --- RAR: load_i -> load_j (same original memref) ---
+      if (isa<BlockLoadNode>(ni) && isa<BlockLoadNode>(nj)) {
+        auto la = cast<BlockLoadNode>(ni)->getDataBlockLoadOp();
+        auto lb = cast<BlockLoadNode>(nj)->getDataBlockLoadOp();
+        if (checkDependencyBetweenBlockLoadAndBlockLoad(la, lb)) {
+          bool exact = AccessSameDataBlock(la, lb);
+          emit(ni, nj, DataBlockDepKind::RAR, exact);
+        }
+        continue;
+      }
+
+      // --- WAW: store_i -> store_j (same target memref) ---
+      if (isa<BlockStoreNode>(ni) && isa<BlockStoreNode>(nj)) {
+        auto sa = cast<BlockStoreNode>(ni)->getDataBlockStoreOp();
+        auto sb = cast<BlockStoreNode>(nj)->getDataBlockStoreOp();
+        if (checkDependencyBetweenBlockStoreAndBlockStore(sa, sb)) {
+          bool exact = AccessSameDataBlock(sa, sb);
+          emit(ni, nj, DataBlockDepKind::WAW, exact);
+        }
+        continue;
+      }
+
+      // --- WAR: load_i -> store_j (load's original = store's target) ---
+      if (isa<BlockLoadNode>(ni) && isa<BlockStoreNode>(nj)) {
+        auto la = cast<BlockLoadNode>(ni)->getDataBlockLoadOp();
+        auto sb = cast<BlockStoreNode>(nj)->getDataBlockStoreOp();
+        if (checkDependencyBetweenBlockLoadAndBlockStore(la, sb)) {
+          bool exact = AccessSameDataBlock(sb, la); // reuse store-load exact
+          emit(ni, nj, DataBlockDepKind::WAR, exact);
+        }
+        continue;
+      }
+
+      // RAW (store_i -> load_j) intentionally skipped here — already wired by
+      // generateTaskGraphFromBlock through SSA use-def.
+    }
+  }
+}
+
+/// @brief P4.0 — Serialize a TaskGraph's datablock edges into an ArrayAttr
+/// of DictionaryAttr rows, ready to be appended to `adora.dep_summary`.
+/// Each row:   { block_idx: i64, src: i64, dst: i64, kind: str, overlap: i1 }
+static void appendDepEdgesToAttrList(TaskGraph* graph, int blockIdx,
+                                     mlir::MLIRContext* ctx,
+                                     SmallVectorImpl<mlir::Attribute>& out) {
+  auto kindToStr = [](DataBlockDepKind k) -> StringRef {
+    switch (k) {
+      case DataBlockDepKind::RAW: return "RAW";
+      case DataBlockDepKind::WAR: return "WAR";
+      case DataBlockDepKind::WAW: return "WAW";
+      case DataBlockDepKind::RAR: return "RAR";
+    }
+    return "UNK";
+  };
+  mlir::Builder b(ctx);
+  for (const auto& e : graph->depEdges()) {
+    SmallVector<mlir::NamedAttribute, 5> fields;
+    fields.push_back(b.getNamedAttr("block_idx", b.getI64IntegerAttr(blockIdx)));
+    fields.push_back(b.getNamedAttr("src",       b.getI64IntegerAttr(graph->getNodeId(e.src))));
+    fields.push_back(b.getNamedAttr("dst",       b.getI64IntegerAttr(graph->getNodeId(e.dst))));
+    fields.push_back(b.getNamedAttr("kind",      b.getStringAttr(kindToStr(e.kind))));
+    fields.push_back(b.getNamedAttr("overlap",   b.getBoolAttr(e.mustOverlap)));
+    out.push_back(b.getDictionaryAttr(fields));
+  }
 }
 
 ////////////////////////////////////////////////////
@@ -283,6 +389,7 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
   //////////////
   /// skip this
   int idx = 0;
+  SmallVector<mlir::Attribute> allEdgeAttrs; // P4.0 — accumulated across blocks
   for(auto block : blocks){
     TaskGraph* graph = new TaskGraph;
     generateTaskGraphFromBlock(graph, block);
@@ -298,6 +405,7 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
     ///   g
     //////////////
     analyzeDependencyInGraph(graph);
+    appendDepEdgesToAttrList(graph, idx, func.getContext(), allEdgeAttrs);
 
     //////////////
     /// 4th step: simplify redundant data block transfer op
@@ -320,6 +428,12 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
     
     idx++;
   }
+
+  // P4.0 — attach `adora.dep_summary` to the host function for mapper-side
+  // consumption via DepSummaryView. Empty list still attached (zero edges)
+  // so downstream consumers can unambiguously detect that the pass ran.
+  func->setAttr("adora.dep_summary",
+                ArrayAttr::get(func.getContext(), allEdgeAttrs));
 
   func.dump();
   ResetIndexOfBlockAccessOpInFunc(func);
