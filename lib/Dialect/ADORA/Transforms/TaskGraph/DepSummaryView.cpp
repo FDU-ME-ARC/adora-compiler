@@ -44,11 +44,15 @@ SmallVector<DepSummaryRecord> parseDepSummary(ArrayAttr arr) {
     auto dict = elem.dyn_cast<DictionaryAttr>();
     if (!dict) continue;
     DepSummaryRecord rec{};
+    std::string kindStr;
     if (!tryGetInt (dict, "block_idx", rec.blockIdx))    continue;
     if (!tryGetInt (dict, "src",       rec.srcNodeId))   continue;
     if (!tryGetInt (dict, "dst",       rec.dstNodeId))   continue;
-    if (!tryGetStr (dict, "kind",      rec.kind))        continue;
+    if (!tryGetStr (dict, "kind",      kindStr))         continue;
     if (!tryGetBool(dict, "overlap",   rec.mustOverlap)) continue;
+    auto parsed = parseDepKind(kindStr);
+    if (!parsed) continue; // unknown kind string — drop row
+    rec.kind = *parsed;
     out.push_back(std::move(rec));
   }
   return out;

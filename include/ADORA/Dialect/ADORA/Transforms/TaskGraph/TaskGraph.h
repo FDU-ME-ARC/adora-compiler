@@ -14,6 +14,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "ADORA/Dialect/ADORA/Transforms/TaskGraph/DepKind.h"
+
 namespace mlir {
 namespace ADORA {
 
@@ -22,13 +24,9 @@ namespace ADORA {
 /// Produced by analyzeDependencyInGraph, consumed by the serializer that
 /// emits the `adora.dep_summary` DictionaryAttr onto the host FuncOp, and by
 /// the mapper-side DepSummaryView parser (see DepSummaryView.{h,cpp}).
+/// DataBlockDepKind is defined in DepKind.h so consumers and producers
+/// share a single source of truth.
 /////////////////////////
-enum class DataBlockDepKind {
-  RAW = 0,   // read-after-write (store -> later load)
-  WAR = 1,   // write-after-read (load  -> later store)
-  WAW = 2,   // write-after-write
-  RAR = 3    // read-after-read (conservative; useful for load coalescing)
-};
 
 struct DataBlockDepEdge {
   TaskNode *src;           // producer / first accessor in IR order

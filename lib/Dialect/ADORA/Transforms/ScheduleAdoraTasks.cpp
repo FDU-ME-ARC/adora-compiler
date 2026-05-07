@@ -249,22 +249,13 @@ void analyzeDependencyInGraph(TaskGraph* graph){
 static void appendDepEdgesToAttrList(TaskGraph* graph, int blockIdx,
                                      mlir::MLIRContext* ctx,
                                      SmallVectorImpl<mlir::Attribute>& out) {
-  auto kindToStr = [](DataBlockDepKind k) -> StringRef {
-    switch (k) {
-      case DataBlockDepKind::RAW: return "RAW";
-      case DataBlockDepKind::WAR: return "WAR";
-      case DataBlockDepKind::WAW: return "WAW";
-      case DataBlockDepKind::RAR: return "RAR";
-    }
-    return "UNK";
-  };
   mlir::Builder b(ctx);
   for (const auto& e : graph->depEdges()) {
     SmallVector<mlir::NamedAttribute, 5> fields;
     fields.push_back(b.getNamedAttr("block_idx", b.getI64IntegerAttr(blockIdx)));
     fields.push_back(b.getNamedAttr("src",       b.getI64IntegerAttr(graph->getNodeId(e.src))));
     fields.push_back(b.getNamedAttr("dst",       b.getI64IntegerAttr(graph->getNodeId(e.dst))));
-    fields.push_back(b.getNamedAttr("kind",      b.getStringAttr(kindToStr(e.kind))));
+    fields.push_back(b.getNamedAttr("kind",      b.getStringAttr(toString(e.kind))));
     fields.push_back(b.getNamedAttr("overlap",   b.getBoolAttr(e.mustOverlap)));
     out.push_back(b.getDictionaryAttr(fields));
   }

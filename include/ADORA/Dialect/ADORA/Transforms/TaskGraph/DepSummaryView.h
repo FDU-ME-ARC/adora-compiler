@@ -16,24 +16,25 @@
 #ifndef ADORA_DIALECT_ADORA_TRANSFORMS_TASKGRAPH_DEPSUMMARYVIEW_H_
 #define ADORA_DIALECT_ADORA_TRANSFORMS_TASKGRAPH_DEPSUMMARYVIEW_H_
 
+#include "ADORA/Dialect/ADORA/Transforms/TaskGraph/DepKind.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/Support/LLVM.h"
 #include <cstdint>
-#include <string>
 
 namespace mlir {
 namespace ADORA {
 
 /// Mirrors the ArrayAttr row produced by appendDepEdgesToAttrList.
-/// Kept as a plain struct so mapper-side code (potentially built without
-/// MLIR in the compile unit) can consume this after a one-shot extraction.
+/// Keeps `kind` as the shared strongly-typed enum (see DepKind.h) so the
+/// producer and consumer sides never drift. Any serialization string form
+/// is parsed exactly once inside parseDepSummary.
 struct DepSummaryRecord {
-  int64_t     blockIdx;     ///< index of the kernel-containing block
-  int64_t     srcNodeId;    ///< graph-local id of the producer / earlier op
-  int64_t     dstNodeId;    ///< graph-local id of the consumer / later op
-  std::string kind;         ///< "RAW" | "WAR" | "WAW" | "RAR"
-  bool        mustOverlap;  ///< true = exact-same-block; false = conservative
+  int64_t          blockIdx;     ///< index of the kernel-containing block
+  int64_t          srcNodeId;    ///< graph-local id of producer / earlier op
+  int64_t          dstNodeId;    ///< graph-local id of consumer / later op
+  DataBlockDepKind kind;         ///< RAW | WAR | WAW | RAR (enum, not string)
+  bool             mustOverlap;  ///< true = exact-same-block
 };
 
 /// Parse an `adora.dep_summary` attribute off any mlir::Operation (typically
