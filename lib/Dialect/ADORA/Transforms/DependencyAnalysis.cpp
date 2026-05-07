@@ -631,5 +631,136 @@ bool checkDependencyBetweenBlockStoreAndBlockLoad(ADORA::DataBlockStoreOp &store
   return mayOverlapDataBlockRegion(store, load);
 }
 
+//===----------------------------------------------------------------------===//
+// P1.0 extensions: load-load (RAR), store-store (WAW), load-store (WAR)
+//   Mirrors the store-load template above. Each pair consists of:
+//     - a private `mayOverlapDataBlockRegion(a, b)` overload using the
+//       appropriate backing-memref accessor + block-shape helper,
+//     - an exported `AccessSameDataBlock` / `checkDependencyBetween...`
+//       pair wired to exact-same ∥ conservative-overlap.
+//===----------------------------------------------------------------------===//
+
+/// load-load overlap: both use getOriginalMemref as the backing array.
+static bool mayOverlapDataBlockRegion(ADORA::DataBlockLoadOp &a,
+                                      ADORA::DataBlockLoadOp &b) {
+  if (a.getOriginalMemref() != b.getOriginalMemref())
+    return false;
+
+  auto shapeA = getBlockShapeForLoad(a);
+  auto shapeB = getBlockShapeForLoad(b);
+
+  Box boxA, boxB;
+  bool okA = tryGetConstantBoxFromMapAndShape(a.getAffineMap(),
+                                              a.getMapOperands(),
+                                              shapeA, boxA);
+  bool okB = tryGetConstantBoxFromMapAndShape(b.getAffineMap(),
+                                              b.getMapOperands(),
+                                              shapeB, boxB);
+  if (!okA || !okB)
+    return true; // conservative fallback
+
+  return boxesOverlap(boxA, boxB);
+}
+
+/// store-store overlap: both use getTargetMemref as the backing array.
+static bool mayOverlapDataBlockRegion(ADORA::DataBlockStoreOp &a,
+                                      ADORA::DataBlockStoreOp &b) {
+  if (a.getTargetMemref() != b.getTargetMemref())
+    return false;
+
+  auto shapeA = getBlockShapeForStore(a);
+  auto shapeB = getBlockShapeForStore(b);
+
+  Box boxA, boxB;
+  bool okA = tryGetConstantBoxFromMapAndShape(a.getAffineMap(),
+                                              a.getMapOperands(),
+                                              shapeA, boxA);
+  bool okB = tryGetConstantBoxFromMapAndShape(b.getAffineMap(),
+                                              b.getMapOperands(),
+                                              shapeB, boxB);
+  if (!okA || !okB)
+    return true;
+
+  return boxesOverlap(boxA, boxB);
+}
+
+/// load-store overlap: load.getOriginalMemref vs store.getTargetMemref.
+/// Symmetric to the existing store-load helper, kept as a distinct overload
+/// so callers can express the anti-dependence direction explicitly (WAR).
+static bool mayOverlapDataBlockRegion(ADORA::DataBlockLoadOp  &load,
+                                      ADORA::DataBlockStoreOp &store) {
+  if (load.getOriginalMemref() != store.getTargetMemref())
+    return false;
+
+  auto shapeL = getBlockShapeForLoad(load);
+  auto shapeS = getBlockShapeForStore(store);
+
+  Box boxL, boxS;
+  bool okL = tryGetConstantBoxFromMapAndShape(load.getAffineMap(),
+                                              load.getMapOperands(),
+                                              shapeL, boxL);
+  bool okS = tryGetConstantBoxFromMapAndShape(store.getAffineMap(),
+                                              store.getMapOperands(),
+                                              shapeS, boxS);
+  if (!okL || !okS)
+    return true;
+
+  return boxesOverlap(boxL, boxS);
+}
+
+/// Exact same datablock: BlockStore vs BlockStore.
+/// Two stores access the exact same data block if:
+///   1) They write to the same backing memref (same target).
+///   2) After canonicalization, identical affine map and map operands.
+bool AccessSameDataBlock(ADORA::DataBlockStoreOp &op1,
+                         ADORA::DataBlockStoreOp &op2) {
+  if (op1.getTargetMemref() != op2.getTargetMemref())
+    return false;
+
+  return canonicalizeAndEqual(op1.getAffineMap(), op1.getMapOperands(),
+                              op2.getAffineMap(), op2.getMapOperands());
+}
+
+/// RAR: read-after-read dependency between two BlockLoads.
+/// Returns true if both loads may reference overlapping regions of the same
+/// backing array. Needed to fold duplicate loads in RemoveRedundantBlockLoads.
+bool checkDependencyBetweenBlockLoadAndBlockLoad(ADORA::DataBlockLoadOp &a,
+                                                 ADORA::DataBlockLoadOp &b) {
+  if (a.getOriginalMemref() != b.getOriginalMemref())
+    return false;
+
+  if (AccessSameDataBlock(a, b))
+    return true;
+
+  return mayOverlapDataBlockRegion(a, b);
+}
+
+/// WAW: write-after-write dependency between two BlockStores.
+bool checkDependencyBetweenBlockStoreAndBlockStore(ADORA::DataBlockStoreOp &a,
+                                                   ADORA::DataBlockStoreOp &b) {
+  if (a.getTargetMemref() != b.getTargetMemref())
+    return false;
+
+  if (AccessSameDataBlock(a, b))
+    return true;
+
+  return mayOverlapDataBlockRegion(a, b);
+}
+
+/// WAR: write-after-read dependency from a BlockLoad (earlier) to a BlockStore.
+/// Caller is responsible for lexical/IR ordering — this function only judges
+/// memory overlap on the same backing array.
+bool checkDependencyBetweenBlockLoadAndBlockStore(ADORA::DataBlockLoadOp  &load,
+                                                  ADORA::DataBlockStoreOp &store) {
+  if (load.getOriginalMemref() != store.getTargetMemref())
+    return false;
+
+  // Exact same block: reuse the existing (store, load) overload.
+  if (AccessSameDataBlock(store, load))
+    return true;
+
+  return mayOverlapDataBlockRegion(load, store);
+}
+
 } // namespace
 }
