@@ -21,9 +21,9 @@
 // With emit-token=true we expect !ADORA.token to surface on at least one
 // op as an SSA value connecting a producer to a consumer; the dep_summary
 // attribute is still emitted because emit-summary defaults to true.
-// TOKEN: !ADORA.token
 // TOKEN: adora.scheduled
 // TOKEN: adora.dep_summary
+// TOKEN: !ADORA.token
 
 // With emit-token=false the IR must be free of any !ADORA.token mention;
 // only the PR1 string-based dep_summary carries ordering information.

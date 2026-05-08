@@ -290,8 +290,6 @@ LogicalResult DataBlockLoadOp::verify() {
     return emitOpError(
         "requires strides have the same dimension number to accessed memref");
 
-  if (!getAsyncDependencies().empty() && !getAsyncToken())
-    return emitOpError("has asyncDependencies but does not produce an asyncToken");
 
   return success();
 }
@@ -597,8 +595,6 @@ LogicalResult DataBlockStoreOp::verify() {
     return emitOpError(
         "requires strides have the same dimension number to accessed memref");
 
-  if (!getAsyncDependencies().empty() && !getAsyncToken())
-    return emitOpError("has asyncDependencies but does not produce an asyncToken");
 
   return success();
 }

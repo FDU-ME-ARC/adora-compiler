@@ -37,3 +37,4 @@ void ADORADialect::initialize() {
 #include "ADORA/Dialect/ADORA/IR/ADORAOpsTypes.cpp.inc"
   >();
 }
+

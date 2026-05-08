@@ -318,17 +318,27 @@ static std::pair<mlir::Value, mlir::Operation *>
 rebuildAsyncLoad(ADORA::DataBlockLoadOp old, mlir::ValueRange deps,
                  bool produceTok) {
   mlir::OpBuilder b(old);
+  // NOTE: pipeline-generated BlockLoad ops may carry `map` but not `strides`
+  // (strides was introduced with the PR2 experimental commit). Tolerate null
+  // and fall back to an identity map / empty strides array so that rebuild
+  // never dereferences a null attribute pointer.
   auto mapAttr =
       old->getAttrOfType<mlir::AffineMapAttr>(
           ADORA::DataBlockLoadOp::getMapAttrStr());
+  mlir::AffineMap mapVal =
+      mapAttr ? mapAttr.getValue()
+              : mlir::AffineMap::getMultiDimIdentityMap(
+                    old.getResult().getType().cast<mlir::MemRefType>().getRank(),
+                    b.getContext());
   auto strides = old->getAttrOfType<mlir::DenseI64ArrayAttr>("strides");
+  if (!strides) strides = mlir::DenseI64ArrayAttr::get(b.getContext(), {});
   std::string kern = old.getKernelName().str();
   mlir::SmallVector<mlir::Value> mapOps(old.getIndices().begin(),
                                         old.getIndices().end());
 
   auto newOp = b.create<ADORA::DataBlockLoadOp>(
       old.getLoc(), old.getOriginalMemref(),
-      mapAttr.getValue(), mapOps,
+      mapVal, mapOps,
       old.getResult().getType().cast<mlir::MemRefType>(),
       strides, kern, deps, produceTok);
 
@@ -345,17 +355,25 @@ static std::pair<mlir::Value, mlir::Operation *>
 rebuildAsyncStore(ADORA::DataBlockStoreOp old, mlir::ValueRange deps,
                   bool produceTok) {
   mlir::OpBuilder b(old);
+  // WHY: same null-tolerance as rebuildAsyncLoad — strides may be absent on
+  // pipeline-generated ops that predate the PR2 experimental commit.
   auto mapAttr =
       old->getAttrOfType<mlir::AffineMapAttr>(
           ADORA::DataBlockStoreOp::getMapAttrStr());
+  mlir::AffineMap mapVal =
+      mapAttr ? mapAttr.getValue()
+              : mlir::AffineMap::getMultiDimIdentityMap(
+                    old.getSourceMemref().getType().cast<mlir::MemRefType>().getRank(),
+                    b.getContext());
   auto strides = old->getAttrOfType<mlir::DenseI64ArrayAttr>("strides");
+  if (!strides) strides = mlir::DenseI64ArrayAttr::get(b.getContext(), {});
   std::string kern = old.getKernelName().str();
   mlir::SmallVector<mlir::Value> mapOps(old.getIndices().begin(),
                                         old.getIndices().end());
 
   auto newOp = b.create<ADORA::DataBlockStoreOp>(
       old.getLoc(), old.getSourceMemref(), old.getTargetMemref(),
-      mapAttr.getValue(), mapOps, strides, kern, deps, produceTok);
+      mapVal, mapOps, strides, kern, deps, produceTok);
 
   migrateAttrs(old, newOp, storeBuiltInAttrs());
   old.erase();
@@ -369,8 +387,13 @@ static std::pair<mlir::Value, mlir::Operation *>
 rebuildAsyncKernel(ADORA::KernelOp old, mlir::ValueRange deps,
                    bool produceTok) {
   mlir::OpBuilder b(old);
-  // KernelOp::getKernelName() already returns std::string; do not call .str().
-  std::string name = old.getKernelName();
+  // NOTE: pipeline-generated KernelOps may lack a `kernel_name` attribute
+  // (the no-arg builder doesn't set one). Guard against null before
+  // forwarding to the rebuild builder.
+  std::string name;
+  if (auto kn = old->getAttrOfType<mlir::StringAttr>(
+          ADORA::KernelOp::getKernelNameAttrStr()))
+    name = kn.getValue().str();
 
   auto newOp = b.create<ADORA::KernelOp>(
       old.getLoc(), name, deps, produceTok, &old.getBody());
@@ -404,7 +427,11 @@ static void threadTokensOnDMAs(TaskGraph *graph) {
   for (const auto &e : graph->depEdges()) {
     Operation *s = e.src ? e.src->getOperation() : nullptr;
     Operation *d = e.dst ? e.dst->getOperation() : nullptr;
-    if (!s || !d || s == d) continue;
+    // NOTE: RemoveRedundant* may erase ops while leaving stale dep edges.
+    // An erased op's getBlock() returns null; skip such dangling references.
+    if (!s || !s->getBlock()) continue;
+    if (!d || !d->getBlock()) continue;
+    if (s == d) continue;
     preds[d].push_back(s);
     hasOut.insert(s);
   }
@@ -628,25 +655,11 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
     analyzeDependencyInGraph(graph);
     appendDepEdgesToAttrList(graph, idx, func.getContext(), allEdgeAttrs);
 
-    // PR2 commit B — thread SSA !ADORA.token along the dep edges we just
-    // inferred, so that the ordering becomes a first-class MLIR relation.
-    // Guarded by the `emit-token` option (default false during rollout) to
-    // keep byte-level compatibility with pre-PR2 baselines.
-    if (emitTokens)
-      threadTokensOnDMAs(graph);
-
-    // PR2 commit C — optional CI-only sanity check: assert SSA token edges
-    // match the dep_summary edges. Only meaningful when tokens were threaded.
-    if (emitTokens && crossCheck) {
-      if (failed(verifyTokensMatchSummary(graph))) {
-        func.emitError("adora async-token edges disagree with dep_summary "
-                       "(cross-check-summary-vs-token)");
-        signalPassFailure();
-      }
-    }
-
     //////////////
     /// 4th step: simplify redundant data block transfer op
+    /// NOTE: this step must run BEFORE token threading (PR2) because
+    /// RemoveRedundant* may erase ops. If tokens were already threaded,
+    /// erasing a Load with a live asyncToken result would crash MLIR.
     //////////////
     //// move out redundant blockload
 
@@ -654,6 +667,21 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
     RemoveRedundantBlockStoreLoadPair(graph);
     //// remove redundant blockload-blockload
     RemoveRedundantBlockLoads(graph);
+
+    // PR2 commit B — thread SSA !ADORA.token along the dep edges after all
+    // simplification steps, so no rebuilt op will be erased by the optimizer.
+    // Guarded by `emit-token` (default false during rollout) for compatibility.
+    if (emitTokens)
+      threadTokensOnDMAs(graph);
+
+    // PR2 commit C — optional CI-only cross-check.
+    if (emitTokens && crossCheck) {
+      if (failed(verifyTokensMatchSummary(graph))) {
+        func.emitError("adora async-token edges disagree with dep_summary "
+                       "(cross-check-summary-vs-token)");
+        signalPassFailure();
+      }
+    }
 
     //////////////
     /// 5th step: fix id of data transfer 

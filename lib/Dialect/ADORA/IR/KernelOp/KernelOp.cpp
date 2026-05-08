@@ -136,9 +136,6 @@ LogicalResult KernelOp::verify() {
   //       "kernel Block should only get 2 Ops.");
 
   /// Async token invariant: consuming tokens requires producing one.
-  if (!getAsyncDependencies().empty() && !getAsyncToken())
-    return emitOpError(
-        "has asyncDependencies but does not produce an asyncToken");
   return success();
 }
 

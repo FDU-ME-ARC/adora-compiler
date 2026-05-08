@@ -30,6 +30,11 @@ def ADORA_Dialect : Dialect {
     // "::mlir::func"
   ];
 
+  // PR2: generate printType / parseType from the ODS type definitions so
+  // that !ADORA.token (and any future ADORA types) can be printed/parsed
+  // without manually implementing the dialect type printing hook.
+  let useDefaultTypePrinterParser = 1;
+
   // let hasOperationAttrVerify = 1;
 }
 
