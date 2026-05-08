@@ -404,6 +404,34 @@ def ScheduleADORATasks: Pass<"adora-schedule-tasks", "func::FuncOp"> {
 }
 
 //===----------------------------------------------------------------------===//
+// PR3 commit B — Lower !ADORA.token def-use chains to explicit event ops
+//===----------------------------------------------------------------------===//
+def LowerAsyncTokens : Pass<"adora-lower-async-tokens", "func::FuncOp"> {
+  let summary = "Lower SSA !ADORA.token edges to adora.event.create/signal/wait/destroy.";
+  let description = [{
+    Walks each FuncOp and for every async-capable op (DataBlockLoad/Store,
+    Kernel) that produces an asyncToken, inserts:
+      adora.event.create  (before the producer)
+      adora.signal        (after the producer)
+    And for every consumer op with asyncDependencies, inserts:
+      adora.wait          (before the consumer)
+    Finally inserts adora.event.destroy after the last use of each event.
+    The source ops are rebuilt in their synchronous form (no asyncToken,
+    no asyncDependencies) after the event ops are wired.
+
+    Option drop-tokens-only skips event emission and just removes the token
+    operands/results; useful for debugging the lowering chain.
+  }];
+  let constructor = "mlir::ADORA::createLowerAsyncTokensPass()";
+  let options = [
+    Option<"dropTokensOnly", "drop-tokens-only", "bool", /*default=*/"false",
+           "Drop SSA tokens without emitting event ops (debug mode).">,
+    Option<"defaultStream", "default-stream", "int32_t", /*default=*/"0",
+           "Stream id passed to adora.signal/wait (reserved for PR4 multi-stream).">
+  ];
+}
+
+//===----------------------------------------------------------------------===//
 // Frontend Design Space Exploration
 //===----------------------------------------------------------------------===//
 def AutoDesignSpaceExplore : Pass<"adora-auto-dse", "ModuleOp"> {
