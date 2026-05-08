@@ -339,7 +339,7 @@ namespace mlir
           BlockLoad.setId(std::to_string(BlockLoadStoreOpId++));
           setPingpongAttr(BlockLoad);
 
-          A_in.push_back(BlockLoad);
+          A_in.push_back(BlockLoad.getResult());
         }
         /////////////////////
         /// End of transfer A
@@ -372,7 +372,7 @@ namespace mlir
             BlockLoad.setStrides(ArrayRef<int64_t>({1, tile_col_size}));
           }
 
-          B_in.push_back(BlockLoad);
+          B_in.push_back(BlockLoad.getResult());
         }
         /////////////////////
         /// End of transfer B
@@ -412,7 +412,7 @@ namespace mlir
                 BlockLoad.setStrides(ArrayRef<int64_t>({1, tile_col_size}));
               }
 
-              C_in.push_back(BlockLoad);
+              C_in.push_back(BlockLoad.getResult());
 
               ///////////
               /// generate the store back
@@ -465,7 +465,7 @@ namespace mlir
               BlockLoad.setStrides(ArrayRef<int64_t>({1, tile_col_size}));
             }
 
-            C_in.push_back(BlockLoad);
+            C_in.push_back(BlockLoad.getResult());
 
             ///////////
             /// generate the store back

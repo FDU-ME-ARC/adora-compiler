@@ -37,7 +37,7 @@ include "mlir/Interfaces/InferTypeOpInterface.td"
 // Explicit Data Block Movement Operation (Load and Store)
 //===----------------------------------------------------------------------===//
 
-def ADORA_DataBlockLoadOp: ADORA_Op<"BlockLoad", []>{
+def ADORA_DataBlockLoadOp: ADORA_Op<"BlockLoad", [AttrSizedOperandSegments]>{
   let summary = "Load a part of the whole array data block to a faster memory where HW accelerator can access.";
   let description = [{
     This operation takes in an array memref,a header index of the data block which will be moved, and the block size.
@@ -76,13 +76,21 @@ def ADORA_DataBlockLoadOp: ADORA_Op<"BlockLoad", []>{
                    "MemRefType":$resultType, "DenseI64ArrayAttr":$strides)>,
     OpBuilder<(ins "Value":$DataBlock, "AffineMap":$map, "ValueRange":$operands, 
                    "MemRefType":$resultType, "ArrayRef<int64_t>":$strides)>,
+
+    //// async form (strides may be null, KernelName may be empty)
+    OpBuilder<(ins "Value":$DataBlock, "AffineMap":$map, "ValueRange":$operands,
+                   "MemRefType":$resultType, "DenseI64ArrayAttr":$strides,
+                   "std::string":$KernelName,
+                   "ValueRange":$asyncDependencies, "bool":$produceToken)>,
   ];
   
 	//Ignore Variadic<Index>:$offset at this moment
   let arguments = (ins Arg<AnyMemRef, "the reference to load from", [MemRead]>:$OriginalMemref
-                  , Variadic<Index>:$indices);
+                  , Variadic<Index>:$indices
+                  , Variadic<ADORA_TokenType>:$asyncDependencies);
   
-  let results = (outs AnyStaticShapeMemRef: $result);
+  let results = (outs AnyStaticShapeMemRef:$result,
+                      Optional<ADORA_TokenType>:$asyncToken);
   let extraClassDeclaration = [{
     // unsigned int BlockLen = 0;
     // void setBlockLen(unsigned l){ BlockLen = l;};
@@ -143,7 +151,7 @@ def ADORA_DataBlockLoadOp: ADORA_Op<"BlockLoad", []>{
       return getOriginalMemrefType();
     }
     operand_range getMapOperands() {
-      return {operand_begin() + 1, operand_end()};
+      return getIndices();
     }
     void setMapOperands(mlir::ValueRange newoperands);
 
@@ -173,7 +181,7 @@ def ADORA_DataBlockLoadOp: ADORA_Op<"BlockLoad", []>{
 }
 
 
-def ADORA_DataBlockStoreOp: ADORA_Op<"BlockStore", []>{
+def ADORA_DataBlockStoreOp: ADORA_Op<"BlockStore", [AttrSizedOperandSegments]>{
   let summary = "Store a smaller memref to a bigger memref at a specified position.";
   let description = [{
     This operation takes in a source array memref which comes from a BlockLoad Op. After the excution 
@@ -210,14 +218,21 @@ def ADORA_DataBlockStoreOp: ADORA_Op<"BlockStore", []>{
                    "AffineMap":$map, "ValueRange":$operands, "DenseI64ArrayAttr":$strides)>,
 
     OpBuilder<(ins "Value":$SourceMemref, "Value":$TargetMemref, 
-                   "AffineMap":$map, "ValueRange":$operands, "ArrayRef<int64_t>":$strides)>, 
+                   "AffineMap":$map, "ValueRange":$operands, "ArrayRef<int64_t>":$strides)>,
+
+    //// async form
+    OpBuilder<(ins "Value":$SourceMemref, "Value":$TargetMemref,
+                   "AffineMap":$map, "ValueRange":$operands,
+                   "DenseI64ArrayAttr":$strides, "std::string":$KernelName,
+                   "ValueRange":$asyncDependencies, "bool":$produceToken)>,
   ];
 
 	//Ignore Variadic<Index>:$offset at this moment
   let arguments = (ins Arg<AnyMemRef, "A memref from a BlockLoad Op", [MemWrite]>:$SourceMemref
                   , Arg<AnyMemRef, "the reference to store to", [MemWrite]>:$TargetMemref
-                  , Variadic<Index>:$indices);
-  // let results = (outs AnyStaticShapeMemRef: $result); /// No results for 
+                  , Variadic<Index>:$indices
+                  , Variadic<ADORA_TokenType>:$asyncDependencies);
+  let results = (outs Optional<ADORA_TokenType>:$asyncToken);
   let extraClassDeclaration = [{
     // unsigned int BlockLen = 0;
     // void setBlockLen(unsigned l){ BlockLen = l;};
@@ -277,7 +292,7 @@ def ADORA_DataBlockStoreOp: ADORA_Op<"BlockStore", []>{
     }
 
     operand_range getMapOperands() {
-      return {operand_begin() + 2, operand_end()}; // + 2 or + 1?
+      return getIndices();
     }
     void setMapOperands(mlir::ValueRange newoperands);
 

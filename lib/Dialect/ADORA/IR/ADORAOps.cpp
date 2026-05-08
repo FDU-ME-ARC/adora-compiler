@@ -68,7 +68,36 @@ void DataBlockLoadOp::build(OpBuilder &builder, OperationState &result,
   auto KernelNameAttr = builder.getStringAttr(KernelName);
   result.addAttribute(getKernelNameAttrStr(), KernelNameAttr);
 
+  result.addAttribute("operandSegmentSizes",
+      builder.getDenseI32ArrayAttr(
+          {1, (int32_t)mapOperands.size(), /*asyncDeps=*/0}));
+
   result.types.push_back(resultType);
+}
+
+void DataBlockLoadOp::build(OpBuilder &builder, OperationState &result,
+                            Value OriginalMemref, AffineMap map, ValueRange mapOperands,
+                            MemRefType resultType, DenseI64ArrayAttr strides, std::string KernelName,
+                            ValueRange asyncDependencies, bool produceToken) {
+  assert(map.getNumInputs() == mapOperands.size() && "inconsistent index info");
+  result.addOperands(OriginalMemref);
+  result.addOperands(mapOperands);
+  result.addOperands(asyncDependencies);
+
+  result.addAttribute(getMapAttrStr(), AffineMapAttr::get(map));
+  if (strides)
+    result.addAttribute("strides", strides);
+  if (!KernelName.empty())
+    result.addAttribute(getKernelNameAttrStr(), builder.getStringAttr(KernelName));
+
+  result.addAttribute("operandSegmentSizes",
+      builder.getDenseI32ArrayAttr(
+          {1, (int32_t)mapOperands.size(),
+           (int32_t)asyncDependencies.size()}));
+
+  result.types.push_back(resultType);
+  if (produceToken)
+    result.types.push_back(TokenType::get(builder.getContext()));
 }
 
 void DataBlockLoadOp::build(OpBuilder &builder, OperationState &result,
@@ -127,6 +156,12 @@ ParseResult DataBlockLoadOp::parse(OpAsmParser &parser, OperationState &result) 
   // std::string* KernelName = nullptr;
   SmallVector<OpAsmParser::UnresolvedOperand, 1> mapOperands;
 
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> asyncDeps;
+  if (succeeded(parser.parseOptionalKeyword("async"))) {
+    if (parser.parseOperandList(asyncDeps, OpAsmParser::Delimiter::Square))
+      return failure();
+  }
+
   if(   parser.parseOperand(memrefInfo).failed() ||
         parser.parseAffineMapOfSSAIds(mapOperands, mapAttr,
                                      getMapAttrStr(),
@@ -148,26 +183,35 @@ ParseResult DataBlockLoadOp::parse(OpAsmParser &parser, OperationState &result) 
     result.addAttribute("strides", DenseI64ArrayAttr::get(builder.getContext(), ArrayRef<int64_t>(strides_vec)));
   }
 
-  return failure(
-      // parser.parseOperand(memrefInfo) ||
-      // parser.parseAffineMapOfSSAIds(mapOperands, mapAttr,
-      //                               getMapAttrStr(),
-      //                               result.attributes) ||
-      // parser.parseColon() || parser.parseType(memrefType) ||
-      // parser.parseArrow() || parser.parseType(resultType) ||
-      parser.parseOptionalAttrDict(result.attributes) ||
+  Type asyncTokenType;
+  bool hasTok = false;
+  if (succeeded(parser.parseOptionalArrow())) {
+    if (parser.parseType(asyncTokenType) || !asyncTokenType.isa<ADORA::TokenType>())
+      return failure();
+    hasTok = true;
+  }
+
+  if (parser.parseOptionalAttrDict(result.attributes) ||
       parser.resolveOperand(memrefInfo, memrefType, result.operands) ||
       parser.resolveOperands(mapOperands, indexTy, result.operands) ||
-      parser.addTypeToList(resultType, result.types)
-      // parser.parseLBrace() || 
-      // parser.parseAttribute(KernelNameAttr, builder.getNoneType(), "KernelName", result.attributes)||
-      // parser.parseOptionalKeywordOrString(KernelName) || 
-      // addKernelNameAttrInParse(result, builder, *KernelName) ||
-      // parser.parseOptionalRBrace()
-  );
+      parser.resolveOperands(asyncDeps,
+          ADORA::TokenType::get(parser.getContext()), result.operands) ||
+      parser.addTypeToList(resultType, result.types))
+    return failure();
+
+  result.addAttribute("operandSegmentSizes",
+      builder.getDenseI32ArrayAttr(
+          {1, (int32_t)mapOperands.size(), (int32_t)asyncDeps.size()}));
+  if (hasTok) result.addTypes(asyncTokenType);
+  return success();
 }
 
 void DataBlockLoadOp::print(OpAsmPrinter &p) {
+  if (!getAsyncDependencies().empty()) {
+    p << " async [";
+    llvm::interleaveComma(getAsyncDependencies(), p);
+    p << "]";
+  }
   p << " " << getOriginalMemref() << " [";
   if (AffineMapAttr mapAttr =
           (*this)->getAttrOfType<AffineMapAttr>(getMapAttrStr()))
@@ -185,8 +229,10 @@ void DataBlockLoadOp::print(OpAsmPrinter &p) {
 
   // p << "{\""  << getKernelName() << "\"}";
   p.printOptionalAttrDict((*this)->getAttrs(),
-                          /*elidedAttrs=*/{getMapAttrStr(), getStridesAttrStr()});
-  
+                          /*elidedAttrs=*/{getMapAttrStr(), getStridesAttrStr(), "operandSegmentSizes"});
+
+  if (getAsyncToken())
+    p << " -> " << getAsyncToken().getType();
 }
 
 // Returns true if 'value' is a valid index to an affine operation (e.g.
@@ -231,7 +277,7 @@ LogicalResult DataBlockLoadOp::verify() {
           getOperation(),
           (*this)->getAttrOfType<AffineMapAttr>(getMapAttrStr()),
           getMapOperands(), memrefType,
-          /*numIndexOperands=*/getNumOperands() - 1)))
+          /*numIndexOperands=*/(unsigned)getIndices().size())))
     return failure();
 
   if (getOriginalMemrefType().getElementType() != getResultType().getElementType())
@@ -243,6 +289,9 @@ LogicalResult DataBlockLoadOp::verify() {
       getOriginalMemrefType().getShape().size() != getStridesAsArrayRef().size())
     return emitOpError(
         "requires strides have the same dimension number to accessed memref");
+
+  if (!getAsyncDependencies().empty() && !getAsyncToken())
+    return emitOpError("has asyncDependencies but does not produce an asyncToken");
 
   return success();
 }
@@ -334,11 +383,15 @@ ArrayRef<int64_t> DataBlockLoadOp::getStridesAsArrayRef(){
 }
 
 void DataBlockLoadOp::setMapOperands(mlir::ValueRange newMapOperands){
-  operand_range oldOperands = getOperation()->getOperands();
   SmallVector<mlir::Value> newOperands;
-  newOperands.push_back(oldOperands[0]); /// memref
+  newOperands.push_back(getOriginalMemref());
   newOperands.append(newMapOperands.begin(), newMapOperands.end());
+  auto deps = getAsyncDependencies();
+  newOperands.append(deps.begin(), deps.end());
   getOperation()->setOperands(newOperands);
+  getOperation()->setAttr("operandSegmentSizes",
+      DenseI32ArrayAttr::get(getOperation()->getContext(),
+          {1, (int32_t)newMapOperands.size(), (int32_t)deps.size()}));
 }
 
 //===----------------------------------------------------------------------===//
@@ -358,6 +411,33 @@ void DataBlockStoreOp::build(OpBuilder &builder, OperationState &result,
 
   auto KernelNameAttr = builder.getStringAttr(KernelName);
   result.addAttribute(getKernelNameAttrStr(), KernelNameAttr);
+
+  result.addAttribute("operandSegmentSizes",
+      builder.getDenseI32ArrayAttr(
+          {1, 1, (int32_t)mapOperands.size(), /*asyncDeps=*/0}));
+}
+
+void DataBlockStoreOp::build(OpBuilder &builder, OperationState &result,
+                            Value SourceMemref, Value TargetMemref,
+                            AffineMap map, ValueRange mapOperands,
+                            DenseI64ArrayAttr strides, std::string KernelName,
+                            ValueRange asyncDependencies, bool produceToken) {
+  assert(map.getNumInputs() == mapOperands.size() && "inconsistent index info");
+  result.addOperands(SourceMemref);
+  result.addOperands(TargetMemref);
+  result.addOperands(mapOperands);
+  result.addOperands(asyncDependencies);
+  result.addAttribute(getMapAttrStr(), AffineMapAttr::get(map));
+  if (strides)
+    result.addAttribute("strides", strides);
+  if (!KernelName.empty())
+    result.addAttribute(getKernelNameAttrStr(), builder.getStringAttr(KernelName));
+  result.addAttribute("operandSegmentSizes",
+      builder.getDenseI32ArrayAttr(
+          {1, 1, (int32_t)mapOperands.size(),
+           (int32_t)asyncDependencies.size()}));
+  if (produceToken)
+    result.types.push_back(TokenType::get(builder.getContext()));
 }
 
 void DataBlockStoreOp::build(OpBuilder &builder, OperationState &result,
@@ -411,6 +491,12 @@ ParseResult DataBlockStoreOp::parse(OpAsmParser &parser, OperationState &result)
   StringAttr KernelNameAttr;
   SmallVector<OpAsmParser::UnresolvedOperand, 1> mapOperands;
 
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> asyncDeps;
+  if (succeeded(parser.parseOptionalKeyword("async"))) {
+    if (parser.parseOperandList(asyncDeps, OpAsmParser::Delimiter::Square))
+      return failure();
+  }
+
   if(
     parser.parseOperand(sourceInfo).failed() || parser.parseComma().failed() ||
     parser.parseOperand(targetInfo).failed() ||
@@ -436,21 +522,36 @@ ParseResult DataBlockStoreOp::parse(OpAsmParser &parser, OperationState &result)
     result.addAttribute("strides", DenseI64ArrayAttr::get(builder.getContext(), ArrayRef<int64_t>(strides_vec)));
   }
 
-  return failure(
-   
-      parser.parseOptionalAttrDict(result.attributes) ||
+  Type asyncTokenType;
+  bool hasTok = false;
+  if (succeeded(parser.parseOptionalArrow())) {
+    if (parser.parseType(asyncTokenType) || !asyncTokenType.isa<ADORA::TokenType>())
+      return failure();
+    hasTok = true;
+  }
+
+  if (parser.parseOptionalAttrDict(result.attributes) ||
       parser.resolveOperand(sourceInfo, sourceType, result.operands) ||
       parser.resolveOperand(targetInfo, targetType, result.operands) ||
-      parser.resolveOperands(mapOperands, indexTy, result.operands)  
-      // parser.parseOptionalAttrDict(result.attributes) ||
-      // parser.parseLBrace() ||
-      // parser.parseAttribute(KernelNameAttr, "KernelName", result.attributes)||
-      // parser.parseOptionalRBrace()
-  ) ;
+      parser.resolveOperands(mapOperands, indexTy, result.operands) ||
+      parser.resolveOperands(asyncDeps,
+          ADORA::TokenType::get(parser.getContext()), result.operands))
+    return failure();
+
+  result.addAttribute("operandSegmentSizes",
+      builder.getDenseI32ArrayAttr(
+          {1, 1, (int32_t)mapOperands.size(), (int32_t)asyncDeps.size()}));
+  if (hasTok) result.addTypes(asyncTokenType);
+  return success();
 }
 
 
 void DataBlockStoreOp::print(OpAsmPrinter &p) {
+  if (!getAsyncDependencies().empty()) {
+    p << " async [";
+    llvm::interleaveComma(getAsyncDependencies(), p);
+    p << "]";
+  }
   p << " " << getSourceMemref() << ",";
   p << " " << getTargetMemref() << " [";
   if (AffineMapAttr mapAttr =
@@ -471,7 +572,10 @@ void DataBlockStoreOp::print(OpAsmPrinter &p) {
   
   // p << "{\""  << getKernelName() << "\"}";
   p.printOptionalAttrDict((*this)->getAttrs(),
-                          /*elidedAttrs=*/{getMapAttrStr(), getStridesAttrStr()});
+                          /*elidedAttrs=*/{getMapAttrStr(), getStridesAttrStr(), "operandSegmentSizes"});
+
+  if (getAsyncToken())
+    p << " -> " << getAsyncToken().getType();
 }
 
 
@@ -481,7 +585,7 @@ LogicalResult DataBlockStoreOp::verify() {
           getOperation(),
           (*this)->getAttrOfType<AffineMapAttr>(getMapAttrStr()),
           getMapOperands(), memrefType,
-          /*numIndexOperands=*/getNumOperands() - 2)))
+          /*numIndexOperands=*/(unsigned)getIndices().size())))
     return failure();
 
   if (getTargetMemrefType().getElementType() != getSourceMemrefType().getElementType())
@@ -492,6 +596,9 @@ LogicalResult DataBlockStoreOp::verify() {
       getSourceMemrefType().getShape().size() != getStridesAsArrayRef().size())
     return emitOpError(
         "requires strides have the same dimension number to accessed memref");
+
+  if (!getAsyncDependencies().empty() && !getAsyncToken())
+    return emitOpError("has asyncDependencies but does not produce an asyncToken");
 
   return success();
 }
@@ -548,11 +655,16 @@ ArrayRef<int64_t> DataBlockStoreOp::getStridesAsArrayRef(){
 }
 
 void DataBlockStoreOp::setMapOperands(mlir::ValueRange newMapOperands){
-  operand_range oldOperands = getOperation()->getOperands();
   SmallVector<mlir::Value> newOperands;
-  newOperands.push_back(oldOperands[0]); /// memref
+  newOperands.push_back(getSourceMemref());
+  newOperands.push_back(getTargetMemref());
   newOperands.append(newMapOperands.begin(), newMapOperands.end());
+  auto deps = getAsyncDependencies();
+  newOperands.append(deps.begin(), deps.end());
   getOperation()->setOperands(newOperands);
+  getOperation()->setAttr("operandSegmentSizes",
+      DenseI32ArrayAttr::get(getOperation()->getContext(),
+          {1, 1, (int32_t)newMapOperands.size(), (int32_t)deps.size()}));
 }
 
 //===----------------------------------------------------------------------===//
