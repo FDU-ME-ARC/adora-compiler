@@ -24,6 +24,7 @@ namespace ADORA {
 std::unique_ptr<OperationPass<ModuleOp>> createConvertKernelCallToLLVMPass();
 std::unique_ptr<OperationPass<ModuleOp>> createConvertADORAToSCFPass();
 std::unique_ptr<OperationPass<ModuleOp>> createMathRewritePass();
+std::unique_ptr<OperationPass<ModuleOp>> createADORAAsyncRuntimeToLLVMPass();
 // std::unique_ptr<OperationPass<ModuleOp>>
 // createConvertKernelCallToLLVMPass(const LowerToLLVMOptions &options);
 #define GEN_PASS_REGISTRATION
