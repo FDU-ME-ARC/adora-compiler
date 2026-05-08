@@ -106,6 +106,12 @@ static Operation *rebuildLoadSync(DataBlockLoadOp old) {
     newOp->setAttr(a.getName(), a.getValue());
   }
   old.getResult().replaceAllUsesWith(newOp.getResult());
+  // Replace any remaining uses of the async token (result 1) with a null
+  // placeholder; by this point all token consumers have been rebuilt to sync
+  // form so there should be no uses left, but guard against stale uses to
+  // avoid a "still has uses" assertion on erase.
+  if (Value asyncTok = old.getAsyncToken())
+    asyncTok.dropAllUses();
   old.erase();
   return newOp.getOperation();
 }
