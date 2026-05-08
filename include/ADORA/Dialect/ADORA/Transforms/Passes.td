@@ -385,6 +385,22 @@ def ScheduleADORATasks: Pass<"adora-schedule-tasks", "func::FuncOp"> {
       2.
   }];
   let constructor = "mlir::ADORA::createScheduleADORATasksPass()";
+  // PR2 commit B: drive the !ADORA.token threading + dep_summary emission
+  // + (CI-only) cross-check between the two representations.
+  let options = [
+    Option<"emitTokens", "emit-token", "bool", /*default=*/"false",
+           "Thread SSA !ADORA.token values through DataBlockLoad/Store/Kernel "
+           "ops based on graph dep edges. When false (default) the pass only "
+           "emits the PR1 adora.dep_summary attribute, preserving byte-level "
+           "output compatibility with pre-PR2 baselines.">,
+    Option<"emitSummary", "emit-summary", "bool", /*default=*/"true",
+           "Emit the PR1 adora.dep_summary DictionaryAttr on the enclosing "
+           "func. Kept on during the PR2 gradual-rollout window.">,
+    Option<"crossCheck", "cross-check-summary-vs-token", "bool",
+           /*default=*/"false",
+           "Assert that the SSA token edges match the dep_summary edges. "
+           "CI-only; fails the pass on mismatch.">
+  ];
 }
 
 //===----------------------------------------------------------------------===//

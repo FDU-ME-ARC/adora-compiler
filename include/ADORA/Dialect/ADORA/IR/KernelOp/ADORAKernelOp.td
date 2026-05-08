@@ -60,7 +60,16 @@ def ADORA_KernelOp : ADORA_Op<"kernel">,
     OpBuilder<(ins "std::string":$KernelName)>,
     OpBuilder<(ins "std::string":$KernelName,
                    "::mlir::ValueRange":$asyncDependencies,
-                   "bool":$produceToken)>
+                   "bool":$produceToken)>,
+    // Rebuild-friendly async builder: same as the previous one but transfers
+    // the body region from `takeFromRegion` via Region::takeBody, instead of
+    // creating an empty body. Used by ScheduleADORATasks' threadTokensOnDMAs
+    // to rewrite an existing sync KernelOp into its async form while keeping
+    // the original kernel body intact.
+    OpBuilder<(ins "std::string":$KernelName,
+                   "::mlir::ValueRange":$asyncDependencies,
+                   "bool":$produceToken,
+                   "::mlir::Region*":$takeFromRegion)>
   ];
   
   let extraClassDeclaration = [{

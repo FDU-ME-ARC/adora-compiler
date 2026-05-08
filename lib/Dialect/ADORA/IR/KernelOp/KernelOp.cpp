@@ -62,6 +62,44 @@ void KernelOp::build(OpBuilder &builder, OperationState &result,
   kernelRegion->push_back(body);
 }
 
+/// Rebuild-friendly async builder.
+///
+/// Constructs a new KernelOp that carries `asyncDependencies` and optionally
+/// produces an `asyncToken`, while transferring the body region from
+/// `takeFromRegion` (typically the body of the old sync KernelOp we are
+/// replacing) via Region::takeBody. This preserves the original kernel body
+/// verbatim and avoids cloning costs.
+///
+/// @param KernelName        name attribute of the new kernel (may be empty)
+/// @param asyncDependencies SSA !ADORA.token values this kernel waits on
+/// @param produceToken      whether to emit an asyncToken result
+/// @param takeFromRegion    region whose body is moved into the new kernel;
+///                          if null, a fresh empty body is created.
+/// Side-effects: `*takeFromRegion` is emptied after the call.
+void KernelOp::build(OpBuilder &builder, OperationState &result,
+                     std::string KernelName, ValueRange asyncDependencies,
+                     bool produceToken, Region *takeFromRegion) {
+  // 1. Wire operands/result-types identically to the non-rebuild overload.
+  result.addOperands(asyncDependencies);
+  if (produceToken)
+    result.addTypes(TokenType::get(builder.getContext()));
+  if (!KernelName.empty())
+    result.addAttribute(getKernelNameAttrStr(),
+                        builder.getStringAttr(KernelName));
+
+  // 2. Either steal the caller-provided region or synthesize an empty one.
+  Region *kernelRegion = result.addRegion();
+  if (takeFromRegion && !takeFromRegion->empty()) {
+    // NOTE: takeBody transfers all blocks over; the source region is emptied.
+    kernelRegion->takeBody(*takeFromRegion);
+  } else {
+    Block *body = new Block();
+    for (unsigned i = 0; i < kNumConfigRegionAttributes; ++i)
+      body->addArgument(builder.getIndexType(), result.location);
+    kernelRegion->push_back(body);
+  }
+}
+
 // void KernelOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //                                           MLIRContext *context) {
 // }

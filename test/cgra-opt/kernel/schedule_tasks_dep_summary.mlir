@@ -14,6 +14,7 @@
 // RUN:   --adora-schedule-tasks \
 // RUN:   %s 2>/dev/null | %FileCheck %s
 
+// CHECK: adora.scheduled
 // CHECK: adora.dep_summary = [{block_idx = 0 : i64, edges = [
 
 // CHECK-DAG: kind = "RAR"
