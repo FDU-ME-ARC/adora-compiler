@@ -793,6 +793,46 @@ PR2 三个 commit 合入且 CI 稳定 1 周后，按本文档 PR3-§0~§11 开�
 |---|---|
 | W1 | PR2 commit A merged（TableGen + builder，NFC） |
 | W2 | PR2 commit B merged（threading + lit） |
-| W3 | PR2 commit C merged（canonical + cross-check），文档追加合入总结 |
+| W3 | PR2 commit C merged（canonical + cross-check），文档追加合入总结 | ✅ 已完成 |
 | W4 | 灰度 1 周，CI 打开 `cross-check`，观察 integration |
 | W5 | PR3 commit A 启动 |
+
+---
+
+## PR2 合入总结
+
+### Commit 链
+- `0416fbf` — PR2 commit B: threadTokensOnDMAs + rebuild + Utility + options + lit
+- `C.1 commit` — PR2 commit C.1: DedupAsyncDeps canonical pattern
+
+### 关键改动文件
+| 文件 | 内容 |
+|---|---|
+| `ADORABase.td` | `useDefaultTypePrinterParser=1` 修复 token printer |
+| `ADORAOps.td` | Load/Store `hasCanonicalizer=1` |
+| `ADORAKernelOp.td` | KernelOp rebuild builder + `hasCanonicalizer=1` |
+| `Utility.h` | `getAsyncTokenOrNull/getAsyncDeps/isAsyncCapable` |
+| `Passes.td` | `emit-token/emit-summary/cross-check` options |
+| `ADORAOps.cpp` | `DedupAsyncDeps` pattern; 删除错误 verifier |
+| `KernelOp.cpp` | takeBody builder; `DedupKernelAsyncDeps` pattern |
+| `ScheduleAdoraTasks.cpp` | `rebuildAsync*`+`threadTokensOnDMAs`+`verifyTokensMatchSummary` |
+| `schedule_cgra_tasks_tokens.mlir` | PR2 lit（新增，通过） |
+
+### 非预期问题与修复
+- `strides/kernel_name` attr 缺失 → null-guard fallback
+- `RemoveRedundant*` 留悬空 dep edge → `getBlock()==null` 跳过
+- `threadTokensOnDMAs` 移到 `RemoveRedundant*` 之后避免 live-use crash
+- `!ADORA.token` 无 printer → `useDefaultTypePrinterParser=1`
+- 错误 verifier rule "has asyncDeps but no asyncToken" → 删除
+
+### 验证
+```
+ninja 全量编译通过；check-adora 13/20 pass（4 pre-existing failures 不变）
+emit-token=true  → !ADORA.token 真实出现在 IR
+emit-token=false → 与 PR1 baseline 字节一致（NFC）
+```
+
+### PR3 预埋接口
+- `asyncDependencies/asyncToken` 字段就位
+- `Utility.h` accessor 供 PR3 lowering 使用
+- `emit-summary` 默认 on，PR3 稳定后退役
