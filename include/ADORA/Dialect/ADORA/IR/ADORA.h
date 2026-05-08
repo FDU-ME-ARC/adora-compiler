@@ -33,9 +33,11 @@
 #include "ADORA/Dialect/ADORA/IR/ADORAOpsDialect.h.inc"
 #endif
 
+// Types are provided via KernelOp/ADORAKernelOp.h (included below) to avoid
+// double-emitting the TypeDef class definitions when both headers are used.
+
 #define GET_OP_CLASSES
 #include "ADORA/Dialect/ADORA/IR/ADORAOps.h.inc"
-#include "ADORA/Dialect/ADORA/IR/ADORAOpsTypes.h.inc"
 
 #include "ADORA/Dialect/ADORA/IR/KernelOp/ADORAKernelOp.h"
 //===----------------------------------------------------------------------===//

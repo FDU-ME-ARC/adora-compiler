@@ -15,6 +15,12 @@ using namespace mlir::ADORA;
 
 #include "ADORA/Dialect/ADORA/IR/ADORAOpsDialect.cpp.inc"
 
+#include "mlir/IR/DialectImplementation.h"
+#include "llvm/ADT/TypeSwitch.h"
+
+#define GET_TYPEDEF_CLASSES
+#include "ADORA/Dialect/ADORA/IR/ADORAOpsTypes.cpp.inc"
+
 void ADORADialect::initialize() {
   addOperations<
 #define GET_OP_LIST
@@ -26,4 +32,8 @@ void ADORADialect::initialize() {
 #include "ADORA/Dialect/ADORA/IR/KernelOp/ADORAKernelOp.cpp.inc"
   >();
 
+  addTypes<
+#define GET_TYPEDEF_LIST
+#include "ADORA/Dialect/ADORA/IR/ADORAOpsTypes.cpp.inc"
+  >();
 }
