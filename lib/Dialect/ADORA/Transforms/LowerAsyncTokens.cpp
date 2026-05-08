@@ -159,6 +159,8 @@ static Operation *rebuildKernelSync(KernelOp old) {
   for (NamedAttribute a : old->getAttrs())
     if (kSkip.find(a.getName().str()) == kSkip.end())
       newOp->setAttr(a.getName(), a.getValue());
+  if (Value asyncTok = old.getAsyncToken())
+    asyncTok.dropAllUses();
   old.erase();
   return newOp.getOperation();
 }
