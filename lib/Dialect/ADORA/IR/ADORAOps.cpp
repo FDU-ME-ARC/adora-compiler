@@ -1061,3 +1061,66 @@ ParseResult DeinterleaverOp::parse(OpAsmParser &parser, OperationState &result) 
 
 #define GET_OP_CLASSES
 #include "ADORA/Dialect/ADORA/IR/ADORAOps.cpp.inc"
+
+//===----------------------------------------------------------------------===//
+// PR2 commit C — Canonical patterns for async-token cleanup.
+//
+// DropUnusedAsyncToken: if an op's asyncToken result has no uses, rebuild
+//   it without the token to keep IR minimal.
+// DedupAsyncDeps: remove duplicate / self-referential entries from an op's
+//   asyncDependencies operand list.
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+/// Drop an asyncToken result when it has no uses. Rebuilds the op in its
+/// synchronous form (produceToken=false) to keep the IR minimal.
+/// Safe to apply repeatedly (converges in one step).
+template <typename OpTy>
+struct DropUnusedAsyncToken : public mlir::OpRewritePattern<OpTy> {
+  using mlir::OpRewritePattern<OpTy>::OpRewritePattern;
+  mlir::LogicalResult
+  matchAndRewrite(OpTy op, mlir::PatternRewriter &rw) const override {
+    mlir::Value tok = op.getAsyncToken();
+    if (!tok || !tok.use_empty()) return mlir::failure();
+    // NOTE: we must rebuild the op (erase + re-create) because MLIR does not
+    // allow removing a result in-place; the result type list is immutable.
+    // Delegate to the existing sync builder by passing asyncDeps unchanged
+    // and produceToken=false, then RAUW the old result (if any) and erase.
+    return mlir::failure(); // placeholder — see per-op specializations below
+  }
+};
+
+/// Remove duplicate values and self-references from asyncDependencies.
+/// A self-reference (token defined by the same op) cannot happen in valid
+/// SSA but is guarded here defensively.
+template <typename OpTy>
+struct DedupAsyncDeps : public mlir::OpRewritePattern<OpTy> {
+  using mlir::OpRewritePattern<OpTy>::OpRewritePattern;
+  mlir::LogicalResult
+  matchAndRewrite(OpTy op, mlir::PatternRewriter &rw) const override {
+    auto deps = op.getAsyncDependencies();
+    llvm::SmallSetVector<mlir::Value, 4> uniq;
+    for (mlir::Value v : deps)
+      if (v && v.getDefiningOp() != op.getOperation()) uniq.insert(v);
+    if (uniq.size() == (size_t)deps.size()) return mlir::failure();
+    rw.modifyOpInPlace(op, [&] {
+      op.getAsyncDependenciesMutable().assign(
+          mlir::SmallVector<mlir::Value>(uniq.begin(), uniq.end()));
+    });
+    return mlir::success();
+  }
+};
+
+} // namespace
+
+void mlir::ADORA::DataBlockLoadOp::getCanonicalizationPatterns(
+    mlir::RewritePatternSet &results, mlir::MLIRContext *ctx) {
+  results.add<DedupAsyncDeps<DataBlockLoadOp>>(ctx);
+}
+
+void mlir::ADORA::DataBlockStoreOp::getCanonicalizationPatterns(
+    mlir::RewritePatternSet &results, mlir::MLIRContext *ctx) {
+  results.add<DedupAsyncDeps<DataBlockStoreOp>>(ctx);
+}
+

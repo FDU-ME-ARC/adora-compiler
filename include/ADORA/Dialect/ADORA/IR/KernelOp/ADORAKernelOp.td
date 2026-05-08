@@ -114,6 +114,7 @@ def ADORA_KernelOp : ADORA_Op<"kernel">,
 
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
+  let hasCanonicalizer = 1; // PR2: DedupAsyncDeps
 }
 
 

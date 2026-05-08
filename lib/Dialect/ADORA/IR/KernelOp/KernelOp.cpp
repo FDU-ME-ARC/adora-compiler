@@ -240,3 +240,32 @@ LogicalResult mlir::ADORA::specifyOneOperationToADORAKernel(Operation *op, std::
 
 #define GET_OP_CLASSES
 #include "ADORA/Dialect/ADORA/IR/KernelOp/ADORAKernelOp.cpp.inc"
+//===----------------------------------------------------------------------===//
+// PR2 commit C — Canonical pattern for KernelOp async deps cleanup.
+//===----------------------------------------------------------------------===//
+
+namespace {
+/// Remove duplicate values and self-references from asyncDependencies.
+struct DedupKernelAsyncDeps : public mlir::OpRewritePattern<mlir::ADORA::KernelOp> {
+  using OpRewritePattern::OpRewritePattern;
+  mlir::LogicalResult
+  matchAndRewrite(mlir::ADORA::KernelOp op,
+                  mlir::PatternRewriter &rw) const override {
+    auto deps = op.getAsyncDependencies();
+    llvm::SmallSetVector<mlir::Value, 4> uniq;
+    for (mlir::Value v : deps)
+      if (v && v.getDefiningOp() != op.getOperation()) uniq.insert(v);
+    if (uniq.size() == (size_t)deps.size()) return mlir::failure();
+    rw.modifyOpInPlace(op, [&] {
+      op.getAsyncDependenciesMutable().assign(
+          mlir::SmallVector<mlir::Value>(uniq.begin(), uniq.end()));
+    });
+    return mlir::success();
+  }
+};
+} // namespace
+
+void mlir::ADORA::KernelOp::getCanonicalizationPatterns(
+    mlir::RewritePatternSet &results, mlir::MLIRContext *ctx) {
+  results.add<DedupKernelAsyncDeps>(ctx);
+}

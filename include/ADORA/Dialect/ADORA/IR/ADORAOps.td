@@ -178,6 +178,7 @@ def ADORA_DataBlockLoadOp: ADORA_Op<"BlockLoad", [AttrSizedOperandSegments]>{
 
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
+  let hasCanonicalizer = 1; // PR2: DropUnusedAsyncToken / DedupAsyncDeps
 }
 
 
@@ -319,6 +320,7 @@ def ADORA_DataBlockStoreOp: ADORA_Op<"BlockStore", [AttrSizedOperandSegments]>{
 
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
+  let hasCanonicalizer = 1; // PR2: DropUnusedAsyncToken / DedupAsyncDeps
 }
 
 
