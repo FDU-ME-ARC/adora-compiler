@@ -19,6 +19,12 @@ if llvm_tools_dir:
 
 config.environment["PATH"] = os.pathsep.join(paths + [config.environment.get("PATH", "")])
 
+# ---- DFG opcode-name table (consumed via getenv in include/ADORA/Misc/DFG.h) ----
+_adora_src_root = os.path.normpath(os.path.join(os.path.dirname(__file__), os.pardir))
+_op_name_file = os.path.join(_adora_src_root, "lib", "DFG", "Documents", "GeneralOpName.txt")
+if os.path.isfile(_op_name_file):
+    config.environment["GeneralOpNameFile"] = _op_name_file
+
 # ---- Substitutions used by RUN lines ----
 if adora_tools_dir:
   config.substitutions.append(("%cgra-opt", os.path.join(adora_tools_dir, "cgra-opt")))
