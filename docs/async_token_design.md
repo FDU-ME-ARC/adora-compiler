@@ -714,6 +714,213 @@ PR6: loop-carry token（scf.for iter_args）
 
 ---
 
+## PR4 预研计划（Stream 分配 + 双缓冲 + 预取）
+
+### PR4-§0 目标与非目标
+
+**目标**
+
+| # | 目标 |
+|---|------|
+| 1 | 给独立任务分配不同 streamId，让 `signal/wait` 携带真实 stream 编号（而非全 0） |
+| 2 | 基于 token dep 图识别可并行的 BlockLoad 组，分配到不同 stream |
+| 3 | 双缓冲：相邻 tile 的 load 和 compute 重叠执行（prefetch tile N+1 while compute tile N） |
+| 4 | 对应 runtime 侧增加 `adoraStreamCreate/Destroy` 调用 |
+
+**非目标**
+
+- 不涉及 loop-carry token（`scf.for iter_args`），留给 PR6
+- 不修改 mapper 侧（mapper → compiler 对接留 P4.1/P2）
+- 不做 CUDA/HIP 真实 runtime 绑定（runtime 实现独立 PR）
+
+---
+
+### PR4-§1 核心概念：Stream 分配算法
+
+#### 依赖图模型
+
+PR2 之后，token dep 图已经是显式 SSA 图：
+
+```
+BlockLoad_A  →[tok_a]→  Kernel   →[tok_k]→  BlockStore
+BlockLoad_B  →[tok_b]→  Kernel
+```
+
+两个 BlockLoad 之间没有 token 边 → **可并行** → 分配到不同 stream。
+
+#### 分配规则
+
+```
+stream_id(op) =
+  如果 op 无 asyncDependencies（根节点）:
+    从空闲 stream 池分配一个新 stream
+  否则:
+    继承所有前驱 stream 中编号最小的那个
+    （同一 dep 链共享同一 stream，保证顺序语义）
+```
+
+独立子图 → 不同 stream；线性 dep 链 → 同一 stream。
+
+#### 示例（fan-in）
+
+```
+Load_A[stream=0]  →  Kernel[stream=0]  →  Store[stream=0]
+Load_B[stream=1]  ─────────────────────────────────────────^
+                                          (wait stream=0 AND stream=1)
+```
+
+Store 等待来自两个不同 stream 的 event，正确表达了 fan-in 依赖。
+
+---
+
+### PR4-§2 新增 Pass：`adora-assign-streams`
+
+**位置**：插在 `adora-lower-async-tokens` 之前。
+
+**完整 pipeline**：
+```
+adora-schedule-tasks   (emit-token=true)
+adora-assign-streams                      ← PR4 新增
+adora-lower-async-tokens
+adora-to-llvm-async-runtime
+```
+
+**Pass 逻辑**（伪代码）：
+
+```python
+def runOnOperation(func):
+    # Phase 1: 拓扑排序 async-capable ops
+    topo = topoSort(func, key=asyncDeps)
+
+    # Phase 2: 分配 stream
+    stream_map = {}   # op → stream_id
+    next_stream = 0
+    for op in topo:
+        deps = getAsyncDeps(op)
+        if not deps:
+            stream_map[op] = next_stream
+            next_stream += 1
+        else:
+            # 继承最小前驱 stream（保守策略）
+            stream_map[op] = min(stream_map[producer(tok)]
+                                 for tok in deps)
+
+    # Phase 3: 把 stream_id 写入 op 的 stream 属性
+    for op in topo:
+        op.setAttr("stream", stream_map[op])
+```
+
+**Pass 选项**：
+
+| 选项 | 默认 | 说明 |
+|------|------|------|
+| `max-streams` | `4` | stream 池上限，超出则回绕（round-robin） |
+| `strategy` | `"greedy"` | `greedy`（先来先得）或 `balanced`（负载均衡） |
+
+---
+
+### PR4-§3 StreamId 如何传播到 signal/wait
+
+目前 `LowerAsyncTokens.cpp` 中 `emitSignal/emitWait` 都硬编码 `stream=0`。
+
+PR4 修改方案：在 `adora-assign-streams` 把 streamId 写到 op 的 `stream` 属性后，`adora-lower-async-tokens` 的 `emitSignal/emitWait` 改为读 `op.getStream()` 而非硬编码。
+
+**改动范围**（`LowerAsyncTokens.cpp`）：
+
+```cpp
+// 修改前
+emitSignal(b, op->getLoc(), op, ev, /*stream=*/0);
+
+// 修改后
+int64_t stream = isAsyncCapable(op)
+    ? cast<DataBlockLoadOp>(op).getStream()   // 或 KernelOp / StoreOp
+    : 0;
+emitSignal(b, op->getLoc(), op, ev, stream);
+```
+
+---
+
+### PR4-§4 双缓冲（commit B）
+
+双缓冲基于 stream 分配之上，要求 loop trip count 已知（静态或通过 `affine.for` bounds 获取）。
+
+**触发条件**：
+- 外层 `affine.for` / `scf.for` 循环，循环体内有 `BlockLoad → Kernel → BlockStore` 链
+- trip count ≥ 2
+
+**变换**：
+
+```
+// Before (single-buffer):
+for i in 0..N:
+    load tile[i]   → compute tile[i] → store tile[i]
+
+// After (double-buffer, 2 streams):
+load tile[0]  on stream=0   // prologue
+for i in 0..N-1:
+    load tile[i+1] on stream=1   // prefetch
+    compute tile[i] on stream=0  // wait stream=0, compute
+    swap(stream=0, stream=1)
+store tile[N-1]  on stream=0    // epilogue
+```
+
+**实现策略**：新增 `adora-double-buffer` pass，依赖 `adora-assign-streams` 的输出。
+
+---
+
+### PR4-§5 Runtime 侧增量
+
+在 `runtime/adora_async_rt.h` 已预埋 `adoraStreamCreate/Destroy`。PR4 需要：
+
+1. 新增 `ADORA.stream.create` / `ADORA.stream.destroy` op（可选，也可直接在 pass 里 emit `llvm.call`）
+2. `adora-to-llvm-async-runtime` 扩展：把 stream 创建/销毁映射到 runtime call
+3. x86 stub 实现（单流 fallback：`adoraStreamCreate` 返回 0，`adoraStreamDestroy` no-op）
+
+---
+
+### PR4-§6 三个 commit 拆分
+
+| commit | 内容 | 验收 |
+|--------|------|------|
+| **A** | `adora-assign-streams` pass + Passes.td 注册 + cgra-opt 注册 | `FileCheck` 验证 streamId 非全 0 |
+| **B** | `LowerAsyncTokens` 读 stream 属性 + `adora-to-llvm-async-runtime` 扩展 stream create/destroy | e2e FileCheck 验证 `llvm.call @adoraEventRecord(%ptr, 1)` |
+| **C** | `adora-double-buffer` pass（可选，若 trip count 静态可知） | FileCheck 验证 prologue/epilogue 结构 |
+
+---
+
+### PR4-§7 测试矩阵
+
+| 测试文件 | pass 组合 | 验证点 |
+|----------|-----------|--------|
+| `assign_streams_linear.mlir` | `assign-streams` | 线性链全 stream=0 |
+| `assign_streams_parallel.mlir` | `assign-streams` | 两个独立 Load → stream=0, stream=1 |
+| `assign_streams_fanin.mlir` | `assign-streams` | fan-in：Store 等待 stream=0 和 stream=1 |
+| `lower_async_runtime_multistream.mlir` | 全三 pass | `@adoraEventRecord(%ev, 1 : i64)` 出现 |
+
+---
+
+### PR4-§8 验收清单
+
+- [ ] `adora-assign-streams` 注册到 cgra-opt，`--help` 可见
+- [ ] 线性链 FileCheck PASS：stream 全 0
+- [ ] 并行链 FileCheck PASS：两个独立 Load 分别 stream=0/1
+- [ ] fan-in FileCheck PASS：Store 的 wait 携带两个不同 stream
+- [ ] e2e pipeline（全三 pass）编译无错
+- [ ] 旧 PR3 lit test 无回归（`lower_async_tokens.mlir`, `lower_async_runtime.mlir`）
+
+---
+
+### PR4-§9 风险与缓解
+
+| 风险 | 缓解 |
+|------|------|
+| stream 数量超出硬件限制（如 CUDA 最大 32 stream） | `max-streams` 选项 + round-robin 回绕 |
+| 双缓冲要求 trip count 静态可知，动态循环无法处理 | commit C 设为可选，trip count 未知时跳过 |
+| `getStream()` 在 assign-streams 之前未初始化（默认 0）| assert / verifier 检查 stream 已被设置 |
+| stream create/destroy 插入位置错误导致 use-before-create | 在 func 入口插 create，func 出口插 destroy（类似 alloca 提升） |
+
+---
+
 ## 项目进度
 
 ### 已合入 commit 链
