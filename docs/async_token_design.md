@@ -836,3 +836,42 @@ emit-token=false → 与 PR1 baseline 字节一致（NFC）
 - `asyncDependencies/asyncToken` 字段就位
 - `Utility.h` accessor 供 PR3 lowering 使用
 - `emit-summary` 默认 on，PR3 稳定后退役
+
+
+---
+
+## 当前进展快照（归档节点）
+
+### 已合入 commit 链
+
+| commit | 内容 | 状态 |
+|---|---|---|
+| `0416fbf` | PR2 commit B: threadTokensOnDMAs + rebuild + lit | done |
+| `f6613a6` | PR2 commit C.1: DedupAsyncDeps canonical | done |
+| `13c68e2` | PR2 commit C.2: doc + cross-check | done |
+| `6afbd5b` | PR3 commit A: EventCreate/Destroy/Signal/Wait ops + runtime stub | done |
+| `44f8935` | PR3 commit B WIP: LowerAsyncTokens pass skeleton | WIP |
+
+### PR3 commit B 遗留问题（下个 session 继续）
+
+症状：`--adora-schedule-tasks=emit-token=true --adora-lower-async-tokens`
+后 IR 里看不到 ADORA.event.create / signal / wait / destroy。
+
+诊断顺序：
+1. grep EventCreateOp build/include/ADORA/Dialect/ADORA/IR/ADORAOps.h.inc
+   确认 op 类在生成代码里。
+2. 在 LowerAsyncTokensPass::runOnOperation() 开头加 llvm::errs() 确认 pass 真正运行。
+3. 在 Pass 1 walk lambda 里加 errs() 确认 asyncToken op 被发现。
+4. 若 EventCreateOp 不在 .inc，检查 ADORAOps.td guard 是否正确。
+5. 修完后补 lit test/cgra-opt/kernel/lower_async_tokens.mlir。
+
+### PR3 commit C 待做（B 修好后）
+
+- Pass adora-to-llvm-async-runtime：TokenType->llvm.ptr + 四 pattern
+- Lit lower_async_runtime.mlir
+- Integration: mlir-cpu-runner -shared-libs=libadora_async_rt.so
+
+### 预存在 bug（记录）
+
+adora-adjust-kernel-mem-footprint cmake 重配后崩溃（commit 6024e90 前已存在）。
+已绕过：kernel lit test 改用 generic-form 直接 IR 输入。
