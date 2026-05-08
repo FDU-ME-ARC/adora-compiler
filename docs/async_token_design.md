@@ -714,88 +714,46 @@ PR6: loop-carry token（scf.for iter_args）
 
 ---
 
-## 当前进展 & 下一步（Status · 供 review）
+## 项目进度
 
-### Build status
+### 已合入 commit 链
 
-- `cd build && ninja`：**48/48 目标全部通过**。
-- 仅剩既有 `-Wreorder` / `-Wdelete-non-virtual-dtor` 警告（与本 session 改动无关，mapper 历史遗留）。
-- 本 session 引入的 **编译单元改动** 仅 7 行（见下 §"已落地 diff"），不影响任何现有 lit / integration。
-
-### 已落地 diff（本 session 内）
-
-| 文件 | 改动 | 说明 |
+| commit | 内容 | 状态 |
 |---|---|---|
-| `docs/async_token_design.md` | +387 行 | 追加 PR2 §0–§13、PR3 §0–§11、全局状态机 |
-| `lib/Dialect/ADORA/Transforms/ScheduleAdoraTasks.cpp` | +7 行 | 在 `emitDepSummaryAttr` 之后给 enclosing module 打 `adora.scheduled` UnitAttr，作为 "post-schedule" 标记；PR1 语义保留 |
-| `test/cgra-opt/kernel/schedule_tasks_dep_summary.mlir` | +1 行 | 对应 `adora.scheduled` 的 CHECK 行 |
+| `14dbd2c` | PR1: TokenType + dep_summary 属性 | ✅ done |
+| `0416fbf` | PR2 commit B: threadTokensOnDMAs + rebuild + lit | ✅ done |
+| `f6613a6` | PR2 commit C.1: DedupAsyncDeps canonical pattern | ✅ done |
+| `13c68e2` | PR2 commit C.2: doc + cross-check stub | ✅ done |
+| `6afbd5b` | PR3 commit A: EventCreate/Destroy/Signal/Wait ops + runtime stub | ✅ done |
+| `c6a55ef` | PR3 commit B: fix lower-async-tokens 两 bug + linear lit | ✅ done |
+| `9bb04db` | PR3 commit B: fix rebuildKernelSync + fan-in lit | ✅ done |
+| `298d563` | PR3 commit C: adora-to-llvm-async-runtime pass + lit | ✅ done |
 
 ### 设计冻结点
 
-- `!ADORA.token` 类型（PR1 已合入 `14dbd2c`）。
-- `adora.dep_summary` ArrayAttr 作为 PR1 唯一数据通道；PR2 落地后降级为 debug artifact。
-- PR2 的三个 op 字段 schema（§A.1 表格）已冻结，不再争议。
-- PR3 runtime ABI（§PR3-§1）已冻结，`adoraEventCreate/Destroy/Record/Wait`。
+- `!ADORA.token` 类型已合入，printer/parser 正常。
+- `adora.dep_summary` 作为 PR1 数据通道；PR2 落地后降级为 debug artifact，PR4 后可退役。
+- PR2 三个 op 字段 schema（§A.1）已冻结。
+- PR3 runtime ABI 已冻结：`adoraEventCreate / Destroy / Record / Wait`，token 映射为 `!llvm.ptr`。
 
-### 下一步 action list（按执行顺序）
+### 未决问题
 
-#### Step 1 — PR2 commit A（TableGen + builder，NFC）
-1. `ADORATypes.td`：加 `def ADORA_Token`。
-2. `ADORAOps.td`：三个 op 尾部追加 `Variadic<ADORA_Token>:$asyncDependencies` 与 `Optional<ADORA_Token>:$asyncToken`；固定 `operandSegmentSizes` 顺序。
-3. `ADORAOps.cpp`：每个 op 两个 builder（兼容 / 异步）+ `verify()` 加自引用/重复检查。
-4. `Utility.h`：三个 inline accessor。
-5. 新增 `test/Dialect/ADORA/async_token_roundtrip.mlir`。
-6. `ninja && llvm-lit test/` 全量绿。
+1. **KernelOp custom print/parse**：`async [...]` / `-> !ADORA.token` 语法位置待 review（建议 body 之前，attributes 之后）。
+2. **dep_summary 退役时机**：PR4 完成后一个 release 周期再删，还是直接在 PR4 开头删？倾向前者。
+3. **`cross-check-summary-vs-token`**：不一致时 `signalPassFailure`（CI）还是 `emitWarning`（开发）？建议分两个 pass option 控制。
 
-**预期产物**：新字段存在但无人使用；所有旧 lit 零修改通过。
+### 下一步（PR4）
 
-#### Step 2 — PR2 commit B（pass threading）
-1. `TaskGraph.h`：`TaskNode` 基类加 `virtual Operation* getOperation()` / `setOperation(Operation*)`。
-2. `ScheduleAdoraTasks.cpp`：
-   - 新增 `rebuildAsyncLoad / Store / Kernel`（attr 白名单迁移 + RAUW + erase）。
-   - 新增 `threadTokensOnDMAs(TaskGraph*)`，插在 `analyzeDependencyInGraph` 之后。
-   - 新增 pass option `emit-token`（默认 on）、`emit-summary`（默认 on）。
-3. 新增 `test/Dialect/ADORA/schedule_cgra_tasks_tokens.mlir`。
-4. 回归：现有 `schedule_tasks_dep_summary.mlir` 在 `emit-token=0` 下字节一致。
+PR3 三个 commit 已全部落地，pipeline 打通：
 
-#### Step 3 — PR2 commit C（canonical + cross-check）
-1. `DropUnusedAsyncToken` / `DedupAsyncDeps` 两个 RewritePattern。
-2. Pass option `cross-check-summary-vs-token`（默认 off，CI 打开）。
-3. 本文档再追加 "PR2 合入总结" 小节。
+```
+adora-schedule-tasks   (emit-token=true)
+adora-lower-async-tokens
+adora-to-llvm-async-runtime
+```
 
-#### Step 4 — PR3 启动条件
-PR2 三个 commit 合入且 CI 稳定 1 周后，按本文档 PR3-§0~§11 开工：
-- commit A：runtime 桩 + dialect event/signal/wait op。
-- commit B：`adora-lower-async-tokens`。
-- commit C：`adora-to-llvm-async-runtime` + end-to-end integration。
-
-### 待 review 的悬而未决问题
-
-1. **KernelOp 自定义 print/parse**：目前 `adora.kernel` 走 C++ printer；`async [...]` / `-> !ADORA.token` 的语法位置需 review（建议在 `attributes { ... }` 之前，body 之后）。
-2. **dep_summary 何时退役**：PR2 全量替换后保留 1 个 release 周期，还是直接在 PR3 开头删？倾向前者。
-3. **Kernel 的 region 内部不碰 token**：确认 body 里的 block argument 不引入 token 形参（维持 `gpu.launch` 风格的外壳同步）。
-4. **`cross-check-summary-vs-token`**：开启时若不一致，`signalPassFailure` 还是 `emitWarning`？建议 CI-only 模式下 fail，开发时 warning。
-5. **Token 类型的 ABI 映射（PR3）**：`!llvm.ptr` vs 自定义 `!llvm.struct<"AdoraEvent", opaque>`——前者简单，后者便于 type-safe debug。倾向 `!llvm.ptr`。
-
-### 代码注释规范（实施期生效）
-
-见上一条 review 约定：
-- 全英文 `//` / `///`，只解释 **意图 / invariant / 原因**。
-- 文件顶部 2–4 行 block 说明模块定位。
-- `rebuildAsync*` 等函数用 `///` doxygen 注明 `@param / @return / 副作用（erase）`。
-- 算法主循环用 `// 1. / 2. / 3.` 分段。
-- 易错点用 `// NOTE:` / `// WHY:`，TODO 带 scope：`TODO(PR3): lower to adora.event.wait`。
-- TableGen 用 `let description = [{ ... }];` 为每个新 op 字段写语义段。
-
-### 里程碑时间表（建议）
-
-| 周 | 交付 |
-|---|---|
-| W1 | PR2 commit A merged（TableGen + builder，NFC） |
-| W2 | PR2 commit B merged（threading + lit） |
-| W3 | PR2 commit C merged（canonical + cross-check），文档追加合入总结 | ✅ 已完成 |
-| W4 | 灰度 1 周，CI 打开 `cross-check`，观察 integration |
-| W5 | PR3 commit A 启动 |
+PR4 目标：**stream 分配 + 双缓冲 + 预取**（基于 token dep 图）。
+具体见文档 PR3-§11 / 全局状态机节。
 
 ---
 
@@ -838,40 +796,4 @@ emit-token=false → 与 PR1 baseline 字节一致（NFC）
 - `emit-summary` 默认 on，PR3 稳定后退役
 
 
----
 
-## 当前进展快照（归档节点）
-
-### 已合入 commit 链
-
-| commit | 内容 | 状态 |
-|---|---|---|
-| `0416fbf` | PR2 commit B: threadTokensOnDMAs + rebuild + lit | done |
-| `f6613a6` | PR2 commit C.1: DedupAsyncDeps canonical | done |
-| `13c68e2` | PR2 commit C.2: doc + cross-check | done |
-| `6afbd5b` | PR3 commit A: EventCreate/Destroy/Signal/Wait ops + runtime stub | done |
-| `44f8935` | PR3 commit B WIP: LowerAsyncTokens pass skeleton | WIP |
-
-### PR3 commit B 遗留问题（下个 session 继续）
-
-症状：`--adora-schedule-tasks=emit-token=true --adora-lower-async-tokens`
-后 IR 里看不到 ADORA.event.create / signal / wait / destroy。
-
-诊断顺序：
-1. grep EventCreateOp build/include/ADORA/Dialect/ADORA/IR/ADORAOps.h.inc
-   确认 op 类在生成代码里。
-2. 在 LowerAsyncTokensPass::runOnOperation() 开头加 llvm::errs() 确认 pass 真正运行。
-3. 在 Pass 1 walk lambda 里加 errs() 确认 asyncToken op 被发现。
-4. 若 EventCreateOp 不在 .inc，检查 ADORAOps.td guard 是否正确。
-5. 修完后补 lit test/cgra-opt/kernel/lower_async_tokens.mlir。
-
-### PR3 commit C 待做（B 修好后）
-
-- Pass adora-to-llvm-async-runtime：TokenType->llvm.ptr + 四 pattern
-- Lit lower_async_runtime.mlir
-- Integration: mlir-cpu-runner -shared-libs=libadora_async_rt.so
-
-### 预存在 bug（记录）
-
-adora-adjust-kernel-mem-footprint cmake 重配后崩溃（commit 6024e90 前已存在）。
-已绕过：kernel lit test 改用 generic-form 直接 IR 输入。
