@@ -658,4 +658,37 @@ def DeinterleaverOp : ADORA_Op<"deinterleaver">{
   let hasVerifier = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// PR3 — Async event primitives
+//
+// Appear only after `adora-lower-async-tokens` runs. They replace SSA
+// !ADORA.token def-use chains with explicit runtime-level synchronisation.
+// Lowered to llvm.call @adoraEvent*/adoraEventRecord/adoraEventWait by
+// `adora-to-llvm-async-runtime` (PR3 commit C).
+//===----------------------------------------------------------------------===//
+
+def ADORA_EventCreateOp : ADORA_Op<"event.create", []> {
+  let summary = "Allocate an ADORA async event handle (!ADORA.token).";
+  let results = (outs ADORA_TokenType:$token);
+  let assemblyFormat = "attr-dict `->` type($token)";
+}
+
+def ADORA_EventDestroyOp : ADORA_Op<"event.destroy", []> {
+  let summary = "Release an ADORA async event handle.";
+  let arguments = (ins ADORA_TokenType:$token);
+  let assemblyFormat = "$token attr-dict `:` type($token)";
+}
+
+def ADORA_SignalOp : ADORA_Op<"signal", []> {
+  let summary = "Signal (record) an ADORA async event on a stream.";
+  let arguments = (ins ADORA_TokenType:$token, I32Attr:$stream);
+  let assemblyFormat = "$token `on` `stream` $stream attr-dict `:` type($token)";
+}
+
+def ADORA_WaitOp : ADORA_Op<"wait", []> {
+  let summary = "Wait for an ADORA async event on a stream before proceeding.";
+  let arguments = (ins ADORA_TokenType:$token, I32Attr:$stream);
+  let assemblyFormat = "$token `on` `stream` $stream attr-dict `:` type($token)";
+}
+
 #endif // ADORA_OPS

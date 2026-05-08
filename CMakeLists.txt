@@ -47,6 +47,7 @@ add_definitions(${LLVM_DEFINITIONS})
 add_subdirectory(include/ADORA)
 add_subdirectory(lib)
 add_subdirectory(mapper)
+add_subdirectory(runtime) # PR3: adora_async_rt shared/static library
 
 add_subdirectory(tools)
 add_subdirectory(test)
