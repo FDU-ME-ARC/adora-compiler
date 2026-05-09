@@ -6,6 +6,7 @@
 #include "emit/Emit.h"
 #include "emit/EmitCGRACall.h"
 #include "emit/OpVisitor.h"
+#include "ADORA/Dialect/ADORA/Utility/Utility.h"
 #include "mlir/Dialect/Affine/Utils.h"
 
 using namespace mlir;
@@ -49,6 +50,51 @@ public:
   CGRVOpEmitter(CGRACallEmitter& emitter, llvm::raw_ostream &os) : 
       _cgracallemitter(&emitter) ,_os(os) {setIndent(emitter.getIndent());}
   using MLIROpVisitorBase::visitOp;
+
+  /// Build op→slot mapping from a block. Call once before emitBlock iteration.
+  void buildOpSlots(mlir::Block &block) {
+    int slot = 0;
+    for (auto &op : block) {
+      if (mlir::isa<ADORA::DataBlockLoadOp,
+                    ADORA::DataBlockStoreOp,
+                    ADORA::KernelOp>(&op))
+        opSlot_[&op] = slot++;
+    }
+  }
+
+  /// Compute the hardware dep_flag string for a load/execute op based on its
+  /// asyncDependencies. Returns "0" for root ops (no deps), otherwise picks the
+  /// appropriate LD_DEP_* macro by counting how many task slots back the nearest
+  /// producer is.  Falls back to LD_DEP_ST_LAST_TASK when offset > 2.
+  std::string computeDepFlag(mlir::Operation *op,
+                              const std::string &noDepFlag = "0",
+                              const std::string &fallback = "LD_DEP_ST_LAST_TASK") {
+    auto deps = ADORA::getAsyncDeps(op);
+    if (deps.empty())
+      return noDepFlag;
+
+    auto myIt = opSlot_.find(op);
+    if (myIt == opSlot_.end()) return fallback;
+    int mySlot = myIt->second;
+
+    int maxProducerSlot = -1;
+    for (mlir::Value tok : deps) {
+      mlir::Operation *producer = tok.getDefiningOp();
+      if (!producer) continue;
+      auto it = opSlot_.find(producer);
+      if (it != opSlot_.end())
+        maxProducerSlot = std::max(maxProducerSlot, it->second);
+    }
+    if (maxProducerSlot < 0) return fallback;
+
+    int offset = mySlot - maxProducerSlot;
+    if (offset == 1) return "LD_DEP_ST_LAST_TASK";
+    if (offset == 2) return "LD_DEP_ST_LAST_SEC_TASK";
+    return fallback;  // offset > 2: conservative
+  }
+
+  // op* → task slot index (0-based, increments per Load/Store/KernelOp)
+  llvm::DenseMap<mlir::Operation*, int> opSlot_;
 
   /// Tool functions for emitting
   raw_ostream& indent(){return _os.indent(_indent);}
@@ -118,7 +164,8 @@ public:
               <<", 0x" << std::hex << spadbaddr 
               <<", " << std::dec << DMA_Len 
               <<", " << std::dec << fuse  /*fuse*/
-              <<", _task_id" /*Task id*/ << ", LD_DEP_ST_LAST_TASK" /*Task dep*/
+              <<", _task_id" /*Task id*/
+              << ", " << computeDepFlag(op.getOperation()) /*Task dep*/
               <<");\n";
       indent() << load_data.str();
       _os << "\n";
@@ -280,7 +327,8 @@ public:
               <<" + " << "spadoffset_" << BLid 
               <<", " << std::dec << DMA_Len 
               <<", " << std::dec << fuse  /*fuse*/
-              <<", _task_id" /*Task id*/ << ", LD_DEP_ST_LAST_TASK" /*Task dep*/
+              <<", _task_id" /*Task id*/
+              << ", " << computeDepFlag(op.getOperation()) /*Task dep*/
               <<");\n";
       indent() << load_data.str();
 
@@ -935,6 +983,9 @@ void CGRACallEmitter::emitFunctionHead(func::FuncOp &funcop, llvm::raw_ostream &
 void CGRACallEmitter::emitBlock(mlir::Block &block, llvm::raw_ostream &os) {
   // std::stringstream ostr;
   addIndent();
+
+  // Build op→slot mapping so visitOp can compute precise dep_flags.
+  opEmitter->buildOpSlots(block);
 
   opEmitter->setIndent(getIndent());
   block.dump();
