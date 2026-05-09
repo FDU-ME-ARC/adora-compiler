@@ -1,26 +1,8 @@
 Digraph G {
-BlockStore9[type = "BlockStoreNode", KernelName = "gemm_opt_1"];
-Kernel8[type = "KernelNode", KernelName = "gemm_opt_1"];
-LocalAlloc7[type = "LocalAllocNode", KernelName = "gemm_opt_1"];
-BlockLoad6[type = "BlockLoadNode", KernelName = "gemm_opt_1"];
-BlockStore3[type = "BlockStoreNode", KernelName = "gemm_opt_0"];
-Kernel2[type = "KernelNode", KernelName = "gemm_opt_0"];
-LocalAlloc1[type = "LocalAllocNode", KernelName = "gemm_opt_0+gemm_opt_1"];
-BlockLoad5[type = "BlockLoadNode", KernelName = "gemm_opt_1"];
-BlockLoad0[type = "BlockLoadNode", KernelName = "gemm_opt_0"];
-BlockLoad0 -> Kernel2[color = black, style = bold, deptype = Default, label = "deptype=Default"];
-BlockLoad0 -> BlockStore3[color = black, style = bold, deptype = Depend, label = "deptype=Depend"];
-BlockLoad0 -> BlockStore9[color = black, style = bold, deptype = Depend, label = "deptype=Depend"];
-LocalAlloc1 -> Kernel2[color = black, style = bold, deptype = Default, label = "deptype=Default"];
-LocalAlloc1 -> BlockStore3[color = blue, style = bold, deptype = SourceToStore, label = "deptype=SourceToStore"];
-LocalAlloc1 -> Kernel8[color = black, style = bold, deptype = Default, label = "deptype=Default"];
-LocalAlloc1 -> BlockStore9[color = black, style = bold, deptype = Depend, label = "deptype=Depend"];
-Kernel2 -> BlockStore3[color = black, style = bold, deptype = Default, label = "deptype=Default"];
-Kernel2 -> Kernel8[color = black, style = bold, deptype = Depend, label = "deptype=Depend"];
-BlockStore3 -> BlockStore9[color = black, style = bold, deptype = Depend, label = "deptype=Depend"];
-BlockLoad5 -> Kernel8[color = black, style = bold, deptype = Default, label = "deptype=Default"];
-BlockLoad6 -> Kernel8[color = black, style = bold, deptype = Default, label = "deptype=Default"];
-LocalAlloc7 -> Kernel8[color = black, style = bold, deptype = Default, label = "deptype=Default"];
-LocalAlloc7 -> BlockStore9[color = blue, style = bold, deptype = SourceToStore, label = "deptype=SourceToStore"];
-Kernel8 -> BlockStore9[color = black, style = bold, deptype = Default, label = "deptype=Default"];
+BlockStore2[type = "BlockStoreNode", KernelName = "chain_0"];
+Kernel1[type = "KernelNode", KernelName = "chain_0"];
+BlockLoad0[type = "BlockLoadNode"];
+BlockLoad0 -> Kernel1[color = black, style = bold, deptype = Default, label = "deptype=Default"];
+BlockLoad0 -> BlockStore2[color = black, style = bold, deptype = Depend, label = "deptype=Depend"];
+Kernel1 -> BlockStore2[color = black, style = bold, deptype = Default, label = "deptype=Default"];
 }
