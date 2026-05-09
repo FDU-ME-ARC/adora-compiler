@@ -56,6 +56,14 @@ static Value emitEventCreate(OpBuilder &b, Location loc,
   return b.create<EventCreateOp>(loc, tokTy).getToken();
 }
 
+/// Read the stream ID written by adora-assign-streams; fall back to
+/// `fallback` when the attribute is absent (pass ran without assign-streams).
+static int32_t getOpStream(Operation *op, int32_t fallback) {
+  if (auto a = op->getAttrOfType<IntegerAttr>("stream"))
+    return static_cast<int32_t>(a.getInt());
+  return fallback;
+}
+
 /// Insert adora.signal after `insertAfter`.
 static void emitSignal(OpBuilder &b, Location loc,
                        Operation *insertAfter, Value event, int32_t stream) {
@@ -187,7 +195,7 @@ void LowerAsyncTokensPass::runOnOperation() {
     if (!tok) return;
     Value ev = emitEventCreate(b, op->getLoc(), op);
     // signal inserted after op; but we haven't rebuilt yet so op still valid
-    emitSignal(b, op->getLoc(), op, ev, stream);
+    emitSignal(b, op->getLoc(), op, ev, getOpStream(op, stream));
     tokenToEvent[tok] = ev;
   });
 
@@ -220,7 +228,7 @@ void LowerAsyncTokensPass::runOnOperation() {
       if (it != tokenToEvent.end()) eventsToWait.insert(it->second);
     }
     for (Value ev : eventsToWait)
-      emitWait(b, op->getLoc(), op, ev, stream);
+      emitWait(b, op->getLoc(), op, ev, getOpStream(op, stream));
   });
 
   // Pass 3: rebuild all async ops to their sync form.
