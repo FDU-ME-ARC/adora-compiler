@@ -1,5 +1,6 @@
 add_mlir_dialect_library(MLIRADORATransforms
   AssignStreams.cpp
+  BufferReuse.cpp
   DependencyAnalysis.cpp
   DFGgenPass.cpp
   LowerAsyncTokens.cpp
@@ -27,8 +28,8 @@ add_mlir_dialect_library(MLIRADORATransforms
   MLIRAffineDialect
   MLIRADORATransformsUtility
 
+  MLIRTransforms
   # MLIRPass
-  # MLIRTransforms
   # MLIRSCFDialect
   # MLIRAffineToStandard
   )

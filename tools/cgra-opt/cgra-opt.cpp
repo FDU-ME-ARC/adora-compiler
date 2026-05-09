@@ -127,6 +127,7 @@ int main(int argc, char **argv) {
   mlir::ADORA::registerAffineLoopReorder();
   mlir::ADORA::registerScheduleADORATasks();
   mlir::ADORA::registerAssignStreamsPass();
+  mlir::ADORA::registerBufferReusePass();
   mlir::ADORA::registerLowerAsyncTokensPass();
   mlir::ADORA::registerADORAAsyncRuntimeToLLVMPass();
 

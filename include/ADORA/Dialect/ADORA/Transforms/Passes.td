@@ -430,6 +430,24 @@ def AssignStreams : Pass<"adora-assign-streams", "func::FuncOp"> {
 }
 
 //===----------------------------------------------------------------------===//
+// PR4 commit E — Buffer reuse: eliminate redundant BlockStore/BlockLoad pairs
+//===----------------------------------------------------------------------===//
+def BufferReuse : Pass<"adora-buffer-reuse", "func::FuncOp"> {
+  let summary = "Eliminate redundant BlockStore/BlockLoad pairs for on-chip buffer reuse.";
+  let description = [{
+    After adora-schedule-tasks has threaded !ADORA.token deps, any
+    BlockLoad async [%tok] that reads back exactly the same block that
+    the token-producing BlockStore just wrote can be replaced with the
+    BlockStore's source (typically a LocalMemAlloc).  The BlockLoad is
+    erased; the data stays on-chip and flows directly to the consumer.
+
+    Must run after adora-schedule-tasks="emit-token=true" and before
+    adora-lower-async-tokens (which erases asyncDependencies).
+  }];
+  let constructor = "mlir::ADORA::createBufferReusePass()";
+}
+
+//===----------------------------------------------------------------------===//
 // PR3 commit B — Lower !ADORA.token def-use chains to explicit event ops
 //===----------------------------------------------------------------------===//
 def LowerAsyncTokens : Pass<"adora-lower-async-tokens", "func::FuncOp"> {
