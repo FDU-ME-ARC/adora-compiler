@@ -1002,5 +1002,69 @@ emit-token=false → 与 PR1 baseline 字节一致（NFC）
 - `Utility.h` accessor 供 PR3 lowering 使用
 - `emit-summary` 默认 on，PR3 稳定后退役
 
+---
 
+## PR4 落地状态（截至 2026-05-09）
+
+### 已完成 commits（branch: jhlou/scheduletasks）
+
+| commit | 内容 |
+|---|---|
+| `85188a9` | PR4-A: `adora-assign-streams` pass + 3 lit tests |
+| `a2bcda0` | PR4-B: `lower-async-tokens` 读 stream attr，signal/wait 携带真实 stream ID |
+| `9a79552` | PR4-C: 修复 `schedule-tasks` 跨 kernel RAW token 生成（3mm fan-in 验证） |
+
+### 测试状态（8/8 PASS）
+```
+lower_async_tokens, lower_async_tokens_fanin, lower_async_runtime
+assign_streams_linear, assign_streams_parallel, assign_streams_fanin
+lower_async_streams_parallel, schedule_3mm
+```
+
+---
+
+## 下一步计划
+
+### PR4-D：mapper emit 层消费 async token dep（EmitCGRACall）
+
+**目标**：`load_data(...)` 的 dep_flag 参数从硬编码 `LD_DEP_ST_LAST_TASK` 变为按 token 依赖精确计算。
+
+**输入 IR 要求**：mapper 接收的 IR 必须已经过 `adora-schedule-tasks="emit-token=true"`，使 `BlockLoad.asyncDependencies` 携带正确 token。
+
+**改动文件**：`mapper/src/emit/EmitCGRACall.cpp`、`mapper/include/emit/EmitCGRACall.h`
+
+**实现步骤**：
+
+1. 在 `CGRACallEmitter` 类中新增 `opTaskSlot_`（`DenseMap<Operation*, int>`）
+
+2. 在 `emitFunctionHead` 进入 `emitBlock` 前预扫描，给每个 DataBlockLoad/Store/KernelOp 分配 task_slot 序号
+
+3. 新增 `computeDepFlag(op, taskSlot, defaultSlot)` helper：
+   - `getAsyncDeps(op).empty()` → 返回 `"0"`（无依赖，不等待）
+   - 有依赖 → 找最近前驱 slot，offset=1 → `LD_DEP_ST_LAST_TASK`，offset=2 → `LD_DEP_ST_LAST_SEC_TASK`，>2 → 保守降级
+
+4. 修改 `visitOp(DataBlockLoadOp)` 和 execute 处的硬编码 dep_flag
+
+**验证**：用 `schedule_3mm.mlir` 经过 `assign-streams` 后送入 mapper，检查 kernel_3mm_0/1 的 `load_data` 参数为 `0`，kernel_3mm_2 的为 `LD_DEP_ST_LAST_TASK`。
+
+---
+
+### PR4-E：buffer reuse pass（独立）
+
+`RemoveRedundantBlockStoreLoadPair` 的原始 buffer reuse 功能（BlockLoad 替换为 LocalMemAlloc 直通，跨 kernel 共享 on-chip buffer）已被暂时移除。
+
+需要在 `threadTokensOnDMAs` 之后，作为独立 pass 实现：
+- 找到已有 `async [token]` dep 的 BlockLoad，其 token 来自 BlockStore
+- 把 BlockLoad result 替换为 BlockStore source（LocalMemAlloc）
+- 删除多余 BlockLoad
+
+---
+
+### PR4-F：EmitPytest 并发 await
+
+当前 Python 测试代码全串行 `await aux_stream(...)`。利用 token dep 图识别独立 task，改为：
+- 独立 task → `asyncio.create_task(aux_stream(stream=streamN, ...))`
+- 有依赖的 task → `await asyncio.gather(*[pending[dep] for dep in deps])` 再发射
+
+stream ID 来自 `adora-assign-streams` 写的 `stream : i32` 属性。
 
