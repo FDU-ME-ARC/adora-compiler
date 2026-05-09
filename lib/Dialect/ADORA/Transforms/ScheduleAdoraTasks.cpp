@@ -238,8 +238,16 @@ void analyzeDependencyInGraph(TaskGraph* graph){
         continue;
       }
 
-      // RAW (store_i -> load_j) intentionally skipped here — already wired by
-      // generateTaskGraphFromBlock through SSA use-def.
+      // --- RAW: store_i -> load_j (store's target = load's original memref) ---
+      if (isa<BlockStoreNode>(ni) && isa<BlockLoadNode>(nj)) {
+        auto sa = cast<BlockStoreNode>(ni)->getDataBlockStoreOp();
+        auto lb = cast<BlockLoadNode>(nj)->getDataBlockLoadOp();
+        if (checkDependencyBetweenBlockStoreAndBlockLoad(sa, lb)) {
+          bool exact = AccessSameDataBlock(sa, lb);
+          emit(ni, nj, DataBlockDepKind::RAW, exact);
+        }
+        continue;
+      }
     }
   }
 }
@@ -528,44 +536,31 @@ verifyTokensMatchSummary(TaskGraph *graph) {
 /// If such pairs are found, it connects the store node's kernel to the load node's
 /// kernel, replaces the load node with the source node of the store, and schedules
 /// the load node for deletion to optimize memory access and reduce redundancy.
+/// When a BlockStore writes to a global memref and a later BlockLoad reads
+/// the same block, the data can stay on-chip.  Wire the producing kernel
+/// directly to the consuming kernel so threadTokensOnDMAs emits a token
+/// on the BlockStore and threads it into the BlockLoad's asyncDependencies.
+/// The BlockLoad MLIR op is intentionally left in place; threadTokensOnDMAs
+/// will rebuild it as an async op (with the token dep) and erase the original.
 void RemoveRedundantBlockStoreLoadPair(TaskGraph* graph){
-  std::vector<TaskNode*> to_delete;
   std::vector<TaskNode*> nodes = graph->getAllNodes();
   for (TaskNode* node : nodes) {
-    // dumpNode(node);
-    if(isa<BlockLoadNode>(node)){
-      /// Check each block store input to determine whether they access the same memory space.
-      for(auto innode : node->getInNodes()){
-        if(isa<BlockStoreNode>(innode)){
-          BlockStoreNode* storenode = dyn_cast<BlockStoreNode>(innode);
-          ADORA::DataBlockStoreOp store = storenode->getDataBlockStoreOp();
-          BlockLoadNode* loadnode = dyn_cast<BlockLoadNode>(node);
-          ADORA::DataBlockLoadOp load = loadnode->getDataBlockLoadOp();
-          
-          if(store.getTargetMemref() == load.getOriginalMemref()
-            && AccessSameDataBlock(store, load)){
-            mlir::Operation* source = GetTheSourceOperationOfBlockStore(store);
-            TaskNode* sourcenode = graph->getNode(source);
-            assert(sourcenode != nullptr);
+    if (!isa<BlockLoadNode>(node)) continue;
+    for (auto innode : node->getInNodes()) {
+      if (!isa<BlockStoreNode>(innode)) continue;
+      BlockStoreNode* storenode = dyn_cast<BlockStoreNode>(innode);
+      BlockLoadNode*  loadnode  = dyn_cast<BlockLoadNode>(node);
+      ADORA::DataBlockStoreOp store = storenode->getDataBlockStoreOp();
+      ADORA::DataBlockLoadOp  load  = loadnode->getDataBlockLoadOp();
 
-            //// connect storenode's kernel to loadnode's kernel
-            KernelNode* sourcekernel = storenode->getKernelNode();
-            for(auto sinkkernel : loadnode->getKernelNodes()){
-              addConnectionBetweenTwoNode(sourcekernel, sinkkernel, /*dep=*/depType::Depend);
-            }
+      if (!AccessSameDataBlock(store, load)) continue;
 
-            //// replace loadnode with sourcenode
-            loadnode->ReplaceAllUsesWith(sourcenode);
-
-            //// TODO: remove store? don't.
-            to_delete.push_back(dyn_cast<TaskNode>(loadnode));
-          }
-        }
-      }
+      // Connect the producing kernel to the consuming kernel at the graph
+      // level so the downstream scheduler sees the inter-kernel dependency.
+      KernelNode* sourcekernel = storenode->getKernelNode();
+      for (auto sinkkernel : loadnode->getKernelNodes())
+        addConnectionBetweenTwoNode(sourcekernel, sinkkernel, depType::Depend);
     }
-  }
-  for(auto node : to_delete){
-    graph->DeleteNodeOperation(node);
   }
 }
 
