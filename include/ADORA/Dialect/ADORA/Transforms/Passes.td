@@ -404,6 +404,32 @@ def ScheduleADORATasks: Pass<"adora-schedule-tasks", "func::FuncOp"> {
 }
 
 //===----------------------------------------------------------------------===//
+// PR4 commit A — Assign stream IDs to async-capable ops
+//===----------------------------------------------------------------------===//
+def AssignStreams : Pass<"adora-assign-streams", "func::FuncOp"> {
+  let summary = "Assign stream IDs to async-capable ops in the token dep graph.";
+  let description = [{
+    Topologically sorts async-capable ops (DataBlockLoad/Store, Kernel) by their
+    asyncDependencies SSA edges, then greedily assigns a stream ID to each op:
+      - Root ops (no asyncDependencies) receive the next available stream ID
+        (round-robin, wrapping at max-streams).
+      - Dependent ops inherit the minimum stream ID among their predecessors.
+
+    The assigned stream ID is written as a `stream : i32` attribute on each op.
+    This annotation is consumed by adora-lower-async-tokens (PR4 commit B) to
+    emit adora.signal/wait on the correct hardware stream.
+
+    Must run before adora-lower-async-tokens (which strips asyncToken results
+    and asyncDependencies operands).
+  }];
+  let constructor = "mlir::ADORA::createAssignStreamsPass()";
+  let options = [
+    Option<"maxStreams", "max-streams", "unsigned", /*default=*/"4",
+           "Maximum number of distinct streams to allocate (default: 4).">
+  ];
+}
+
+//===----------------------------------------------------------------------===//
 // PR3 commit B — Lower !ADORA.token def-use chains to explicit event ops
 //===----------------------------------------------------------------------===//
 def LowerAsyncTokens : Pass<"adora-lower-async-tokens", "func::FuncOp"> {

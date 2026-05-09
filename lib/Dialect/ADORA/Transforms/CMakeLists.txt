@@ -1,4 +1,5 @@
 add_mlir_dialect_library(MLIRADORATransforms
+  AssignStreams.cpp
   DependencyAnalysis.cpp
   DFGgenPass.cpp
   LowerAsyncTokens.cpp
