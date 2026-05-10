@@ -662,6 +662,45 @@ void RemoveRedundantBlockLoads(TaskGraph* graph){
 
 
 
+/// @brief Detect whether an AffineForOp body has a loop-carried RAW dep:
+///        a BlockStore writes a memref that a BlockLoad in the SAME body reads.
+///        This is the tk-loop C-tile pattern: Store(C[ti,tj]) → Load(C[ti,tj]).
+///
+/// @return {storeOp, loadOp} pair if found, else {nullptr, nullptr}
+static std::pair<ADORA::DataBlockStoreOp, ADORA::DataBlockLoadOp>
+findLoopCarriedStoreLoadPair(mlir::Block *body) {
+  llvm::SmallVector<ADORA::DataBlockStoreOp> stores;
+  llvm::SmallVector<ADORA::DataBlockLoadOp>  loads;
+  for (auto &op : *body) {
+    if (auto s = dyn_cast<ADORA::DataBlockStoreOp>(&op)) stores.push_back(s);
+    if (auto l = dyn_cast<ADORA::DataBlockLoadOp>(&op))  loads.push_back(l);
+  }
+  for (auto store : stores)
+    for (auto load : loads)
+      if (checkDependencyBetweenBlockStoreAndBlockLoad(store, load))
+        return {store, load};
+  return {nullptr, nullptr};
+}
+
+/// @brief PR6 TODO — wire loop-carried token yield (affine.for → scf.for iter_args).
+///
+/// This function will convert an AffineForOp with a loop-carried Store→Load
+/// RAW dep into a scf.for with iter_args(!ADORA.token), threading the store
+/// token from iteration tk to the load in iteration tk+1.
+///
+/// Currently emits a diagnostic note and returns without transforming.
+/// Full implementation tracked in PR6.
+static void wireLoopCarriedToken(AffineForOp forop,
+                                  ADORA::DataBlockStoreOp store,
+                                  ADORA::DataBlockLoadOp  load) {
+  llvm::errs() << "[PR6-TODO] loop-carried token detected in "
+               << forop->getParentOp()->getName()
+               << " — affine.for → scf.for iter_args conversion not yet implemented.\n"
+               << "  Store: "; store.dump();
+  llvm::errs() << "  Load:  "; load.dump();
+  llvm::errs() << "  Cross-iteration token yield will be implemented in PR6.\n";
+}
+
 /// @brief A wrapper
 /// @param func 
 void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
@@ -706,6 +745,18 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
     // Step D: thread SSA !ADORA.token along dep edges
     if (emitTokens)
       threadTokensOnDMAs(graph);
+
+    // Step D2: wire loop-carried token yield for affine.for bodies
+    // with a Store→Load loop-carried RAW dep on the same memref tile.
+    if (emitTokens) {
+      if (auto *parentOp = block->getParentOp()) {
+        if (auto forop = dyn_cast<AffineForOp>(parentOp)) {
+          auto [store, load] = findLoopCarriedStoreLoadPair(block);
+          if (store && load)
+            wireLoopCarriedToken(forop, store, load);
+        }
+      }
+    }
 
     // Step E: cross-check tokens vs dep_summary (CI only)
     if (emitTokens && crossCheck) {
