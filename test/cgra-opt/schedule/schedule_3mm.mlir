@@ -9,19 +9,34 @@
 // kernel_3mm_0 and kernel_3mm_1 are independent root tasks.
 // kernel_3mm_2 reads %arg0 and %arg3 → RAW deps on both stores.
 //
-// RUN: cgra-opt %s --adora-schedule-tasks="emit-token=true" | FileCheck %s
+// After RemoveRedundantBlockStoreLoadPair:
+//   kernel_3mm_2's BlockLoad(%arg0) and BlockLoad(%arg3) are ELIMINATED —
+//   the on-chip LocalMemAlloc buffers from kernel_3mm_0/1 are reused directly.
+//   kernel_3mm_2's kernel receives tokens from kernel_3mm_0/1 BlockStores via
+//   the kernel→kernel dep wired by RemoveRedundantBlockStoreLoadPair.
+//
+// RUN: %cgra-opt %s --adora-schedule-tasks="emit-token=true" 2>/dev/null \
+// RUN:   | FileCheck %s
 
-// Root task stores produce tokens:
-// CHECK: ADORA.BlockStore {{.*}}, %arg0 {{.*}} -> !ADORA.token
-// CHECK: ADORA.BlockStore {{.*}}, %arg3 {{.*}} -> !ADORA.token
+// kernel_3mm_0: root loads produce tokens, kernel waits, store waits kernel.
+// CHECK: ADORA.BlockLoad %arg1 {{.*}} -> !ADORA.token
+// CHECK: ADORA.BlockLoad %arg2 {{.*}} -> !ADORA.token
+// CHECK: ADORA.kernel async [%{{.*}}, %{{.*}}]
+// CHECK: ADORA.BlockStore async [%{{.*}}] {{.*}}, %arg0
 
-// kernel_3mm_2 loads consume the tokens (RAW dep):
-// CHECK: ADORA.BlockLoad async [%{{[0-9]+}}] %arg0
-// CHECK: ADORA.BlockLoad async [%{{[0-9]+}}] %arg3
+// kernel_3mm_1: same structure, independent.
+// CHECK: ADORA.BlockLoad %arg4 {{.*}} -> !ADORA.token
+// CHECK: ADORA.BlockLoad %arg5 {{.*}} -> !ADORA.token
+// CHECK: ADORA.kernel async [%{{.*}}, %{{.*}}]
+// CHECK: ADORA.BlockStore async [%{{.*}}] {{.*}}, %arg3
 
-// Root task loads have NO async deps:
-// CHECK-NOT: ADORA.BlockLoad async {{.*}} %arg1
-// CHECK-NOT: ADORA.BlockLoad async {{.*}} %arg4
+// kernel_3mm_2: BlockLoad(%arg0) and BlockLoad(%arg3) are REMOVED (buffer reuse).
+// Redundant loads from global memory are eliminated.
+// CHECK-NOT: ADORA.BlockLoad %arg0
+// CHECK-NOT: ADORA.BlockLoad %arg3
+// kernel_3mm_2's kernel still executes (with on-chip buffers as inputs).
+// CHECK: ADORA.kernel async
+// CHECK: ADORA.BlockStore async [%{{.*}}] {{.*}}, %arg6
 
 module {
   func.func @kernel_3mm(%arg0: memref<?x18xf32>, %arg1: memref<?x20xf32>,

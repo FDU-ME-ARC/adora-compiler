@@ -614,6 +614,11 @@ verifyTokensMatchSummary(TaskGraph *graph) {
 /// will rebuild it as an async op (with the token dep) and erase the original.
 void RemoveRedundantBlockStoreLoadPair(TaskGraph* graph){
   std::vector<TaskNode*> nodes = graph->getAllNodes();
+
+  // Collect redundant loads to erase in a second pass (avoids iterator
+  // invalidation and ensures replaceAllUsesWith happens before erase).
+  llvm::SmallVector<std::pair<BlockLoadNode*, mlir::Value>> toReplace;
+
   for (TaskNode* node : nodes) {
     if (!isa<BlockLoadNode>(node)) continue;
     for (auto innode : node->getInNodes()) {
@@ -625,12 +630,28 @@ void RemoveRedundantBlockStoreLoadPair(TaskGraph* graph){
 
       if (!AccessSameDataBlock(store, load)) continue;
 
-      // Connect the producing kernel to the consuming kernel at the graph
-      // level so the downstream scheduler sees the inter-kernel dependency.
+      // Wire producing kernel → consuming kernel so the scheduler sees
+      // the inter-kernel dependency even after the load is removed.
       KernelNode* sourcekernel = storenode->getKernelNode();
       for (auto sinkkernel : loadnode->getKernelNodes())
         addConnectionBetweenTwoNode(sourcekernel, sinkkernel, depType::Depend);
+
+      // The data already lives in the on-chip buffer (store.SourceMemref).
+      // Schedule this BlockLoad for removal: replace its result with the
+      // on-chip buffer BEFORE erasing, so downstream users stay valid.
+      toReplace.push_back({loadnode, store.getSourceMemref()});
     }
+  }
+
+  // Second pass: replaceAllUsesWith then erase (order matters!).
+  for (auto &[loadnode, onChipBuf] : toReplace) {
+    ADORA::DataBlockLoadOp load = loadnode->getDataBlockLoadOp();
+    // Replace all downstream uses of the load result with the on-chip buffer.
+    // MUST happen before erase — otherwise downstream ops hold dangling SSA refs.
+    load.getResult().replaceAllUsesWith(onChipBuf);
+    // Erase the redundant BlockLoad from the MLIR IR.
+    // (TaskGraph is per-block and short-lived; no need to remove from _nodes.)
+    load.erase();
   }
 }
 
