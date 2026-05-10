@@ -1,8 +1,0 @@
-Digraph G {
-BlockStore2[type = "BlockStoreNode", KernelName = "chain_0"];
-Kernel1[type = "KernelNode", KernelName = "chain_0"];
-BlockLoad0[type = "BlockLoadNode"];
-BlockLoad0 -> Kernel1[color = black, style = bold, deptype = Default, label = "deptype=Default"];
-BlockLoad0 -> BlockStore2[color = black, style = bold, deptype = Depend, label = "deptype=Depend"];
-Kernel1 -> BlockStore2[color = black, style = bold, deptype = Default, label = "deptype=Default"];
-}
