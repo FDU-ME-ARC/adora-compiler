@@ -79,7 +79,7 @@ bool ScheduleADORATasksPass::BlockContainsKernelOp(mlir::Block* b){
 }
 
 void generateTaskGraphFromBlock(TaskGraph* graph, mlir::Block* block){
-  graph->setParentOp(block->getParentOp());
+
   /// validloads : data block which has already been loaded to on-chip memory
   std::map<ADORA::LocalMemAllocOp, LocalAllocNode*> validallocs; 
 
@@ -422,6 +422,76 @@ rebuildAsyncKernel(ADORA::KernelOp old, mlir::ValueRange deps,
 ///   2. Sort participating ops by lexical order (PR1 guarantees src->dst
 ///      satisfies isBeforeInBlock, so the edges form a DAG).
 ///   3. For each op in order, rebuild it as async: wire the deduplicated
+/// @brief Dump the async-token dep chain as a Graphviz DOT file.
+///
+/// Must be called AFTER threadTokensOnDMAs — reads the SSA !ADORA.token
+/// def-use chain directly from the IR rather than from the TaskGraph.
+/// Each node is a BlockLoad/BlockStore/Kernel op; each edge is one token arc.
+/// Node labels include the op type and the `Id` attribute when present.
+///
+/// @param func     the function to inspect
+/// @param path     output file path (caller ensures non-empty)
+static void dumpTokenGraphAsDot(func::FuncOp func, llvm::StringRef path) {
+  std::error_code ec;
+  llvm::raw_fd_ostream ofs(path, ec);
+  if (ec) {
+    llvm::errs() << "[dump-token-graph] cannot open " << path
+                 << ": " << ec.message() << "\n";
+    return;
+  }
+
+  // Helper: readable label for an op.
+  auto label = [](mlir::Operation *op) -> std::string {
+    std::string s = op->getName().getStringRef().str();
+    if (auto id = op->getAttrOfType<mlir::StringAttr>("Id"))
+      s += "\\nId=" + id.getValue().str();
+    if (auto kn = op->getAttrOfType<mlir::StringAttr>("KernelName"))
+      s += "\\n" + kn.getValue().str();
+    // stream id if assigned
+    if (auto st = op->getAttrOfType<mlir::IntegerAttr>("stream"))
+      s += "\\nstream=" + std::to_string(st.getInt());
+    return s;
+  };
+
+  // Collect all token-producing ops and their users.
+  llvm::DenseSet<mlir::Operation *> seen;
+  llvm::SmallVector<std::pair<mlir::Operation *, mlir::Operation *>> edges;
+
+  func.walk([&](mlir::Operation *op) {
+    mlir::Value tok = ADORA::getAsyncTokenOrNull(op);
+    if (!tok) return;
+    seen.insert(op);
+    for (mlir::Operation *user : tok.getUsers()) {
+      seen.insert(user);
+      edges.push_back({op, user});
+    }
+  });
+
+  ofs << "digraph token_graph {\n";
+  ofs << "  rankdir=LR;\n";
+  ofs << "  node [shape=box, fontsize=10];\n";
+
+  // Nodes
+  for (mlir::Operation *op : seen) {
+    ofs << "  \"" << (void *)op << "\" [label=\"" << label(op) << "\"";
+    if (isa<ADORA::KernelOp>(op))
+      ofs << ", style=filled, fillcolor=lightyellow";
+    else if (isa<ADORA::DataBlockLoadOp>(op))
+      ofs << ", style=filled, fillcolor=lightblue";
+    else if (isa<ADORA::DataBlockStoreOp>(op))
+      ofs << ", style=filled, fillcolor=lightcoral";
+    ofs << "];\n";
+  }
+
+  // Edges
+  for (auto &[src, dst] : edges)
+    ofs << "  \"" << (void *)src << "\" -> \"" << (void *)dst
+        << "\" [label=\"token\", color=darkgreen];\n";
+
+  ofs << "}\n";
+  llvm::errs() << "[dump-token-graph] written to " << path << "\n";
+}
+
 ///      tokens of its predecessors, produce a new token iff the op has any
 ///      outgoing edge.
 ///   4. Patch TaskNode back-pointers via oldToNew so graph metadata stays
@@ -645,7 +715,9 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
   if (auto module = func->getParentOfType<ModuleOp>())
     module->setAttr("adora.scheduled", UnitAttr::get(func.getContext()));
 
-
+  // Optional: dump token dep graph as DOT (--dump-token-graph=<path>).
+  if (emitTokens && !tokenGraphPath.empty())
+    dumpTokenGraphAsDot(func, tokenGraphPath);
 }
 
 void ScheduleADORATasksPass::runOnOperation()

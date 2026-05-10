@@ -399,7 +399,13 @@ def ScheduleADORATasks: Pass<"adora-schedule-tasks", "func::FuncOp"> {
     Option<"crossCheck", "cross-check-summary-vs-token", "bool",
            /*default=*/"false",
            "Assert that the SSA token edges match the dep_summary edges. "
-           "CI-only; fails the pass on mismatch.">
+           "CI-only; fails the pass on mismatch.">,
+    Option<"tokenGraphPath", "dump-token-graph", "std::string",
+           /*default=*/"\"\"",
+           "If non-empty, write a Graphviz DOT file of the async-token dep "
+           "chain to this path after threading.  Nodes are BlockLoad/Store/Kernel "
+           "ops; edges are the SSA !ADORA.token def-use arcs.  Requires "
+           "emit-token=true.">
   ];
 }
 

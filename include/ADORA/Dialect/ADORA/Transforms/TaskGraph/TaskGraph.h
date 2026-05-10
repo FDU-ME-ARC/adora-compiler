@@ -40,22 +40,16 @@ struct DataBlockDepEdge {
 /////////////////////////
 class TaskGraph{
 private:
-  std::unordered_map<TaskNode *, int> _nodes;  
-  mlir::Operation* _parentOp;  
+  std::unordered_map<TaskNode *, int> _nodes;
   std::vector<DataBlockDepEdge> _depEdges;   // P4.0 — datablock-level edges
 
 public:
   void JustAddNode(TaskNode* node);
-  void JustDeleteNode(TaskNode* node);
-  void DeleteNodeOperation(TaskNode* node);
 
   void AddNodeAndAnalyzeDefaultDependency(TaskNode* node);
   template <typename T> void AddNodeAndAnalyzeDefaultDependency(T* node){
     AddNodeAndAnalyzeDefaultDependency(dyn_cast<TaskNode>(node));
   };
-
-  void setParentOp(mlir::Operation* op){_parentOp = op;}
-  mlir::Operation* getParentOp(){return _parentOp;}
 
   std::vector<TaskNode *> getAllNodes();
   TaskNode* getNode(mlir::Operation* op);
@@ -68,9 +62,6 @@ public:
     return (it == _nodes.end()) ? -1 : it->second;
   }
 
-  void dumpGraph() const;
-  void dumpGraphAsDot(std::string& filename) const;
-  void dumpNode(TaskNode* node) const;
 private:
   int getMaxNodeIdx();
 

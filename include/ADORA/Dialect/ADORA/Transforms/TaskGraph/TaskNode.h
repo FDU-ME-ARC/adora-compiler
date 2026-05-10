@@ -47,8 +47,6 @@ public:
   mlir::Operation* getOperation() const { return _operation;};
   mlir::Operation* Operation(){ return _operation;};
 
-  void delNodeOperation();
-
   void addInNode(TaskNode* node);
   void addInNode(TaskNode* node, depType dep);
   void delInNode(TaskNode* node);
@@ -58,8 +56,6 @@ public:
   void addOutNode(TaskNode* node);
   void delOutNode(TaskNode* node);
   std::vector<TaskNode *> getOutNodes();
-
-  TaskNode* ReplaceAllUsesWith(TaskNode* newnode);
 
   // virtual void dump();
 
