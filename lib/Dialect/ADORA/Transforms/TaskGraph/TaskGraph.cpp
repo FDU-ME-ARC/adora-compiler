@@ -99,12 +99,19 @@ void TaskGraph::AddNodeAndAnalyzeDefaultDependency(TaskNode* newnode){
 
     if(checkDefaultDependency(/*src*/node, /*dst*/newnode) == depType::Default){
       addConnectionBetweenTwoNode(node, newnode, /*dep=*/depType::Default);
+      // Feed into depEdges so threadTokensOnDMAs wires a token on this edge.
+      // BlockLoad→Kernel: load must finish before compute begins (control RAW).
+      // LocalAlloc→Kernel: same rationale.
+      addDepEdge({node, newnode, DataBlockDepKind::RAW, /*exact=*/true});
     }
     else if(checkDefaultDependency(/*src*/newnode, /*dst*/node) == depType::Default){
       addConnectionBetweenTwoNode(newnode, node, /*dep=*/depType::Default);
+      addDepEdge({newnode, node, DataBlockDepKind::RAW, /*exact=*/true});
     }
     else if(checkDefaultDependency(/*src*/node, /*dst*/newnode) == depType::SourceToStore){
       addConnectionBetweenTwoNode(node, newnode, /*dep=*/depType::SourceToStore);
+      // Kernel→BlockStore: store must wait for kernel output (control RAW).
+      addDepEdge({node, newnode, DataBlockDepKind::RAW, /*exact=*/true});
     }
   }
 }
