@@ -208,9 +208,26 @@ cgra-opt input.mlir \
 
 ```bash
 cd experiment/taskschedule
-bash review.sh            # 全跑
+bash review.sh            # 全跑 schedule-tasks pass
 bash 03_3mm/run.sh        # 单跑 3mm，显示 buffer reuse 效果
+bash e2e_pipeline.sh      # 完整 4-pass pipeline 验证（schedule→streams→lower→runtime）
 ```
+
+### End-to-End Pipeline 验证（e2e_pipeline.sh）
+
+验证 `!ADORA.token` 能完整穿透 4 个 pass，最终下沉为 `llvm.call @adoraEvent*`：
+
+```
+▶ 01_linear_chain:    PASS  (create=3 record=3 wait=3 destroy=3)
+▶ 02_fanin:           PASS  (create=4 record=4 wait=4 destroy=4)
+▶ 03_3mm:             PASS  (create=8 record=8 wait=8 destroy=8)
+▶ 04_gemm_tiled:      PASS  (create=5 record=5 wait=6 destroy=5)
+```
+
+验收条件：
+- Pipeline 无 crash
+- 最终 IR 里**没有**残留的 `!ADORA.token`（全部下沉成 runtime ABI）
+- `create`/`record`/`wait`/`destroy` 数量合理匹配
 
 ---
 
@@ -220,6 +237,8 @@ bash 03_3mm/run.sh        # 单跑 3mm，显示 buffer reuse 效果
 2. **Load-after-Load 消除**：`RemoveRedundantBlockLoads` 是 stub，暂未实现
 3. **`AccessSameDataBlock`**：动态 shape / 复杂 tiling 下保守返回 true，可能引入假阳性 dep edge
 4. **非常量边界 `affine.for`**：loop-carried 检测和变换都不支持
+5. **`test/cgra-mapper/FPVecAdd` lit 测试崩溃**：在 `adora-adjust-kernel-mem-footprint` pass
+   发生 SIGSEGV，**不是本 pass 的问题**（在 schedule-tasks 之前运行）。需要独立 PR 修复。
 
 ---
 
