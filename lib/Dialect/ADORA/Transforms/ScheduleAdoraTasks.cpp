@@ -565,43 +565,8 @@ void RemoveRedundantBlockStoreLoadPair(TaskGraph* graph){
 }
 
 void RemoveRedundantBlockLoads(TaskGraph* graph){
-  std::vector<TaskNode*> to_delete;
-  // std::vector<TaskNode*> nodes = graph->getAllNodes();
-  // std::unordered_map<mlir::Operation*, BlockLoadNode*> load_map; // Maps original loads to their corresponding BlockLoadNode
-
-  // for (TaskNode* node : nodes) {
-  //   if (isa<BlockLoadNode>(node)) {
-  //     BlockLoadNode* loadnode = dyn_cast<BlockLoadNode>(node);
-  //     ADORA::DataBlockLoadOp load = loadnode->getDataBlockLoadOp();
-
-  //     // Check if this load already exists in the map
-  //     auto it = load_map.find(load.getOriginalMemref());
-  //     if (it != load_map.end()) {
-  //       // If a previous load node exists, replace the current load node with it
-  //       BlockLoadNode* existing_loadnode = it->second;
-
-  //       // Connect the existing load node's kernel to any dependent kernels
-  //       KernelNode* existing_kernel = existing_loadnode->getKernelNode();
-  //       for (auto sinkkernel : loadnode->getKernelNodes()) {
-  //         addConnectionBetweenTwoNode(existing_kernel, sinkkernel, /*dep=*/depType::Depend);
-  //       }
-
-  //       // Replace the current load node with the existing one
-  //       loadnode->ReplaceAllUsesWith(existing_loadnode);
-
-  //       // Mark the current load node for deletion
-  //       to_delete.push_back(dyn_cast<TaskNode>(loadnode));
-  //     } else {
-  //       // If no existing load node, add this one to the map
-  //       load_map[load.getOriginalMemref()] = loadnode;
-  //     }
-  //   }
-  // }
-
-  // // Delete redundant load nodes
-  // for (auto node : to_delete) {
-  //   graph->DeleteNodeOperation(node);
-  // }
+  // TODO: implement load-after-load elimination (WAR/RAR same block).
+  (void)graph;
 }
 
 
@@ -628,48 +593,30 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
 
 
   //////////////
-  /// 2nd step: generate task graph and generate dependencies
+  /// 2nd step: build task graph, analyze deps, simplify, thread tokens
   //////////////
-  /// skip this
   int idx = 0;
   SmallVector<mlir::Attribute> allEdgeAttrs; // P4.0 — accumulated across blocks
   for(auto block : blocks){
     TaskGraph* graph = new TaskGraph;
+
+    // Step A: build graph nodes from block ops
     generateTaskGraphFromBlock(graph, block);
-    block->dump();
-    graph->dumpGraph();
 
-    std::string filename = "Block_" + std::to_string(idx) + "_TaskGraph_0.dot";
-    graph->dumpGraphAsDot(filename);   
-
-    //////////////
-    /// 3rd step: analyze dependency of transfered data block
-    ///   Following dependencies will be analyzed:
-    ///   g
-    //////////////
+    // Step B: O(N²) dep analysis — RAW/WAR/WAW between BlockLoad/BlockStore
     analyzeDependencyInGraph(graph);
     appendDepEdgesToAttrList(graph, idx, func.getContext(), allEdgeAttrs);
 
-    //////////////
-    /// 4th step: simplify redundant data block transfer op
-    /// NOTE: this step must run BEFORE token threading (PR2) because
-    /// RemoveRedundant* may erase ops. If tokens were already threaded,
-    /// erasing a Load with a live asyncToken result would crash MLIR.
-    //////////////
-    //// move out redundant blockload
-
-    //// remove redundant blockstore-blockload
+    // Step C: simplify redundant transfers (must run BEFORE token threading:
+    // RemoveRedundant* may erase ops; live asyncToken results would crash MLIR)
     RemoveRedundantBlockStoreLoadPair(graph);
-    //// remove redundant blockload-blockload
     RemoveRedundantBlockLoads(graph);
 
-    // PR2 commit B — thread SSA !ADORA.token along the dep edges after all
-    // simplification steps, so no rebuilt op will be erased by the optimizer.
-    // Guarded by `emit-token` (default false during rollout) for compatibility.
+    // Step D: thread SSA !ADORA.token along dep edges
     if (emitTokens)
       threadTokensOnDMAs(graph);
 
-    // PR2 commit C — optional CI-only cross-check.
+    // Step E: cross-check tokens vs dep_summary (CI only)
     if (emitTokens && crossCheck) {
       if (failed(verifyTokensMatchSummary(graph))) {
         func.emitError("adora async-token edges disagree with dep_summary "
@@ -678,19 +625,6 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
       }
     }
 
-    //////////////
-    /// 5th step: fix id of data transfer 
-    //////////////
-
-
-    block->dump();
-    filename = "Block_" + std::to_string(idx) + "_TaskGraph_1.dot";
-    // NOTE: dumpGraphAsDot after threadTokensOnDMAs may access stale op
-    // pointers (nodes hold old ops that were erased during async rebuild).
-    // Skip dot dump post-token to avoid segfault.
-    if (!emitTokens)
-      graph->dumpGraphAsDot(filename);
-    
     idx++;
   }
 
@@ -711,10 +645,7 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
   if (auto module = func->getParentOfType<ModuleOp>())
     module->setAttr("adora.scheduled", UnitAttr::get(func.getContext()));
 
-  // func.dump();
-  // TODO: ResetIndexOfBlockAccessOpInFunc crashes on 3-level nested affine.for
-  // with emit-token=true. Temporarily disabled pending fix.
-  // ResetIndexOfBlockAccessOpInFunc(func);
+
 }
 
 void ScheduleADORATasksPass::runOnOperation()
