@@ -1239,7 +1239,16 @@ void CGRACallEmitter::GenerateCGRACFGAndEXE(
   CFGandEXE << "load_cfg((void*)" << CFGarrayName << ", 0x" << std::hex << cfgBaseAddrSpad << std::dec << ", " 
        << cfg_len << ", " << /*_task_id=*/"_task_id" << ", " << /*_ld_cfg_dep*/"LD_DEP_EX_LAST_TASK" << ");\n";
   CFGandEXE << "config(0x" << std::hex << cfgBaseAddrCtrl << std::dec << ", " << cfgNum << ", " << /*_task_id*/"_task_id" << ", " << /*_ex_dep*/ 0 << ");\n";
-  CFGandEXE << "execute(" << iob_ens.As32b()[0] << std::dec << ", " << /*_task_id*/"_task_id" << ", " << /*_ex_dep*/"EX_DEP_ST_LAST_TASK" << ");\n";
+  // Compute execute dep_flag from the KernelOp's async token dependencies.
+  // If kernel has no async deps (root task), use 0. Otherwise EX_DEP_ST_LAST_TASK.
+  std::string ex_dep = "0";
+  {
+    auto deps = ADORA::getAsyncDeps(kernel.getOperation());
+    if (!deps.empty()) {
+      ex_dep = "EX_DEP_ST_LAST_TASK";
+    }
+  }
+  CFGandEXE << "execute(" << iob_ens.As32b()[0] << std::dec << ", " << /*_task_id*/"_task_id" << ", " << ex_dep << ");\n";
 
   KnToCfgExe[kernel] = CFGandEXE.str();
   
