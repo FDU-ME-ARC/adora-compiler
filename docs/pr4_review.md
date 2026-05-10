@@ -143,6 +143,77 @@ schedule_3mm (新)            PASS
 
 ---
 
+## 测试文件目录结构（最新）
+
+schedule 相关测试已从 `test/cgra-opt/kernel/` 迁移至独立子目录：
+
+```
+test/cgra-opt/schedule/
+  schedule_cgra_tasks_tokens.mlir   # PR2: emit-token TOKEN/NOTOKEN 双检
+  schedule_3mm.mlir                 # PR4-C: 3mm multi-kernel fan-in token
+  schedule_tasks_dep_summary.mlir   # P1.0+P4.0: dep_summary attribute
+  schedule_gemm_tiled.mlir          # PR4-D: 64x64x64 tiled GEMM, loop-carried dep
+```
+
+`test/cgra-opt/kernel/` 里保留其他非 schedule 相关测试（assign_streams_*, lower_async_*, simplify_loop_levels, gemm）。
+
+---
+
+## PR4-D：tiled GEMM 测试与 loop-carried dep
+
+### 新增测试：`schedule_gemm_tiled.mlir`
+
+**矩阵规模**：`C[64×64] += A[64×64] × B[64×64]`，tile size = 16×16×16
+
+**循环结构**：
+```
+affine.for %ti = 0 to 4 {          // tile-i (M)
+  affine.for %tj = 0 to 4 {        // tile-j (N)
+    affine.for %tk = 0 to 4 {      // tile-k (K-reduction) ← kernel 在此
+      BlockLoad  C_tile  %arg2[ti*16, tj*16]  ← loop-carried WAR/RAW
+      BlockLoad  A_tile  %arg0[ti*16, tk*16]
+      BlockLoad  B_tile  %arg1[tk*16, tj*16]
+      LocalMemAlloc C_local
+      ADORA.kernel (C_local = C_tile + A_tile × B_tile)
+      BlockStore C_local → %arg2[ti*16, tj*16]  ← loop-carried write
+    }
+  }
+}
+```
+
+**当前 pass 行为（intra-iteration WAR fence）**：
+
+`analyzeDependencyInGraph` 检测到 `tk` body 内：
+- `BlockLoad(%arg2, C_tile)` → `BlockStore(%arg2, C_tile)` 有 **WAR** dep（同 memref，重叠区域）
+
+`threadTokensOnDMAs` 将其 wire 为：
+```mlir
+%c_result, %war_tok = ADORA.BlockLoad %arg2 ... -> !ADORA.token
+ADORA.BlockStore async [%war_tok] %c_local, %arg2 ...
+```
+
+**loop-carried dep（PR6 待实现）**：
+
+`tk` loop 的真正 loop-carried RAW dep：
+- `iteration tk=N` 的 `BlockStore(%arg2)` → `iteration tk=N+1` 的 `BlockLoad(%arg2)` — 相同 C tile
+
+这需要通过 `scf.for iter_args(!ADORA.token)` 将 token 跨 iteration 传递，目前**尚未实现**。
+
+### 已知 bug 修复：`dumpGraphAsDot` 访问 stale pointer
+
+**文件**：`ScheduleAdoraTasks.cpp:689`
+
+`threadTokensOnDMAs` 执行后，TaskGraph 里的 TaskNode 持有已被 erase 的 old op 指针。后续 `dumpGraphAsDot` 访问这些 stale pointer 导致 segfault（仅在 3 层及以上嵌套 affine.for + emit-token=true 时触发）。
+
+**修复**：`emit-token=true` 时跳过 post-token dot dump：
+```cpp
+// Skip dot dump after threadTokensOnDMAs to avoid stale-pointer segfault.
+if (!emitTokens)
+  graph->dumpGraphAsDot(filename);
+```
+
+---
+
 ## 下一步计划
 
 见 `docs/async_token_design.md` §PR4 或下方。
@@ -151,7 +222,8 @@ schedule_3mm (新)            PASS
 
 ## 已知局限 / TODO
 
-1. **buffer reuse**：`RemoveRedundantBlockStoreLoadPair` 的原始 buffer reuse 功能（去掉冗余 load，LocalMemAlloc 跨 kernel 复用）被暂时移除。需要在 token threading 之后单独实现。
-2. **EmitCGRACall dep_flag**：mapper emit 层还未消费 `async [token]` 依赖来精确化 `LD_DEP_ST_LAST_TASK`（见下一步计划）。
-3. **EmitPytest 并发**：Python 测试代码生成还是全串行 `await`，未利用独立 task 的并发机会。
-4. **多分块 3mm**：当前 3mm test 只验证单分块 `[0,0]` 的情况。多分块（tiled）情况下 `AccessSameDataBlock` 的精确性需要进一步验证。
+1. **buffer reuse**：`RemoveRedundantBlockStoreLoadPair` 目前只做 kernel→kernel 图拓扑 wiring，不做 SSA 替换。真正的 buffer reuse（replaceAllUsesWith + erase BlockLoad，让 kernel 直接复用 on-chip buffer）需要在 `threadTokensOnDMAs` 之前完成，且删除前必须先 `replaceAllUsesWith`。
+2. **PR6 loop-carried token yield**：`affine.for` body 内最后一个 BlockStore 产生的 token 需要通过 `scf.for iter_args(!ADORA.token)` 传给下一 iteration 的 BlockLoad。典型场景：tiled GEMM `tk` loop 的 C_tile RAW dep（`schedule_gemm_tiled.mlir` 有注释标记）。
+3. **EmitCGRACall dep_flag**：mapper emit 层还未消费 `async [token]` 依赖来精确化 `LD_DEP_ST_LAST_TASK`。
+4. **EmitPytest 并发**：Python 测试代码生成还是全串行 `await`，未利用独立 task 的并发机会。
+5. **多分块精确性**：`AccessSameDataBlock` 在动态 shape 或多维 tiled 情况下保守返回 true，可能引入假阳性 dep edge，需进一步验证。

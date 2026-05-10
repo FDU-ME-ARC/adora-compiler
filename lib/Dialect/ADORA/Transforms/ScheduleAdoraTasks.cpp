@@ -685,7 +685,11 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
 
     block->dump();
     filename = "Block_" + std::to_string(idx) + "_TaskGraph_1.dot";
-    graph->dumpGraphAsDot(filename);   
+    // NOTE: dumpGraphAsDot after threadTokensOnDMAs may access stale op
+    // pointers (nodes hold old ops that were erased during async rebuild).
+    // Skip dot dump post-token to avoid segfault.
+    if (!emitTokens)
+      graph->dumpGraphAsDot(filename);
     
     idx++;
   }
@@ -707,9 +711,10 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
   if (auto module = func->getParentOfType<ModuleOp>())
     module->setAttr("adora.scheduled", UnitAttr::get(func.getContext()));
 
-  func.dump();
-  ResetIndexOfBlockAccessOpInFunc(func);
-  func.dump();
+  // func.dump();
+  // TODO: ResetIndexOfBlockAccessOpInFunc crashes on 3-level nested affine.for
+  // with emit-token=true. Temporarily disabled pending fix.
+  // ResetIndexOfBlockAccessOpInFunc(func);
 }
 
 void ScheduleADORATasksPass::runOnOperation()

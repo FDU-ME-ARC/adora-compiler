@@ -4,9 +4,9 @@
 // Uses generic-form IR with pre-built BlockLoad/Store/Kernel ops to bypass
 // the adora-adjust-kernel-mem-footprint pass (pre-existing crash, unrelated).
 //
-// RUN: cgra-opt %s --adora-schedule-tasks="emit-token=true" 2>/dev/null \
+// RUN: %cgra-opt %s --adora-schedule-tasks="emit-token=true" 2>/dev/null \
 // RUN:   | FileCheck %s --check-prefix=TOKEN
-// RUN: cgra-opt %s --adora-schedule-tasks="emit-token=false" 2>/dev/null \
+// RUN: %cgra-opt %s --adora-schedule-tasks="emit-token=false" 2>/dev/null \
 // RUN:   | FileCheck %s --check-prefix=NOTOKEN
 
 // TOKEN: adora.scheduled
