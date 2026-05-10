@@ -88,12 +88,30 @@ cgra-opt input.mlir \
 
 **各 pass 职责**：
 
-| Pass | 作用 |
-|------|------|
-| `adora-schedule-tasks` | 构建 task graph + 依赖分析 + token 链接 + buffer reuse |
-| `adora-assign-streams` | 给每个 async op 分配硬件 stream ID（拓扑排序） |
-| `adora-lower-async-tokens` | `!ADORA.token` → `ADORA.event.create/signal/wait/destroy` |
-| `adora-to-llvm-async-runtime` | `ADORA.event.*` → `llvm.call @adoraEvent*` runtime ABI |
+| Pass | 作用 | 状态 |
+|------|------|------|
+| `adora-schedule-tasks` | 构建 task graph + 依赖分析 + token 链接 + buffer reuse | ✅ 必需 |
+| `adora-buffer-reuse` | 消除冗余 BlockStore/BlockLoad 对 | ⚠️ **冗余**（见下方说明） |
+| `adora-assign-streams` | 给每个 async op 分配硬件 stream ID（拓扑排序） | ✅ 必需 |
+| `adora-lower-async-tokens` | `!ADORA.token` → `ADORA.event.create/signal/wait/destroy` | ✅ 必需 |
+| `adora-to-llvm-async-runtime` | `ADORA.event.*` → `llvm.call @adoraEvent*` runtime ABI | ✅ 必需 |
+
+### ⚠️ `adora-buffer-reuse` 冗余说明
+
+从 **commit `88d0e75`（任务一）** 开始，`RemoveRedundantBlockStoreLoadPair`
+已经在 `adora-schedule-tasks` **token threading 之前**就完成了冗余 Load 的
+`replaceAllUsesWith` + erase。
+
+因此：
+- **运行 `adora-buffer-reuse` 前后 IR 完全相同**（实测 3mm 例子 BlockLoad 数量一致）
+- **它现在是 no-op**，保留只是为了兼容可能存在的旧 pipeline / legacy mapper
+- **未来删除计划**：等 mapper 端全部切换到消费 `async [token]` 后，这个 pass 可以直接移除
+
+**为什么 schedule-tasks 阶段做 buffer reuse 更好**：
+
+1. 在 token threading 之前消除冗余 Load，避免为无用 Load 生成 token
+2. 不需要额外的 SSA pattern matching（直接基于 TaskGraph 的 in/out edges）
+3. 同一个 pass 里保证 dep edges 也被正确更新（kernel→kernel 边取代 Store→Load）
 
 ---
 
