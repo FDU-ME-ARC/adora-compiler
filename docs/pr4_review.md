@@ -143,87 +143,119 @@ schedule_3mm (新)            PASS
 
 ---
 
-## 测试文件目录结构（最新）
+## 当前状态（最新，截至 commit 33a298b）
 
-schedule 相关测试已从 `test/cgra-opt/kernel/` 迁移至独立子目录：
+### 完整 async token chain ✅
+
+```
+BlockLoad_A ──tok0──┐
+BlockLoad_B ──tok1──┤→ ADORA.kernel async[tok0,tok1,...] ──tokK──→ ADORA.BlockStore async[tokK]
+BlockLoad_C ──tok2──┘  （WAR dep 也汇入）
+```
+
+- `BlockLoad → Kernel`：load 完成后 kernel 才能开始计算 ✅
+- `Kernel → BlockStore`：kernel 完成后 store 才写出 ✅  
+- `BlockLoad WAR/RAW → BlockStore`：同 memref tile 的 intra-iteration fence ✅
+
+### Buffer Reuse ✅
+
+`RemoveRedundantBlockStoreLoadPair`：当 `Store(C[ti,tj])` 后紧跟 `Load(C[ti,tj])` 访问同一 data block，Load 被消除，下游直接用 on-chip `LocalMemAlloc` buffer：
+
+```
+kernel_0 → BlockStore(%local_0 → %C)
+kernel_1 → [BlockLoad(%C) 已删] → 直接用 %local_0
+```
+
+**3mm 效果**：`kernel_3mm_2` 原来需要从 DRAM 读 2 次（Load %arg0, Load %arg3），现在被消除，节省 2 次 DMA。
+
+### EmitCGRACall dep_flag ✅
+
+`GenerateCGRACFGAndEXE` 的 `execute()` 命令 dep_flag 从 KernelOp 的 async token 计算：
+
+- 无 async dep（root kernel）→ `dep_flag = 0`
+- 有 async dep（等 Load/Store token）→ `dep_flag = EX_DEP_ST_LAST_TASK`
+
+### 可视化工具 ✅
+
+```bash
+cgra-opt your.mlir --adora-schedule-tasks="emit-token=true dump-token-graph=/tmp/tok.dot"
+dot -Tpng /tmp/tok.dot -o tok.png
+```
+
+### Experiment 示例 ✅
+
+```
+experiment/taskschedule/
+  01_linear_chain/   # Load→Kernel→Store 最简 chain
+  02_fanin/          # 2xLoad fan-in → Kernel → Store
+  03_3mm/            # 3-kernel chain，buffer reuse
+  04_gemm_tiled/     # 64x64x64 tiled GEMM，loop-carried dep 检测
+  review.sh          # 一键运行所有例子，输出 token chain + dot 可视化
+```
+
+---
+
+## 测试文件目录结构（最新）
 
 ```
 test/cgra-opt/schedule/
   schedule_cgra_tasks_tokens.mlir   # PR2: emit-token TOKEN/NOTOKEN 双检
-  schedule_3mm.mlir                 # PR4-C: 3mm multi-kernel fan-in token
+  schedule_3mm.mlir                 # PR4-C: 3mm buffer reuse + token chain
   schedule_tasks_dep_summary.mlir   # P1.0+P4.0: dep_summary attribute
-  schedule_gemm_tiled.mlir          # PR4-D: 64x64x64 tiled GEMM, loop-carried dep
-```
+  schedule_gemm_tiled.mlir          # PR4-D: 64x64x64 tiled GEMM WAR token
 
-`test/cgra-opt/kernel/` 里保留其他非 schedule 相关测试（assign_streams_*, lower_async_*, simplify_loop_levels, gemm）。
+test/cgra-opt/kernel/               # 非 schedule 测试（assign_streams, lower_async 等）
+```
 
 ---
 
-## PR4-D：tiled GEMM 测试与 loop-carried dep
+## PR6：loop-carried token yield（下一步）
 
-### 新增测试：`schedule_gemm_tiled.mlir`
+### 已完成
 
-**矩阵规模**：`C[64×64] += A[64×64] × B[64×64]`，tile size = 16×16×16
+- **检测**：`findLoopCarriedStoreLoadPair` 能识别 `affine.for` body 内的 Store→Load loop-carried RAW dep（如 tiled GEMM `tk` loop 的 C tile）
+- **诊断**：`wireLoopCarriedToken` stub 打印诊断信息，提示哪个 for loop 需要变换
 
-**循环结构**：
-```
-affine.for %ti = 0 to 4 {          // tile-i (M)
-  affine.for %tj = 0 to 4 {        // tile-j (N)
-    affine.for %tk = 0 to 4 {      // tile-k (K-reduction) ← kernel 在此
-      BlockLoad  C_tile  %arg2[ti*16, tj*16]  ← loop-carried WAR/RAW
-      BlockLoad  A_tile  %arg0[ti*16, tk*16]
-      BlockLoad  B_tile  %arg1[tk*16, tj*16]
-      LocalMemAlloc C_local
-      ADORA.kernel (C_local = C_tile + A_tile × B_tile)
-      BlockStore C_local → %arg2[ti*16, tj*16]  ← loop-carried write
-    }
-  }
-}
-```
+### 待实现
 
-**当前 pass 行为（intra-iteration WAR fence）**：
+`AffineForOp` 没有 `iter_args`，需要转换为 `scf.for`：
 
-`analyzeDependencyInGraph` 检测到 `tk` body 内：
-- `BlockLoad(%arg2, C_tile)` → `BlockStore(%arg2, C_tile)` 有 **WAR** dep（同 memref，重叠区域）
-
-`threadTokensOnDMAs` 将其 wire 为：
 ```mlir
-%c_result, %war_tok = ADORA.BlockLoad %arg2 ... -> !ADORA.token
-ADORA.BlockStore async [%war_tok] %c_local, %arg2 ...
+// 目标：PR6 实现后
+%init_tok = ADORA.event.create → !ADORA.token
+%final_tok = scf.for %tk = 0 to 4
+    iter_args(%carry = %init_tok) → (!ADORA.token) {
+  // BlockLoad 消费上一 iteration 的 store token
+  %c, %war_tok = ADORA.BlockLoad async [%carry] %C ... → !ADORA.token
+  ...
+  // BlockStore 产生本 iteration 的 token，传给下一 iteration
+  %store_tok = ADORA.BlockStore async [...] %local, %C → !ADORA.token
+  scf.yield %store_tok : !ADORA.token
+}
+ADORA.event.destroy %final_tok
 ```
 
-**loop-carried dep（PR6 待实现）**：
+**实现步骤**：
+1. `wireLoopCarriedToken`：把 `AffineForOp` + 常量边界转成 `scf.for iter_args(!ADORA.token)`
+2. 把 body ops 从 affine 移到 scf，替换 IV 引用
+3. 在 BlockLoad 的 `asyncDependencies` 里加入 `carry_arg`
+4. 在 `affine.yield` → `scf.yield` 时传入 BlockStore token
+5. 在 loop 之前插入 `ADORA.event.create`（init token），之后插入 `ADORA.event.destroy`
+6. `adora-lower-async-tokens` 对 `scf.for iter_args(!ADORA.token)` 的识别支持
 
-`tk` loop 的真正 loop-carried RAW dep：
-- `iteration tk=N` 的 `BlockStore(%arg2)` → `iteration tk=N+1` 的 `BlockLoad(%arg2)` — 相同 C tile
-
-这需要通过 `scf.for iter_args(!ADORA.token)` 将 token 跨 iteration 传递，目前**尚未实现**。
-
-### 已知 bug 修复：`dumpGraphAsDot` 访问 stale pointer
-
-**文件**：`ScheduleAdoraTasks.cpp:689`
-
-`threadTokensOnDMAs` 执行后，TaskGraph 里的 TaskNode 持有已被 erase 的 old op 指针。后续 `dumpGraphAsDot` 访问这些 stale pointer 导致 segfault（仅在 3 层及以上嵌套 affine.for + emit-token=true 时触发）。
-
-**修复**：`emit-token=true` 时跳过 post-token dot dump：
-```cpp
-// Skip dot dump after threadTokensOnDMAs to avoid stale-pointer segfault.
-if (!emitTokens)
-  graph->dumpGraphAsDot(filename);
-```
-
----
-
-## 下一步计划
-
-见 `docs/async_token_design.md` §PR4 或下方。
+**测试验证**：在 `schedule_gemm_tiled.mlir` 加 `CHECK: scf.for {{.*}} iter_args` 验证。
 
 ---
 
 ## 已知局限 / TODO
 
-1. **buffer reuse**：`RemoveRedundantBlockStoreLoadPair` 目前只做 kernel→kernel 图拓扑 wiring，不做 SSA 替换。真正的 buffer reuse（replaceAllUsesWith + erase BlockLoad，让 kernel 直接复用 on-chip buffer）需要在 `threadTokensOnDMAs` 之前完成，且删除前必须先 `replaceAllUsesWith`。
-2. **PR6 loop-carried token yield**：`affine.for` body 内最后一个 BlockStore 产生的 token 需要通过 `scf.for iter_args(!ADORA.token)` 传给下一 iteration 的 BlockLoad。典型场景：tiled GEMM `tk` loop 的 C_tile RAW dep（`schedule_gemm_tiled.mlir` 有注释标记）。
-3. **EmitCGRACall dep_flag**：mapper emit 层还未消费 `async [token]` 依赖来精确化 `LD_DEP_ST_LAST_TASK`。
-4. **EmitPytest 并发**：Python 测试代码生成还是全串行 `await`，未利用独立 task 的并发机会。
+| # | 状态 | 描述 |
+|---|------|------|
+| 1 | ✅ 完成 | Buffer reuse：RemoveRedundantBlockStoreLoadPair replaceAllUsesWith |
+| 2 | ✅ 完成 | EmitCGRACall execute dep_flag 从 async token 计算 |
+| 3 | ✅ 完成 | 完整 BlockLoad→Kernel→BlockStore async token chain |
+| 4 | 🔧 PR6 | loop-carried token yield（affine.for → scf.for iter_args） |
+| 5 | 📋 TODO | RemoveRedundantBlockLoads：Load-after-Load 消除（stub，未实现） |
+| 6 | 📋 TODO | EmitPytest 并发：Python 测试代码生成仍为串行 await |
+| 7 | 📋 TODO | loop-carried dep 检测对非常量边界 affine.for 的支持 |
 5. **多分块精确性**：`AccessSameDataBlock` 在动态 shape 或多维 tiled 情况下保守返回 true，可能引入假阳性 dep edge，需进一步验证。
