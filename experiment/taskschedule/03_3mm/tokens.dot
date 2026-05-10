@@ -1,10 +1,21 @@
 digraph token_graph {
   rankdir=LR;
   node [shape=box, fontsize=10];
-  "0x5563c4b2eb20" [label="ADORA.BlockStore\nId=2\nkernel_3mm_1", style=filled, fillcolor=lightcoral];
-  "0x5563c4b2f290" [label="ADORA.BlockLoad\nId=1\nkernel_3mm_2", style=filled, fillcolor=lightblue];
-  "0x5563c4b2e110" [label="ADORA.BlockStore\nId=2\nkernel_3mm_0", style=filled, fillcolor=lightcoral];
-  "0x5563c4b2f060" [label="ADORA.BlockLoad\nId=0\nkernel_3mm_2", style=filled, fillcolor=lightblue];
-  "0x5563c4b2e110" -> "0x5563c4b2f060" [label="token", color=darkgreen];
-  "0x5563c4b2eb20" -> "0x5563c4b2f290" [label="token", color=darkgreen];
+  "0x557bb463c600" [label="ADORA.BlockStore\nId=2\nkernel_3mm_2", style=filled, fillcolor=lightcoral];
+  "0x557bb463a5a0" [label="ADORA.BlockLoad\nId=0\nkernel_3mm_0", style=filled, fillcolor=lightblue];
+  "0x557bb463b520" [label="ADORA.BlockStore\nId=2\nkernel_3mm_1", style=filled, fillcolor=lightcoral];
+  "0x557bb463b470" [label="ADORA.kernel\nkernel_3mm_1", style=filled, fillcolor=lightyellow];
+  "0x557bb463b060" [label="ADORA.kernel\nkernel_3mm_0", style=filled, fillcolor=lightyellow];
+  "0x557bb4636520" [label="ADORA.BlockStore\nId=2\nkernel_3mm_0", style=filled, fillcolor=lightcoral];
+  "0x557bb463b3b0" [label="ADORA.BlockLoad\nId=1\nkernel_3mm_1", style=filled, fillcolor=lightblue];
+  "0x557bb462d0b0" [label="ADORA.kernel\nkernel_3mm_2", style=filled, fillcolor=lightyellow];
+  "0x557bb463afa0" [label="ADORA.BlockLoad\nId=1\nkernel_3mm_0", style=filled, fillcolor=lightblue];
+  "0x557bb460c5f0" [label="ADORA.BlockLoad\nId=0\nkernel_3mm_1", style=filled, fillcolor=lightblue];
+  "0x557bb463a5a0" -> "0x557bb463b060" [label="token", color=darkgreen];
+  "0x557bb463afa0" -> "0x557bb463b060" [label="token", color=darkgreen];
+  "0x557bb463b060" -> "0x557bb4636520" [label="token", color=darkgreen];
+  "0x557bb460c5f0" -> "0x557bb463b470" [label="token", color=darkgreen];
+  "0x557bb463b3b0" -> "0x557bb463b470" [label="token", color=darkgreen];
+  "0x557bb463b470" -> "0x557bb463b520" [label="token", color=darkgreen];
+  "0x557bb462d0b0" -> "0x557bb463c600" [label="token", color=darkgreen];
 }
