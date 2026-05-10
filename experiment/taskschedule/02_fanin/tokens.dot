@@ -1,0 +1,4 @@
+digraph token_graph {
+  rankdir=LR;
+  node [shape=box, fontsize=10];
+}

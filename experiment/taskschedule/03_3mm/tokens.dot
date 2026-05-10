@@ -1,0 +1,10 @@
+digraph token_graph {
+  rankdir=LR;
+  node [shape=box, fontsize=10];
+  "0x5563c4b2eb20" [label="ADORA.BlockStore\nId=2\nkernel_3mm_1", style=filled, fillcolor=lightcoral];
+  "0x5563c4b2f290" [label="ADORA.BlockLoad\nId=1\nkernel_3mm_2", style=filled, fillcolor=lightblue];
+  "0x5563c4b2e110" [label="ADORA.BlockStore\nId=2\nkernel_3mm_0", style=filled, fillcolor=lightcoral];
+  "0x5563c4b2f060" [label="ADORA.BlockLoad\nId=0\nkernel_3mm_2", style=filled, fillcolor=lightblue];
+  "0x5563c4b2e110" -> "0x5563c4b2f060" [label="token", color=darkgreen];
+  "0x5563c4b2eb20" -> "0x5563c4b2f290" [label="token", color=darkgreen];
+}
