@@ -97,4 +97,23 @@ def MathRewrite : Pass<"adora-math-rewrite", "ModuleOp"> {
   let dependentDialects = ["math::MathDialect","arith::ArithDialect"];
 }
 
+def ADORAAsyncRuntimeToLLVM : Pass<"adora-to-llvm-async-runtime", "ModuleOp"> {
+  let summary = "Lower ADORA async event ops to llvm.call into the runtime ABI";
+  let description = [{
+    Translates the four async-event ops emitted by adora-lower-async-tokens into
+    llvm.call instructions targeting the adora_async_rt.h ABI:
+
+      ADORA.event.create  -> llvm.call @adoraEventCreate()  -> llvm.ptr
+      ADORA.event.destroy -> llvm.call @adoraEventDestroy(ptr)
+      ADORA.signal        -> llvm.call @adoraEventRecord(ptr, stream_i64)
+      ADORA.wait          -> llvm.call @adoraEventWait(ptr, stream_i64)
+
+    !ADORA.token values are replaced by opaque llvm.ptr.
+    Extern declarations for the four runtime functions are inserted at module
+    scope if not already present.
+  }];
+  let constructor = "mlir::ADORA::createADORAAsyncRuntimeToLLVMPass()";
+  let dependentDialects = ["LLVM::LLVMDialect"];
+}
+
 #endif // ADORA_DIALECT_PASSES

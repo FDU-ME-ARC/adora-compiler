@@ -4,65 +4,8 @@
 #include "ADORA/Dialect/ADORA/Transforms/TaskGraph/TaskGraph.h"
 #include "ADORA/Dialect/ADORA/Transforms/DependencyAnalysis.h"
 
-#include <iostream>
-#include <fstream>
-// #include <filesystem>
-#include <string>
-
 namespace mlir {
 namespace ADORA {
-
-/////////////////////////
-/// TaskGraph class
-/////////////////////////
-
-/// @brief 
-/// @param node 
-/// @return 
-static std::string getNodeTypeName(TaskNode* node){
-  if(isa<KernelNode>(node))
-    return "Kernel";
-  else if(isa<BlockLoadNode>(node))
-    return "BlockLoad";
-  else if(isa<LocalAllocNode>(node))
-    return "LocalAlloc";
-  else if(isa<BlockStoreNode>(node))
-    return "BlockStore";
-  else 
-    return "null";
-}
-
-/// @brief 
-/// @param dep 
-/// @return 
-static std::string getDepTypeName(depType& dep){
-  std::string deptypename;
-  switch (dep)
-  {
-  case NoDep:
-    deptypename = "NoDep";
-    break;
-
-  case Default:
-    deptypename = "Default";
-    break;
-
-  case SourceToStore:
-    deptypename = "SourceToStore";
-    break;
-
-  case Depend:
-    deptypename = "Depend";
-    break;
-
-  case Undefine:
-  default:
-    deptypename = "Undefine";
-    break;
-  }
-  
-  return deptypename;
-}
 
 
 /// @brief 
@@ -143,23 +86,6 @@ void TaskGraph::JustAddNode(TaskNode* node){
   _nodes[node] = newIndex;
 }
 
-/// @brief delete a node from graph, but do not delete the operation of the node
-/// @param node 
-void TaskGraph::JustDeleteNode(TaskNode* node){
-  auto it = _nodes.find(node);
-  if (it != _nodes.end()) {
-    int index = it->second;
-    _nodes.erase(it);
-  }
-}
-
-/// @brief delete a node from graph and delete the operation of the node in mlir module
-/// @param node 
-void TaskGraph::DeleteNodeOperation(TaskNode* node){
-  JustDeleteNode(node);
-  node->delNodeOperation();
-}
-
 /// @brief add a node to graph and 
 ///        analyze the default dependency between this node and other nodes
 ///        Default dependendy is load-kernel-store dependency.  
@@ -173,12 +99,19 @@ void TaskGraph::AddNodeAndAnalyzeDefaultDependency(TaskNode* newnode){
 
     if(checkDefaultDependency(/*src*/node, /*dst*/newnode) == depType::Default){
       addConnectionBetweenTwoNode(node, newnode, /*dep=*/depType::Default);
+      // Feed into depEdges so threadTokensOnDMAs wires a token on this edge.
+      // BlockLoad→Kernel: load must finish before compute begins (control RAW).
+      // LocalAlloc→Kernel: same rationale.
+      addDepEdge({node, newnode, DataBlockDepKind::RAW, /*exact=*/true});
     }
     else if(checkDefaultDependency(/*src*/newnode, /*dst*/node) == depType::Default){
       addConnectionBetweenTwoNode(newnode, node, /*dep=*/depType::Default);
+      addDepEdge({newnode, node, DataBlockDepKind::RAW, /*exact=*/true});
     }
     else if(checkDefaultDependency(/*src*/node, /*dst*/newnode) == depType::SourceToStore){
       addConnectionBetweenTwoNode(node, newnode, /*dep=*/depType::SourceToStore);
+      // Kernel→BlockStore: store must wait for kernel output (control RAW).
+      addDepEdge({node, newnode, DataBlockDepKind::RAW, /*exact=*/true});
     }
   }
 }
@@ -219,164 +152,7 @@ TaskNode* TaskGraph::getNode(mlir::Operation* op) {
 
 
 
-/// @brief print the graph to cout
-void TaskGraph::dumpGraph() const{
-  std::cout << "//==== Task Graph Dump ====//\n";
-  
-  for (const auto& pair : _nodes) {
-    int index = pair.second;
-    TaskNode* node = pair.first;
-    std::cout << "//-------------------//\n";
-    std::cout << "Node Index: " << index ;
 
-    if(isa<KernelNode>(node))
-      std::cout << ", KernelNode\n" ; 
-    else if(isa<BlockLoadNode>(node))
-      std::cout << ", BlockLoadNode\n" ; 
-    else if(isa<LocalAllocNode>(node))
-      std::cout << ", LocalAllocNode\n" ; 
-    else if(isa<BlockStoreNode>(node))
-      std::cout << ", BlockStoreNode\n" ; 
-    else
-      std::cout << "\n" ;       
-
-    std::cout << "  Operation: " ; 
-    node->getOperation()->dump();
-
-    std::cout << "   In Nodes: ";
-    for (auto& inNode : node->getInNodes()) {
-      std::cout << _nodes.at(inNode) << " "; // Assuming inNode is a pointer or you can add a method to print details
-    }
-    std::cout << "\n";
-    
-    std::cout << "   Out Nodes: ";
-    for (auto& outNode : node->getOutNodes()) {
-      std::cout << _nodes.at(outNode) << " "; // Assuming inNode is a pointer or you can add a method to print details
-    }
-    std::cout << "\n\n";
-  }
-}
-
-/// @brief print the graph to filename as DOT style
-/// @param filename the file address of the dot
-void TaskGraph::dumpGraphAsDot(std::string& filename) const {
-  std::ofstream ofs;
-	ofs.open(filename.c_str());
-  ofs << "Digraph G {\n";
-  // std::string colors[4] = {"black", "purple", "blue", "yellow"};
-  // nodes
-	assert(_nodes.size() != 0);
-  std::map<std::pair<TaskNode*, TaskNode*>, depType> edgestack; 
-  // std::unordered_map<TaskNode*, std::string> nodeToName; 
-  for(auto &elem : _nodes){
-    int index = elem.second;
-    TaskNode* node = elem.first;
-    std::string NodeName = getNodeTypeName(node) + std::to_string(index);
-    if(isa<KernelNode>(node)){
-      KernelNode* kernelnode = dyn_cast<KernelNode>(node);
-      ofs << NodeName << "[type = \"KernelNode\"";
-      if(kernelnode->getKernelOp().hasKernelName()){
-        ofs << ", KernelName = \"" << kernelnode->getKernelOp().getKernelName() <<"\"";
-      }
-      ofs << "];\n";
-    }
-    else if(isa<BlockLoadNode>(node)){
-      BlockLoadNode* blockloadnode = dyn_cast<BlockLoadNode>(node);
-      ofs << NodeName << "[type = \"BlockLoadNode\"";
-      if(blockloadnode->getDataBlockLoadOp().hasKernelName()){
-        ofs << ", KernelName = \"" << blockloadnode->getDataBlockLoadOp().getKernelName().str() <<"\"";
-      }
-      ofs << "];\n";
-    }
-    else if(isa<LocalAllocNode>(node)){
-      LocalAllocNode* localallocnode = dyn_cast<LocalAllocNode>(node);
-      ofs << NodeName << "[type = \"LocalAllocNode\"";
-      if(localallocnode->getLocalMemAllocOp().hasKernelName()){
-        ofs << ", KernelName = \"" << localallocnode->getLocalMemAllocOp().getKernelName().str() <<"\"";
-      }
-      ofs << "];\n";
-    }
-    else if(isa<BlockStoreNode>(node)){
-      BlockStoreNode* blockstorenode = dyn_cast<BlockStoreNode>(node);
-      ofs << NodeName << "[type = \"BlockStoreNode\"";
-      if(blockstorenode->getDataBlockStoreOp().hasKernelName()){
-        ofs << ", KernelName = \"" << blockstorenode->getDataBlockStoreOp().getKernelName().str() <<"\"";
-      }
-      ofs << "];\n";
-    }
-    else{
-      assert(false);
-    }
-
-    /// collect edges
-    std::vector<TaskNode *> innodes = node->getInNodes();
-    for(TaskNode * innode : innodes){
-      edgestack[std::pair(innode, node)] = node->getInNodeDep(innode);
-    }
-  }
-
-	// print edges
-  // std::unordered_map<std::pair<TaskNode*, TaskNode*>, depType> edgestack; 
-  for(auto &elem : edgestack){
-    TaskNode* src = elem.first.first;
-    TaskNode* dst = elem.first.second;
-    depType dep = elem.second;
-    std::string srcName = getNodeTypeName(src) + std::to_string(_nodes.at(src));
-    std::string dstName = getNodeTypeName(dst) + std::to_string(_nodes.at(dst));
-    
-    if(dep == depType::SourceToStore){
-      ofs << srcName << " -> " << dstName 
-          << "[color = blue, style = bold, " 
-          << "deptype = " << getDepTypeName(dep) << ", "
-          << "label = \"deptype=" << getDepTypeName(dep) << "\"";
-    }
-    else{
-      ofs << srcName << " -> " << dstName 
-          << "[color = black, style = bold, " 
-          << "deptype = " << getDepTypeName(dep) << ", "
-          << "label = \"deptype=" << getDepTypeName(dep) << "\"";
-    }
-
-
-    ofs << "];\n";
-  }
-	ofs << "}\n";
-	ofs.close();
-}
-
-/// @brief print the node to cout
-void TaskGraph::dumpNode(TaskNode* node) const{
-    if(_nodes.count(node) == 0){
-      std::cout << "This node is not in graph.";
-      return;      
-    }
-
-    std::cout << "Node Index: " << _nodes.at(node);
-
-    if(isa<KernelNode>(node))
-      std::cout << ", KernelNode\n" ; 
-    else if(isa<BlockLoadNode>(node))
-      std::cout << ", BlockLoadNode\n" ; 
-    else if(isa<BlockStoreNode>(node))
-      std::cout << ", BlockStoreNode\n" ; 
-    else
-      std::cout << "\n" ;       
-
-    std::cout << "  Operation: " ; 
-    node->getOperation()->dump();
-
-    std::cout << "   In Nodes: ";
-    for (auto& inNode : node->getInNodes()) {
-      std::cout << _nodes.at(inNode) << " "; // Assuming inNode is a pointer or you can add a method to print details
-    }
-    std::cout << "\n";
-    
-    std::cout << "   Out Nodes: ";
-    for (auto& outNode : node->getOutNodes()) {
-      std::cout << _nodes.at(outNode) << " "; // Assuming inNode is a pointer or you can add a method to print details
-    }
-    std::cout << "\n";
-}
 
 
 int TaskGraph::getMaxNodeIdx(){

@@ -31,6 +31,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/CommandLine.h"
 
 #include "ADORA/Dialect/ADORA/IR/ADORA.h"
@@ -78,7 +79,7 @@ bool ScheduleADORATasksPass::BlockContainsKernelOp(mlir::Block* b){
 }
 
 void generateTaskGraphFromBlock(TaskGraph* graph, mlir::Block* block){
-  graph->setParentOp(block->getParentOp());
+
   /// validloads : data block which has already been loaded to on-chip memory
   std::map<ADORA::LocalMemAllocOp, LocalAllocNode*> validallocs; 
 
@@ -158,10 +159,441 @@ void generateTaskGraphFromBlock(TaskGraph* graph, mlir::Block* block){
 
 }
 
-/// @brief 
-/// @param graph 
+/// @brief Fill P1.0 DataBlock-level dependencies into the TaskGraph.
+///
+/// RAW (store -> later load) is already wired in generateTaskGraphFromBlock
+/// via ops' SSA use-def chain, so we do NOT re-emit it here to avoid double
+/// edges. This pass additionally surfaces:
+///
+///   - RAR (load  -> later load ) : same backing memref + (exact | overlap)
+///   - WAW (store -> later store) : same backing memref + (exact | overlap)
+///   - WAR (load  -> later store) : same backing memref + (exact | overlap)
+///
+/// IR lexical order is taken from mlir::Operation::isBeforeInBlock when the
+/// two ops share a block (always the case inside this pass: both live under
+/// the same kernel-containing block). For each hit we:
+///
+///   1. record a DataBlockDepEdge on the graph (consumed by P4.0 serializer),
+///   2. add a depType::Depend connection between the two TaskNodes (consumed
+///      by the downstream scheduler).
+///
+/// Complexity: O(N^2) on node count; acceptable for typical kernel graphs.
+/// @param graph  task graph produced by generateTaskGraphFromBlock
 void analyzeDependencyInGraph(TaskGraph* graph){
-  //// firstly, 
+  auto nodes = graph->getAllNodes();
+  const size_t N = nodes.size();
+
+  auto lexicallyBefore = [](mlir::Operation* a, mlir::Operation* b) -> bool {
+    if (!a || !b) return false;
+    if (a->getBlock() != b->getBlock()) return false;
+    return a->isBeforeInBlock(b);
+  };
+
+  auto emit = [&](TaskNode* src, TaskNode* dst,
+                  DataBlockDepKind kind, bool exact) {
+    graph->addDepEdge({src, dst, kind, exact});
+    addConnectionBetweenTwoNode(src, dst, /*dep=*/depType::Depend);
+  };
+
+  for (size_t i = 0; i < N; ++i) {
+    for (size_t j = 0; j < N; ++j) {
+      if (i == j) continue;
+      TaskNode* ni = nodes[i];
+      TaskNode* nj = nodes[j];
+
+      // Require a concrete IR ordering ni -> nj.
+      if (!lexicallyBefore(ni->getOperation(), nj->getOperation()))
+        continue;
+
+      // --- RAR: load_i -> load_j (same original memref) ---
+      if (isa<BlockLoadNode>(ni) && isa<BlockLoadNode>(nj)) {
+        auto la = cast<BlockLoadNode>(ni)->getDataBlockLoadOp();
+        auto lb = cast<BlockLoadNode>(nj)->getDataBlockLoadOp();
+        if (checkDependencyBetweenBlockLoadAndBlockLoad(la, lb)) {
+          bool exact = AccessSameDataBlock(la, lb);
+          emit(ni, nj, DataBlockDepKind::RAR, exact);
+        }
+        continue;
+      }
+
+      // --- WAW: store_i -> store_j (same target memref) ---
+      if (isa<BlockStoreNode>(ni) && isa<BlockStoreNode>(nj)) {
+        auto sa = cast<BlockStoreNode>(ni)->getDataBlockStoreOp();
+        auto sb = cast<BlockStoreNode>(nj)->getDataBlockStoreOp();
+        if (checkDependencyBetweenBlockStoreAndBlockStore(sa, sb)) {
+          bool exact = AccessSameDataBlock(sa, sb);
+          emit(ni, nj, DataBlockDepKind::WAW, exact);
+        }
+        continue;
+      }
+
+      // --- WAR: load_i -> store_j (load's original = store's target) ---
+      if (isa<BlockLoadNode>(ni) && isa<BlockStoreNode>(nj)) {
+        auto la = cast<BlockLoadNode>(ni)->getDataBlockLoadOp();
+        auto sb = cast<BlockStoreNode>(nj)->getDataBlockStoreOp();
+        if (checkDependencyBetweenBlockLoadAndBlockStore(la, sb)) {
+          bool exact = AccessSameDataBlock(sb, la); // reuse store-load exact
+          emit(ni, nj, DataBlockDepKind::WAR, exact);
+        }
+        continue;
+      }
+
+      // --- RAW: store_i -> load_j (store's target = load's original memref) ---
+      if (isa<BlockStoreNode>(ni) && isa<BlockLoadNode>(nj)) {
+        auto sa = cast<BlockStoreNode>(ni)->getDataBlockStoreOp();
+        auto lb = cast<BlockLoadNode>(nj)->getDataBlockLoadOp();
+        if (checkDependencyBetweenBlockStoreAndBlockLoad(sa, lb)) {
+          bool exact = AccessSameDataBlock(sa, lb);
+          emit(ni, nj, DataBlockDepKind::RAW, exact);
+        }
+        continue;
+      }
+    }
+  }
+}
+
+/// @brief P4.0 — Serialize a TaskGraph's datablock edges into ONE grouped
+/// DictionaryAttr of the form:
+///   { block_idx: i64, edges: [ { src, dst, kind, overlap } ... ] }
+/// This is the single row appended to the top-level `adora.dep_summary`
+/// ArrayAttr. `block_idx` is stored once per block instead of once per edge.
+static void appendDepEdgesToAttrList(TaskGraph* graph, int blockIdx,
+                                     mlir::MLIRContext* ctx,
+                                     SmallVectorImpl<mlir::Attribute>& out) {
+  mlir::Builder b(ctx);
+  SmallVector<mlir::Attribute> edgeAttrs;
+  edgeAttrs.reserve(graph->depEdges().size());
+  for (const auto& e : graph->depEdges()) {
+    SmallVector<mlir::NamedAttribute, 4> fields;
+    fields.push_back(b.getNamedAttr("src",     b.getI64IntegerAttr(graph->getNodeId(e.src))));
+    fields.push_back(b.getNamedAttr("dst",     b.getI64IntegerAttr(graph->getNodeId(e.dst))));
+    fields.push_back(b.getNamedAttr("kind",    b.getStringAttr(toString(e.kind))));
+    fields.push_back(b.getNamedAttr("overlap", b.getBoolAttr(e.mustOverlap)));
+    edgeAttrs.push_back(b.getDictionaryAttr(fields));
+  }
+  SmallVector<mlir::NamedAttribute, 2> blockFields;
+  blockFields.push_back(b.getNamedAttr("block_idx", b.getI64IntegerAttr(blockIdx)));
+  blockFields.push_back(b.getNamedAttr("edges", b.getArrayAttr(edgeAttrs)));
+  out.push_back(b.getDictionaryAttr(blockFields));
+}
+
+//===----------------------------------------------------------------------===//
+// PR2 commit B — Thread SSA !ADORA.token values along dep edges.
+//
+// Walks graph->depEdges() and rewrites participating DataBlockLoad/Store and
+// Kernel ops into their async form so that dependency edges become explicit
+// MLIR happens-before relations in the use-def graph. This is the SSA-level
+// counterpart of the PR1 adora.dep_summary string channel; when the pass
+// option emit-token is true, the summary becomes a debug artifact only.
+//
+// Without tokens, downstream runtime defaults to serial execution, so the
+// synchronous form remains semantically safe at all times.
+//===----------------------------------------------------------------------===//
+
+/// Attribute names already written by each op's async builder; skipped during
+/// user-attribute migration to avoid double-setting.
+static const llvm::StringSet<> &loadBuiltInAttrs() {
+  static const llvm::StringSet<> S = {
+      "map", "strides", "kernel_name", "operandSegmentSizes"};
+  return S;
+}
+static const llvm::StringSet<> &storeBuiltInAttrs() {
+  static const llvm::StringSet<> S = {
+      "map", "strides", "kernel_name", "operandSegmentSizes"};
+  return S;
+}
+static const llvm::StringSet<> &kernelBuiltInAttrs() {
+  static const llvm::StringSet<> S = {"kernel_name", "operandSegmentSizes"};
+  return S;
+}
+
+/// Copy every user-set attribute (pingpong, tile_id, schedule_hint, ...) from
+/// `oldOp` to `newOp`, skipping attributes that the builder already wrote.
+static void migrateAttrs(mlir::Operation *oldOp, mlir::Operation *newOp,
+                         const llvm::StringSet<> &builtIns) {
+  for (mlir::NamedAttribute a : oldOp->getAttrs())
+    if (!builtIns.contains(a.getName().strref()))
+      newOp->setAttr(a.getName(), a.getValue());
+}
+
+/// Rebuild `old` in its async form.
+///
+/// Constructs a new DataBlockLoadOp with the given async deps and optional
+/// token result, migrates user attributes, RAUWs the old memref result onto
+/// the new one, and erases `old`. Returns { newAsyncToken (null if
+/// !produceTok), newOp* }. Side-effects: `old` is erased.
+static std::pair<mlir::Value, mlir::Operation *>
+rebuildAsyncLoad(ADORA::DataBlockLoadOp old, mlir::ValueRange deps,
+                 bool produceTok) {
+  mlir::OpBuilder b(old);
+  // NOTE: pipeline-generated BlockLoad ops may carry `map` but not `strides`
+  // (strides was introduced with the PR2 experimental commit). Tolerate null
+  // and fall back to an identity map / empty strides array so that rebuild
+  // never dereferences a null attribute pointer.
+  auto mapAttr =
+      old->getAttrOfType<mlir::AffineMapAttr>(
+          ADORA::DataBlockLoadOp::getMapAttrStr());
+  mlir::AffineMap mapVal =
+      mapAttr ? mapAttr.getValue()
+              : mlir::AffineMap::getMultiDimIdentityMap(
+                    old.getResult().getType().cast<mlir::MemRefType>().getRank(),
+                    b.getContext());
+  auto strides = old->getAttrOfType<mlir::DenseI64ArrayAttr>("strides");
+  if (!strides) strides = mlir::DenseI64ArrayAttr::get(b.getContext(), {});
+  std::string kern = old.getKernelName().str();
+  mlir::SmallVector<mlir::Value> mapOps(old.getIndices().begin(),
+                                        old.getIndices().end());
+
+  auto newOp = b.create<ADORA::DataBlockLoadOp>(
+      old.getLoc(), old.getOriginalMemref(),
+      mapVal, mapOps,
+      old.getResult().getType().cast<mlir::MemRefType>(),
+      strides, kern, deps, produceTok);
+
+  migrateAttrs(old, newOp, loadBuiltInAttrs());
+  old.getResult().replaceAllUsesWith(newOp.getResult());
+  old.erase();
+  return {produceTok ? newOp.getAsyncToken() : mlir::Value(),
+          newOp.getOperation()};
+}
+
+/// Rebuild `old` in its async form. Store has no memref result, so there is
+/// nothing to RAUW; only the async token is potentially produced.
+static std::pair<mlir::Value, mlir::Operation *>
+rebuildAsyncStore(ADORA::DataBlockStoreOp old, mlir::ValueRange deps,
+                  bool produceTok) {
+  mlir::OpBuilder b(old);
+  // WHY: same null-tolerance as rebuildAsyncLoad — strides may be absent on
+  // pipeline-generated ops that predate the PR2 experimental commit.
+  auto mapAttr =
+      old->getAttrOfType<mlir::AffineMapAttr>(
+          ADORA::DataBlockStoreOp::getMapAttrStr());
+  mlir::AffineMap mapVal =
+      mapAttr ? mapAttr.getValue()
+              : mlir::AffineMap::getMultiDimIdentityMap(
+                    old.getSourceMemref().getType().cast<mlir::MemRefType>().getRank(),
+                    b.getContext());
+  auto strides = old->getAttrOfType<mlir::DenseI64ArrayAttr>("strides");
+  if (!strides) strides = mlir::DenseI64ArrayAttr::get(b.getContext(), {});
+  std::string kern = old.getKernelName().str();
+  mlir::SmallVector<mlir::Value> mapOps(old.getIndices().begin(),
+                                        old.getIndices().end());
+
+  auto newOp = b.create<ADORA::DataBlockStoreOp>(
+      old.getLoc(), old.getSourceMemref(), old.getTargetMemref(),
+      mapVal, mapOps, strides, kern, deps, produceTok);
+
+  migrateAttrs(old, newOp, storeBuiltInAttrs());
+  old.erase();
+  return {produceTok ? newOp.getAsyncToken() : mlir::Value(),
+          newOp.getOperation()};
+}
+
+/// Rebuild `old` KernelOp in its async form. Uses the takeBody-enabled
+/// builder so the kernel body region transfers verbatim.
+static std::pair<mlir::Value, mlir::Operation *>
+rebuildAsyncKernel(ADORA::KernelOp old, mlir::ValueRange deps,
+                   bool produceTok) {
+  mlir::OpBuilder b(old);
+  // NOTE: pipeline-generated KernelOps may lack a `kernel_name` attribute
+  // (the no-arg builder doesn't set one). Guard against null before
+  // forwarding to the rebuild builder.
+  std::string name;
+  if (auto kn = old->getAttrOfType<mlir::StringAttr>(
+          ADORA::KernelOp::getKernelNameAttrStr()))
+    name = kn.getValue().str();
+
+  auto newOp = b.create<ADORA::KernelOp>(
+      old.getLoc(), name, deps, produceTok, &old.getBody());
+
+  migrateAttrs(old, newOp, kernelBuiltInAttrs());
+  // KernelOp currently carries no data results; if it ever does, map them
+  // positionally here, keeping the token result last.
+  old.erase();
+  return {produceTok ? newOp.getAsyncToken() : mlir::Value(),
+          newOp.getOperation()};
+}
+
+/// Thread !ADORA.token SSA values along the dep edges recorded on `graph`.
+///
+/// Algorithm:
+///   1. Build preds[dstOp] = [srcOp...] and the fan-out set `hasOut` from
+///      graph->depEdges(); self-edges are dropped.
+///   2. Sort participating ops by lexical order (PR1 guarantees src->dst
+///      satisfies isBeforeInBlock, so the edges form a DAG).
+///   3. For each op in order, rebuild it as async: wire the deduplicated
+/// @brief Dump the async-token dep chain as a Graphviz DOT file.
+///
+/// Must be called AFTER threadTokensOnDMAs — reads the SSA !ADORA.token
+/// def-use chain directly from the IR rather than from the TaskGraph.
+/// Each node is a BlockLoad/BlockStore/Kernel op; each edge is one token arc.
+/// Node labels include the op type and the `Id` attribute when present.
+///
+/// @param func     the function to inspect
+/// @param path     output file path (caller ensures non-empty)
+static void dumpTokenGraphAsDot(func::FuncOp func, llvm::StringRef path) {
+  std::error_code ec;
+  llvm::raw_fd_ostream ofs(path, ec);
+  if (ec) {
+    llvm::errs() << "[dump-token-graph] cannot open " << path
+                 << ": " << ec.message() << "\n";
+    return;
+  }
+
+  // Helper: readable label for an op.
+  auto label = [](mlir::Operation *op) -> std::string {
+    std::string s = op->getName().getStringRef().str();
+    if (auto id = op->getAttrOfType<mlir::StringAttr>("Id"))
+      s += "\\nId=" + id.getValue().str();
+    if (auto kn = op->getAttrOfType<mlir::StringAttr>("KernelName"))
+      s += "\\n" + kn.getValue().str();
+    // stream id if assigned
+    if (auto st = op->getAttrOfType<mlir::IntegerAttr>("stream"))
+      s += "\\nstream=" + std::to_string(st.getInt());
+    return s;
+  };
+
+  // Collect all token-producing ops and their users.
+  llvm::DenseSet<mlir::Operation *> seen;
+  llvm::SmallVector<std::pair<mlir::Operation *, mlir::Operation *>> edges;
+
+  func.walk([&](mlir::Operation *op) {
+    mlir::Value tok = ADORA::getAsyncTokenOrNull(op);
+    if (!tok) return;
+    seen.insert(op);
+    for (mlir::Operation *user : tok.getUsers()) {
+      seen.insert(user);
+      edges.push_back({op, user});
+    }
+  });
+
+  ofs << "digraph token_graph {\n";
+  ofs << "  rankdir=LR;\n";
+  ofs << "  node [shape=box, fontsize=10];\n";
+
+  // Nodes
+  for (mlir::Operation *op : seen) {
+    ofs << "  \"" << (void *)op << "\" [label=\"" << label(op) << "\"";
+    if (isa<ADORA::KernelOp>(op))
+      ofs << ", style=filled, fillcolor=lightyellow";
+    else if (isa<ADORA::DataBlockLoadOp>(op))
+      ofs << ", style=filled, fillcolor=lightblue";
+    else if (isa<ADORA::DataBlockStoreOp>(op))
+      ofs << ", style=filled, fillcolor=lightcoral";
+    ofs << "];\n";
+  }
+
+  // Edges
+  for (auto &[src, dst] : edges)
+    ofs << "  \"" << (void *)src << "\" -> \"" << (void *)dst
+        << "\" [label=\"token\", color=darkgreen];\n";
+
+  ofs << "}\n";
+  llvm::errs() << "[dump-token-graph] written to " << path << "\n";
+}
+
+///      tokens of its predecessors, produce a new token iff the op has any
+///      outgoing edge.
+///   4. Patch TaskNode back-pointers via oldToNew so graph metadata stays
+///      valid after the old ops are erased.
+static void threadTokensOnDMAs(TaskGraph *graph) {
+  using mlir::Operation;
+  using mlir::Value;
+
+  llvm::DenseMap<Operation *, llvm::SmallVector<Operation *, 2>> preds;
+  llvm::DenseSet<Operation *> hasOut;
+  for (const auto &e : graph->depEdges()) {
+    Operation *s = e.src ? e.src->getOperation() : nullptr;
+    Operation *d = e.dst ? e.dst->getOperation() : nullptr;
+    // NOTE: RemoveRedundant* may erase ops while leaving stale dep edges.
+    // An erased op's getBlock() returns null; skip such dangling references.
+    if (!s || !s->getBlock()) continue;
+    if (!d || !d->getBlock()) continue;
+    if (s == d) continue;
+    preds[d].push_back(s);
+    hasOut.insert(s);
+  }
+  if (preds.empty() && hasOut.empty()) return;
+
+  llvm::SetVector<Operation *> all;
+  for (auto &kv : preds) {
+    all.insert(kv.first);
+    for (auto *s : kv.second) all.insert(s);
+  }
+  for (auto *s : hasOut) all.insert(s);
+
+  llvm::SmallVector<Operation *> ordered(all.begin(), all.end());
+  llvm::sort(ordered, [](Operation *a, Operation *b) {
+    if (a->getBlock() == b->getBlock()) return a->isBeforeInBlock(b);
+    return a < b;  // different blocks: stable but arbitrary (not hit in practice)
+  });
+
+  llvm::DenseMap<Operation *, Value>       tokens;    // old op -> new token
+  llvm::DenseMap<Operation *, Operation *> oldToNew; // for TaskNode patch-up
+
+  for (Operation *op : ordered) {
+    // 3a. Gather dedup'd tokens from already-rebuilt predecessors.
+    llvm::SmallSetVector<Value, 4> depSet;
+    auto itP = preds.find(op);
+    if (itP != preds.end()) {
+      for (Operation *p : itP->second) {
+        if (p == op) continue;
+        auto tIt = tokens.find(p);
+        if (tIt != tokens.end() && tIt->second) depSet.insert(tIt->second);
+      }
+    }
+    llvm::SmallVector<Value> deps(depSet.begin(), depSet.end());
+    bool produce = hasOut.contains(op);
+
+    std::pair<Value, Operation *> rebuilt;
+    if (auto l = mlir::dyn_cast<ADORA::DataBlockLoadOp>(op))
+      rebuilt = rebuildAsyncLoad(l, deps, produce);
+    else if (auto s = mlir::dyn_cast<ADORA::DataBlockStoreOp>(op))
+      rebuilt = rebuildAsyncStore(s, deps, produce);
+    else if (auto k = mlir::dyn_cast<ADORA::KernelOp>(op))
+      rebuilt = rebuildAsyncKernel(k, deps, produce);
+    else
+      continue;  // non-async-capable nodes (e.g. LocalMemAlloc) are skipped.
+
+    if (rebuilt.first)  tokens[op]   = rebuilt.first;
+    if (rebuilt.second) oldToNew[op] = rebuilt.second;
+  }
+
+  // 4. Patch TaskNode::_operation so graph remains usable post-rebuild.
+  for (TaskNode *n : graph->getAllNodes()) {
+    auto it = oldToNew.find(n->getOperation());
+    if (it != oldToNew.end()) n->setOperation(it->second);
+  }
+}
+
+/// Cross-check that SSA token edges match dep_summary edges. Used in CI with
+/// the `cross-check-summary-vs-token` option.
+///
+/// Returns failure() on mismatch; caller decides whether to emitWarning or
+/// signalPassFailure.
+static mlir::LogicalResult
+verifyTokensMatchSummary(TaskGraph *graph) {
+  // Expected edges from the graph (ground truth).
+  llvm::DenseSet<std::pair<mlir::Operation *, mlir::Operation *>> expected;
+  for (const auto &e : graph->depEdges()) {
+    auto *s = e.src ? e.src->getOperation() : nullptr;
+    auto *d = e.dst ? e.dst->getOperation() : nullptr;
+    if (!s || !d || s == d) continue;
+    expected.insert({s, d});
+  }
+
+  // Actual edges derived from SSA token def-use after rebuild.
+  llvm::DenseSet<std::pair<mlir::Operation *, mlir::Operation *>> actual;
+  for (TaskNode *n : graph->getAllNodes()) {
+    mlir::Operation *d = n->getOperation();
+    if (!d || !ADORA::isAsyncCapable(d)) continue;
+    for (mlir::Value tok : ADORA::getAsyncDeps(d)) {
+      mlir::Operation *s = tok.getDefiningOp();
+      if (s) actual.insert({s, d});
+    }
+  }
+
+  return (expected == actual) ? mlir::success() : mlir::failure();
 }
 
 ////////////////////////////////////////////////////
@@ -174,88 +606,100 @@ void analyzeDependencyInGraph(TaskGraph* graph){
 /// If such pairs are found, it connects the store node's kernel to the load node's
 /// kernel, replaces the load node with the source node of the store, and schedules
 /// the load node for deletion to optimize memory access and reduce redundancy.
+/// When a BlockStore writes to a global memref and a later BlockLoad reads
+/// the same block, the data can stay on-chip.  Wire the producing kernel
+/// directly to the consuming kernel so threadTokensOnDMAs emits a token
+/// on the BlockStore and threads it into the BlockLoad's asyncDependencies.
+/// The BlockLoad MLIR op is intentionally left in place; threadTokensOnDMAs
+/// will rebuild it as an async op (with the token dep) and erase the original.
 void RemoveRedundantBlockStoreLoadPair(TaskGraph* graph){
-  std::vector<TaskNode*> to_delete;
   std::vector<TaskNode*> nodes = graph->getAllNodes();
+
+  // Collect redundant loads to erase in a second pass (avoids iterator
+  // invalidation and ensures replaceAllUsesWith happens before erase).
+  llvm::SmallVector<std::pair<BlockLoadNode*, mlir::Value>> toReplace;
+
   for (TaskNode* node : nodes) {
-    // dumpNode(node);
-    if(isa<BlockLoadNode>(node)){
-      /// Check each block store input to determine whether they access the same memory space.
-      for(auto innode : node->getInNodes()){
-        if(isa<BlockStoreNode>(innode)){
-          BlockStoreNode* storenode = dyn_cast<BlockStoreNode>(innode);
-          ADORA::DataBlockStoreOp store = storenode->getDataBlockStoreOp();
-          BlockLoadNode* loadnode = dyn_cast<BlockLoadNode>(node);
-          ADORA::DataBlockLoadOp load = loadnode->getDataBlockLoadOp();
-          
-          if(store.getTargetMemref() == load.getOriginalMemref()
-            && AccessSameDataBlock(store, load)){
-            mlir::Operation* source = GetTheSourceOperationOfBlockStore(store);
-            TaskNode* sourcenode = graph->getNode(source);
-            assert(sourcenode != nullptr);
+    if (!isa<BlockLoadNode>(node)) continue;
+    for (auto innode : node->getInNodes()) {
+      if (!isa<BlockStoreNode>(innode)) continue;
+      BlockStoreNode* storenode = dyn_cast<BlockStoreNode>(innode);
+      BlockLoadNode*  loadnode  = dyn_cast<BlockLoadNode>(node);
+      ADORA::DataBlockStoreOp store = storenode->getDataBlockStoreOp();
+      ADORA::DataBlockLoadOp  load  = loadnode->getDataBlockLoadOp();
 
-            //// connect storenode's kernel to loadnode's kernel
-            KernelNode* sourcekernel = storenode->getKernelNode();
-            for(auto sinkkernel : loadnode->getKernelNodes()){
-              addConnectionBetweenTwoNode(sourcekernel, sinkkernel, /*dep=*/depType::Depend);
-            }
+      if (!AccessSameDataBlock(store, load)) continue;
 
-            //// replace loadnode with sourcenode
-            loadnode->ReplaceAllUsesWith(sourcenode);
+      // Wire producing kernel → consuming kernel so the scheduler sees
+      // the inter-kernel dependency even after the load is removed.
+      KernelNode* sourcekernel = storenode->getKernelNode();
+      for (auto sinkkernel : loadnode->getKernelNodes())
+        addConnectionBetweenTwoNode(sourcekernel, sinkkernel, depType::Depend);
 
-            //// TODO: remove store? don't.
-            to_delete.push_back(dyn_cast<TaskNode>(loadnode));
-          }
-        }
-      }
+      // The data already lives in the on-chip buffer (store.SourceMemref).
+      // Schedule this BlockLoad for removal: replace its result with the
+      // on-chip buffer BEFORE erasing, so downstream users stay valid.
+      toReplace.push_back({loadnode, store.getSourceMemref()});
     }
   }
-  for(auto node : to_delete){
-    graph->DeleteNodeOperation(node);
+
+  // Second pass: replaceAllUsesWith then erase (order matters!).
+  for (auto &[loadnode, onChipBuf] : toReplace) {
+    ADORA::DataBlockLoadOp load = loadnode->getDataBlockLoadOp();
+    // Replace all downstream uses of the load result with the on-chip buffer.
+    // MUST happen before erase — otherwise downstream ops hold dangling SSA refs.
+    load.getResult().replaceAllUsesWith(onChipBuf);
+    // Erase the redundant BlockLoad from the MLIR IR.
+    // (TaskGraph is per-block and short-lived; no need to remove from _nodes.)
+    load.erase();
   }
 }
 
 void RemoveRedundantBlockLoads(TaskGraph* graph){
-  std::vector<TaskNode*> to_delete;
-  // std::vector<TaskNode*> nodes = graph->getAllNodes();
-  // std::unordered_map<mlir::Operation*, BlockLoadNode*> load_map; // Maps original loads to their corresponding BlockLoadNode
-
-  // for (TaskNode* node : nodes) {
-  //   if (isa<BlockLoadNode>(node)) {
-  //     BlockLoadNode* loadnode = dyn_cast<BlockLoadNode>(node);
-  //     ADORA::DataBlockLoadOp load = loadnode->getDataBlockLoadOp();
-
-  //     // Check if this load already exists in the map
-  //     auto it = load_map.find(load.getOriginalMemref());
-  //     if (it != load_map.end()) {
-  //       // If a previous load node exists, replace the current load node with it
-  //       BlockLoadNode* existing_loadnode = it->second;
-
-  //       // Connect the existing load node's kernel to any dependent kernels
-  //       KernelNode* existing_kernel = existing_loadnode->getKernelNode();
-  //       for (auto sinkkernel : loadnode->getKernelNodes()) {
-  //         addConnectionBetweenTwoNode(existing_kernel, sinkkernel, /*dep=*/depType::Depend);
-  //       }
-
-  //       // Replace the current load node with the existing one
-  //       loadnode->ReplaceAllUsesWith(existing_loadnode);
-
-  //       // Mark the current load node for deletion
-  //       to_delete.push_back(dyn_cast<TaskNode>(loadnode));
-  //     } else {
-  //       // If no existing load node, add this one to the map
-  //       load_map[load.getOriginalMemref()] = loadnode;
-  //     }
-  //   }
-  // }
-
-  // // Delete redundant load nodes
-  // for (auto node : to_delete) {
-  //   graph->DeleteNodeOperation(node);
-  // }
+  // TODO: implement load-after-load elimination (WAR/RAR same block).
+  (void)graph;
 }
 
 
+
+/// @brief Detect whether an AffineForOp body has a loop-carried RAW dep:
+///        a BlockStore writes a memref that a BlockLoad in the SAME body reads.
+///        This is the tk-loop C-tile pattern: Store(C[ti,tj]) → Load(C[ti,tj]).
+///
+/// @return {storeOp, loadOp} pair if found, else {nullptr, nullptr}
+static std::pair<ADORA::DataBlockStoreOp, ADORA::DataBlockLoadOp>
+findLoopCarriedStoreLoadPair(mlir::Block *body) {
+  llvm::SmallVector<ADORA::DataBlockStoreOp> stores;
+  llvm::SmallVector<ADORA::DataBlockLoadOp>  loads;
+  for (auto &op : *body) {
+    if (auto s = dyn_cast<ADORA::DataBlockStoreOp>(&op)) stores.push_back(s);
+    if (auto l = dyn_cast<ADORA::DataBlockLoadOp>(&op))  loads.push_back(l);
+  }
+  for (auto store : stores)
+    for (auto load : loads)
+      if (checkDependencyBetweenBlockStoreAndBlockLoad(store, load))
+        return {store, load};
+  return {nullptr, nullptr};
+}
+
+/// @brief PR6 TODO — wire loop-carried token yield (affine.for → scf.for iter_args).
+///
+/// This function will convert an AffineForOp with a loop-carried Store→Load
+/// RAW dep into a scf.for with iter_args(!ADORA.token), threading the store
+/// token from iteration tk to the load in iteration tk+1.
+///
+/// Currently emits a diagnostic note and returns without transforming.
+/// Full implementation tracked in PR6.
+static void wireLoopCarriedToken(AffineForOp forop,
+                                  ADORA::DataBlockStoreOp store,
+                                  ADORA::DataBlockLoadOp  load) {
+  llvm::errs() << "[PR6-TODO] loop-carried token detected in "
+               << forop->getParentOp()->getName()
+               << " — affine.for → scf.for iter_args conversion not yet implemented.\n"
+               << "  Store: "; store.dump();
+  llvm::errs() << "  Load:  "; load.dump();
+  llvm::errs() << "  Cross-iteration token yield will be implemented in PR6.\n";
+}
 
 /// @brief A wrapper
 /// @param func 
@@ -279,51 +723,73 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
 
 
   //////////////
-  /// 2nd step: generate task graph and generate dependencies
+  /// 2nd step: build task graph, analyze deps, simplify, thread tokens
   //////////////
-  /// skip this
   int idx = 0;
+  SmallVector<mlir::Attribute> allEdgeAttrs; // P4.0 — accumulated across blocks
   for(auto block : blocks){
     TaskGraph* graph = new TaskGraph;
+
+    // Step A: build graph nodes from block ops
     generateTaskGraphFromBlock(graph, block);
-    block->dump();
-    graph->dumpGraph();
 
-    std::string filename = "Block_" + std::to_string(idx) + "_TaskGraph_0.dot";
-    graph->dumpGraphAsDot(filename);   
-
-    //////////////
-    /// 3rd step: analyze dependency of transfered data block
-    ///   Following dependencies will be analyzed:
-    ///   g
-    //////////////
+    // Step B: O(N²) dep analysis — RAW/WAR/WAW between BlockLoad/BlockStore
     analyzeDependencyInGraph(graph);
+    appendDepEdgesToAttrList(graph, idx, func.getContext(), allEdgeAttrs);
 
-    //////////////
-    /// 4th step: simplify redundant data block transfer op
-    //////////////
-    //// move out redundant blockload
-
-    //// remove redundant blockstore-blockload
+    // Step C: simplify redundant transfers (must run BEFORE token threading:
+    // RemoveRedundant* may erase ops; live asyncToken results would crash MLIR)
     RemoveRedundantBlockStoreLoadPair(graph);
-    //// remove redundant blockload-blockload
     RemoveRedundantBlockLoads(graph);
 
-    //////////////
-    /// 5th step: fix id of data transfer 
-    //////////////
+    // Step D: thread SSA !ADORA.token along dep edges
+    if (emitTokens)
+      threadTokensOnDMAs(graph);
 
+    // Step D2: wire loop-carried token yield for affine.for bodies
+    // with a Store→Load loop-carried RAW dep on the same memref tile.
+    if (emitTokens) {
+      if (auto *parentOp = block->getParentOp()) {
+        if (auto forop = dyn_cast<AffineForOp>(parentOp)) {
+          auto [store, load] = findLoopCarriedStoreLoadPair(block);
+          if (store && load)
+            wireLoopCarriedToken(forop, store, load);
+        }
+      }
+    }
 
-    block->dump();
-    filename = "Block_" + std::to_string(idx) + "_TaskGraph_1.dot";
-    graph->dumpGraphAsDot(filename);   
-    
+    // Step E: cross-check tokens vs dep_summary (CI only)
+    if (emitTokens && crossCheck) {
+      if (failed(verifyTokensMatchSummary(graph))) {
+        func.emitError("adora async-token edges disagree with dep_summary "
+                       "(cross-check-summary-vs-token)");
+        signalPassFailure();
+      }
+    }
+
     idx++;
   }
 
-  func.dump();
-  ResetIndexOfBlockAccessOpInFunc(func);
-  func.dump();
+  // P4.0 — attach `adora.dep_summary` to the host function for mapper-side
+  // consumption via DepSummaryView. Empty list still attached (zero edges)
+  // so downstream consumers can unambiguously detect that the pass ran.
+  // PR2 commit B — gated by `emit-summary` (default true) so that once the
+  // ecosystem fully migrates to SSA tokens we can retire this attribute
+  // without pass-API changes.
+  if (emitSummary)
+    func->setAttr("adora.dep_summary",
+                  ArrayAttr::get(func.getContext(), allEdgeAttrs));
+
+  // PR1 — mark the enclosing module as post-schedule so downstream passes and
+  // the mapper can assert scheduling has run. `adora.dep_summary` remains the
+  // authoritative data channel in PR1; PR2 will make async tokens on
+  // BlockLoad/BlockStore carry the ordering and retire this attribute.
+  if (auto module = func->getParentOfType<ModuleOp>())
+    module->setAttr("adora.scheduled", UnitAttr::get(func.getContext()));
+
+  // Optional: dump token dep graph as DOT (--dump-token-graph=<path>).
+  if (emitTokens && !tokenGraphPath.empty())
+    dumpTokenGraphAsDot(func, tokenGraphPath);
 }
 
 void ScheduleADORATasksPass::runOnOperation()

@@ -72,10 +72,9 @@ namespace mlir
             // 1. Get Systolic configuration (uniformly parse algorithm, loopOrder, tileSizes, etc.)
             SystolicConfig config = parseSystolicConfig(op);
 
-            // --- runtime-online-v0 §2 pipeline_schedule_select emission (Conv) ---
-            // See Agent-Compiler-notes/MainLine/pipeline_schedule_api.md. The
-            // call is advisory in v0: the compiler still dispatches on
-            // `config.dataflow` to preserve existing attribute invariants.
+            // --- runtime-online-v0 §2 pipeline_schedule_select (Conv) ---
+            // Consult the online ranker; if it picks a non-default candidate,
+            // override config.dataflow before dispatching to the lowering fn.
             {
                 mlir::ADORA::PipelineScheduleRequest req;
                 req.op_kind = (config.algorithm == ComputeAlgorithm::Conv_Direct)
@@ -92,7 +91,16 @@ namespace mlir
                         req.candidates.push_back({std::string(alt), true, 1});
                     }
                 }
-                (void)mlir::ADORA::schedulePipeline(req);
+                auto d = mlir::ADORA::schedulePipeline(req);
+                if (d.applied_index != 0 && d.applied != nullptr) {
+                    const std::string& sk = d.applied->stationary_kind;
+                    if (sk == getDataflowStrategyStrRef(DataflowStrategy::WeightStationary).str())
+                        config.dataflow = DataflowStrategy::WeightStationary;
+                    else if (sk == getDataflowStrategyStrRef(DataflowStrategy::InputStationary).str())
+                        config.dataflow = DataflowStrategy::InputStationary;
+                    else if (sk == getDataflowStrategyStrRef(DataflowStrategy::OutputStationary).str())
+                        config.dataflow = DataflowStrategy::OutputStationary;
+                }
             }
             // --- end hook ---
 

@@ -147,10 +147,10 @@ bool TensorDataflowGen::visitOp(ADORATensor::GemmOp op){
   ArrayRef<int64_t> tilesize = SystolicPara.getTileSize();
   StringRef strategy = SystolicPara.getStationaryKind();
 
-  // --- runtime-online-v0 §2 pipeline_schedule_select emission (Gemm) ---
-  // See Agent-Compiler-notes/MainLine/pipeline_schedule_api.md. Helper builds
-  // the JSON, calls the ranker, emits AgentTrace. Result is advisory: we keep
-  // `strategy` as the dispatch key to preserve upstream attribute invariants.
+  // --- runtime-online-v0 §2 pipeline_schedule_select (Gemm) ---
+  // Consult the online ranker; if it picks a non-default candidate, override
+  // the stationary strategy derived from the op attribute.
+  std::string chosenStrategy = strategy.str();
   {
     mlir::ADORA::PipelineScheduleRequest req;
     req.op_kind = "gemm";
@@ -162,18 +162,20 @@ bool TensorDataflowGen::visitOp(ADORATensor::GemmOp op){
         req.candidates.push_back({std::string(alt), true, 1});
       }
     }
-    (void)mlir::ADORA::schedulePipeline(req);
+    auto d = mlir::ADORA::schedulePipeline(req);
+    if (d.applied_index != 0 && d.applied != nullptr)
+      chosenStrategy = d.applied->stationary_kind;
   }
   // --- end hook ---
 
   AffineForOp newfor;
-  if(strategy == getDataflowStrategyStrRef(DataflowStrategy::WeightStationary)){
+  if(chosenStrategy == getDataflowStrategyStrRef(DataflowStrategy::WeightStationary).str()){
     newfor = TiledWeightStationaryGemm(opbuilder, op, tilesize); 
   }
-  else if(strategy == getDataflowStrategyStrRef(DataflowStrategy::InputStationary)){
+  else if(chosenStrategy == getDataflowStrategyStrRef(DataflowStrategy::InputStationary).str()){
     newfor = TiledInputStationaryGemm(opbuilder, op, tilesize); 
   }
-  else if(strategy == getDataflowStrategyStrRef(DataflowStrategy::OutputStationary)){
+  else if(chosenStrategy == getDataflowStrategyStrRef(DataflowStrategy::OutputStationary).str()){
     newfor = TiledOutputStationaryGemm(opbuilder, op, tilesize); 
   }
   

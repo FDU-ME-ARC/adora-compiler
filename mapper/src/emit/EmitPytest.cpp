@@ -72,6 +72,41 @@ namespace
     /// pingpong indicator
     bool _pingpong = false;
 
+    // --- PR4-F: async task tracking ---
+    // task index counter, increments each time we emit a create_task
+    int _taskIdx = 0;
+    // map from BlockStore Operation* → Python task variable name
+    llvm::DenseMap<mlir::Operation*, std::string> _storeToTask;
+
+    // Read hardware stream ID from the 'stream : i32' attribute (PR4-A).
+    // Falls back to 0 when the attribute is absent.
+    int getStreamId(mlir::Operation *op) {
+      if (auto a = op->getAttrOfType<mlir::IntegerAttr>("stream"))
+        return static_cast<int>(a.getInt());
+      return 0;
+    }
+
+    // Collect Python task variable names that the given BlockStore op
+    // depends on (via asyncDependencies tokens from upstream BlockStores).
+    llvm::SmallVector<std::string> getDepsTaskNames(ADORA::DataBlockStoreOp op) {
+      llvm::SmallVector<std::string> names;
+      for (mlir::Value tok : ADORA::getAsyncDeps(op.getOperation())) {
+        mlir::Operation *producer = tok.getDefiningOp();
+        if (!producer) continue;
+        auto it = _storeToTask.find(producer);
+        if (it != _storeToTask.end())
+          names.push_back(it->second);
+      }
+      return names;
+    }
+
+    // True if this store's token result has any downstream users
+    // (i.e., another op consumes the token → this task feeds a downstream task).
+    bool storeHasConsumers(ADORA::DataBlockStoreOp op) {
+      mlir::Value tok = ADORA::getAsyncTokenOrNull(op.getOperation());
+      return tok && !tok.use_empty();
+    }
+
     /// @brief emit a new op to python, add this one to op_name_list.
     /// @param mlirop the corresponding mlir operation
     /// @param type the C type of this operation
@@ -394,9 +429,23 @@ namespace
 
         if (IsLastBlockStoreOp(op))
         {
+          int streamId = getStreamId(op.getOperation());
+          auto depNames = getDepsTaskNames(op);
+          bool hasDeps = !depNames.empty();
+          bool hasConsumers = storeHasConsumers(op);
+
+          // Emit gather for upstream deps before running this task.
+          if (hasDeps) {
+            indent() << "await asyncio.gather(";
+            for (size_t i = 0; i < depNames.size(); ++i) {
+              if (i) _os << ", ";
+              _os << depNames[i];
+            }
+            _os << ")\n";
+          }
+
           if (_pingpong == true)
           {
-            // indent() << "stream = runtime.create_stream()\n\n";
             indent() << "await aux_stream_pingpong(stream=stream,\n";
             indent() << "\tconfig_id = 1 if pingpong==False else 2,\n";
             indent() << "\tiptrs=iptrs, idata=idata,\n";
@@ -408,9 +457,21 @@ namespace
             indent() << "optrs.clear(), odata.clear(), olen.clear()\n\n";
             indent() << "pingpong = not pingpong\n";
           }
+          else if (hasConsumers)
+          {
+            // This task feeds downstream consumers — launch concurrently.
+            std::string taskVar = "task_" + std::to_string(_taskIdx++);
+            _storeToTask[op.getOperation()] = taskVar;
+            indent() << taskVar << " = asyncio.create_task(aux_stream(\n";
+            indent() << "\tstream=stream_" << streamId << ", config=configs,\n";
+            indent() << "\tiptrs=iptrs, idata=idata,\n";
+            indent() << "\toptrs=optrs, odata=odata, olen=olen,\n";
+            indent() << "))\n\n";
+            indent() << "configs=[]; iptrs=[]; idata=[]\n";
+            indent() << "optrs=[]; odata=[]; olen=[]\n\n";
+          }
           else
           {
-            // indent() << "stream = runtime.create_stream()\n\n";
             indent() << "await aux_stream(\n";
             indent() << "\tstream=stream, config=configs,\n";
             indent() << "\tiptrs=iptrs, idata=idata,\n";
@@ -573,9 +634,22 @@ namespace
 
       if (IsLastBlockStoreOp(op))
       {
+        int streamId = getStreamId(op.getOperation());
+        auto depNames = getDepsTaskNames(op);
+        bool hasDeps = !depNames.empty();
+        bool hasConsumers = storeHasConsumers(op);
+
+        if (hasDeps) {
+          indent() << "await asyncio.gather(";
+          for (size_t i = 0; i < depNames.size(); ++i) {
+            if (i) _os << ", ";
+            _os << depNames[i];
+          }
+          _os << ")\n";
+        }
+
         if (_pingpong == true)
         {
-          // indent() << "stream = runtime.create_stream()\n\n";
           indent() << "await aux_stream_pingpong(stream=stream,\n";
           indent() << "\tconfig_id = 1 if pingpong==False else 2,\n";
           indent() << "\tiptrs=iptrs, idata=idata,\n";
@@ -586,9 +660,20 @@ namespace
           indent() << "optrs.clear(), odata.clear(), olen.clear()\n\n";
           indent() << "pingpong = not pingpong\n";
         }
+        else if (hasConsumers)
+        {
+          std::string taskVar = "task_" + std::to_string(_taskIdx++);
+          _storeToTask[op.getOperation()] = taskVar;
+          indent() << taskVar << " = asyncio.create_task(aux_stream(\n";
+          indent() << "\tstream=stream_" << streamId << ", config=configs,\n";
+          indent() << "\tiptrs=iptrs, idata=idata,\n";
+          indent() << "\toptrs=optrs, odata=odata, olen=olen,\n";
+          indent() << "))\n\n";
+          indent() << "configs=[]; iptrs=[]; idata=[]\n";
+          indent() << "optrs=[]; odata=[]; olen=[]\n\n";
+        }
         else
         {
-          // indent() << "stream = runtime.create_stream()\n\n";
           indent() << "await aux_stream(\n";
           indent() << "\tstream=stream, config=configs,\n";
           indent() << "\tiptrs=iptrs, idata=idata,\n";

@@ -285,6 +285,11 @@ void IOScheduler::ioSchedule(Mapping *mapping)
                 && decision.selected_index < static_cast<int>(cands.size())) {
                 chosenIdx = decision.selected_index;
             }
+            // Apply agent's choice: override greedy selection when agent picked a different bank.
+            if (chosenIdx != 0) {
+                selBank  = cands[chosenIdx].bank_id;
+                selStart = cands[chosenIdx].start;
+            }
             if (AgentTrace::enabled()) {
                 std::ostringstream evt;
                 evt << "{\"task_id\":" << _task_id
@@ -294,22 +299,19 @@ void IOScheduler::ioSchedule(Mapping *mapping)
                     << ",\"selected_index\":" << decision.selected_index
                     << ",\"applied_index\":" << chosenIdx
                     << ",\"applied_bank_id\":" << cands[chosenIdx].bank_id
-                    << ",\"default_bank_id\":" << selBank
+                    << ",\"default_bank_id\":" << cands[0].bank_id
                     << ",\"used_fallback\":" << (decision.used_fallback ? "true" : "false")
-                    << ",\"advisory_only\":true"
+                    << ",\"advisory_only\":false"
                     << ",\"rationale\":\"" << agentTraceJsonEscape(decision.rationale) << "\""
                     << ",\"error\":\"" << agentTraceJsonEscape(decision.error) << "\"}";
                 AgentTrace::emit("allocate_spad_banks", "runtime_decision", evt.str());
             }
-            // NOTE: we do not override (selBank, selStart, ioInfo.dep) yet —
-            // the greedy's pick is authoritative for this landing. Overriding
-            // will require unwinding _dep_cost/_ex_dep counters consistently.
         }
         // --- end hook ---
 
         ioInfo.addr = selBank * sizeofBank + selStart;
         ioInfo.iobAddr = ((selBank - minBank) * sizeofBank + selStart) / dataByte;    
-        ioInfo.dep = 0;/// Really?  
+        ioInfo.dep = 0;
         _dfg_io_infos[id] = ioInfo;        
         // std::cout << id << ": " << ioInfo.addr << std::endl;
         _cur_bank_status[selBank].used = isStore ? 2 : 1;

@@ -12,22 +12,6 @@ namespace ADORA {
 // class TaskNode
 /////////////////////////////
 
-void TaskNode::delNodeOperation(){
-  std::vector<TaskNode *> innodes = getInNodes();
-  for (TaskNode* innode : innodes) {
-    delInNode(innode);
-    innode->delOutNode(this);
-  }
-
-  std::vector<TaskNode *> outnodes = getOutNodes();
-  for (TaskNode* outnode : outnodes) {
-    delOutNode(outnode);
-    outnode->delInNode(this);
-  }
-
-  this->getOperation()->erase();
-}
-
 void TaskNode::addInNode(TaskNode* node){
   if(_innodes.count(node) == 0){
     /// is not an Input
@@ -130,45 +114,6 @@ void TaskNode::delOutNode(TaskNode* node){
 
 std::vector<TaskNode *> TaskNode::getOutNodes(){
   return _outnodes;
-}
-
-/// @brief Replaces all uses of the current TaskNode with a new TaskNode.
-/// @param newnode A pointer to the new TaskNode that will replace the current node.
-/// @return A pointer to the new TaskNode after replacing all uses.
-TaskNode* TaskNode::ReplaceAllUsesWith(TaskNode* newnode){
-  // newnode->dump();
-  mlir::Operation* newop = newnode->getOperation();
-  // newop->dump();
-  
-  // _operation
-
-  std::vector<TaskNode *> outnodes = getOutNodes();
-  for(TaskNode* outnode : outnodes){
-    /// upgrade operation dependency
-    mlir::Operation* outop = outnode->getOperation();
-    depType dep = outnode->getInNodeDep(this);
-    // outop->dump();
-
-    if(isa<KernelNode>(outnode)){
-      outop->walk([&](mlir::Operation* _op) {
-        _op->replaceUsesOfWith(this->getOperation()->getResult(0), newop->getResult(0));
-      });
-      newnode->addOutNode(outnode);
-      dyn_cast<KernelNode>(outnode)->addInNode(newnode, dep);
-    }
-    else{
-      outop->replaceUsesOfWith(this->getOperation()->getResult(0), newop->getResult(0));
-      newnode->addOutNode(outnode);
-      outnode->addInNode(newnode, dep);
-    }
-    // outop->dump();
-
-    /// upgrade node connection
-    delOutNode(outnode);
-    outnode->delInNode(this);
-  }
-
-  return newnode;
 }
 
 //////////////////

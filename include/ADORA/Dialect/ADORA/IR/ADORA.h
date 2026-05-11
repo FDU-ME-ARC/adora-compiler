@@ -33,11 +33,12 @@
 #include "ADORA/Dialect/ADORA/IR/ADORAOpsDialect.h.inc"
 #endif
 
+// Types are provided via KernelOp/ADORAKernelOp.h (included here first) so
+// ADORA::TokenType is visible to the generated BlockLoad/BlockStore classes.
+#include "ADORA/Dialect/ADORA/IR/KernelOp/ADORAKernelOp.h"
+
 #define GET_OP_CLASSES
 #include "ADORA/Dialect/ADORA/IR/ADORAOps.h.inc"
-#include "ADORA/Dialect/ADORA/IR/ADORAOpsTypes.h.inc"
-
-#include "ADORA/Dialect/ADORA/IR/KernelOp/ADORAKernelOp.h"
 //===----------------------------------------------------------------------===//
 // ADORA Dialect Helpers
 //===----------------------------------------------------------------------===//

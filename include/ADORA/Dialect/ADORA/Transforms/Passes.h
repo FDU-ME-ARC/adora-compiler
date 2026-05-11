@@ -28,6 +28,17 @@ std::unique_ptr<OperationPass<ModuleOp>> createADORALoopUnrollAndJamPass();
 std::unique_ptr<OperationPass<ModuleOp>> createADORAAutoUnrollPass();
 std::unique_ptr<OperationPass<func::FuncOp>> createScheduleADORATasksPass();
 
+// PR3: lower !ADORA.token def-use chains to adora.event.create/signal/wait/destroy.
+std::unique_ptr<OperationPass<func::FuncOp>> createLowerAsyncTokensPass();
+
+// PR4 commit A: assign stream IDs to async-capable ops before lowering tokens.
+std::unique_ptr<OperationPass<func::FuncOp>> createAssignStreamsPass();
+
+// PR4 commit E: eliminate redundant BlockStore/BlockLoad pairs for buffer reuse.
+std::unique_ptr<OperationPass<func::FuncOp>> createBufferReusePass();
+
+
+
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//

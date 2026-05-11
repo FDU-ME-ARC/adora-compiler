@@ -36,13 +36,19 @@ include "mlir/Interfaces/InferTypeOpInterface.td"
 //===----------------------------------------------------------------------===//
 
 def ADORA_KernelOp : ADORA_Op<"kernel">,
-    Arguments<(ins)>,
-    Results<(outs)> {
+    Arguments<(ins Variadic<ADORA_TokenType>:$asyncDependencies)>,
+    Results<(outs Optional<ADORA_TokenType>:$asyncToken)> {
   let summary = "ADORA KernelOp contains a kernel";
 
   let description = [{
     ADORA.kernel define a region that the body of the rigion
-    is a kernel which generated from a affine.for/scf.for/linalg.generic
+    is a kernel which generated from a affine.for/scf.for/linalg.generic.
+
+    Optionally produces an `!ADORA.token` and consumes a variadic list of
+    tokens via `asyncDependencies`, encoding happen-before ordering between
+    ADORA async ops. Token fields are populated by `adora-schedule-tasks`;
+    ops created pre-schedule have an empty `asyncDependencies` list and may
+    omit `asyncToken`.
   }];
 
   let regions = (region AnyRegion:$body);
@@ -51,7 +57,19 @@ def ADORA_KernelOp : ADORA_Op<"kernel">,
 
   let builders = [
     OpBuilder<(ins)>,
-    OpBuilder<(ins "std::string":$KernelName)>
+    OpBuilder<(ins "std::string":$KernelName)>,
+    OpBuilder<(ins "std::string":$KernelName,
+                   "::mlir::ValueRange":$asyncDependencies,
+                   "bool":$produceToken)>,
+    // Rebuild-friendly async builder: same as the previous one but transfers
+    // the body region from `takeFromRegion` via Region::takeBody, instead of
+    // creating an empty body. Used by ScheduleADORATasks' threadTokensOnDMAs
+    // to rewrite an existing sync KernelOp into its async form while keeping
+    // the original kernel body intact.
+    OpBuilder<(ins "std::string":$KernelName,
+                   "::mlir::ValueRange":$asyncDependencies,
+                   "bool":$produceToken,
+                   "::mlir::Region*":$takeFromRegion)>
   ];
   
   let extraClassDeclaration = [{
@@ -96,6 +114,7 @@ def ADORA_KernelOp : ADORA_Op<"kernel">,
 
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
+  let hasCanonicalizer = 1; // PR2: DedupAsyncDeps
 }
 
 

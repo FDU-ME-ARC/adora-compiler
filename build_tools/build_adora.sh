@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build ADORA against LLVM/MLIR. By default, runs build_llvm.sh first if MLIR is missing.
-#
+#s
 # Usage:
 #   ./build_tools/build_adora.sh              # LLVM (if needed) + ADORA
 #   ./build_tools/build_adora.sh --skip-llvm  # only ADORA; LLVM paths must already be valid
@@ -14,9 +14,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+BUILD_DIR="${PROJECT_ROOT}/build"
+
+### set LLVM_BUILD_DIR to your own llvm path
+LLVM_BUILD_DIR="${LLVM_BUILD_DIR:-$HOME/CGRVOPT/llvm-project-onnx/build}"
+LLVM_INSTALL_DIR="${LLVM_INSTALL_DIR:-${LLVM_BUILD_DIR}}"
 
 SKIP_LLVM=0
-for arg in "$@"; do
+for arg in "$@"; od
   if [[ "${arg}" == "--skip-llvm" ]]; then
     SKIP_LLVM=1
   fi

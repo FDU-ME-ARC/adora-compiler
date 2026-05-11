@@ -385,6 +385,100 @@ def ScheduleADORATasks: Pass<"adora-schedule-tasks", "func::FuncOp"> {
       2.
   }];
   let constructor = "mlir::ADORA::createScheduleADORATasksPass()";
+  // PR2 commit B: drive the !ADORA.token threading + dep_summary emission
+  // + (CI-only) cross-check between the two representations.
+  let options = [
+    Option<"emitTokens", "emit-token", "bool", /*default=*/"false",
+           "Thread SSA !ADORA.token values through DataBlockLoad/Store/Kernel "
+           "ops based on graph dep edges. When false (default) the pass only "
+           "emits the PR1 adora.dep_summary attribute, preserving byte-level "
+           "output compatibility with pre-PR2 baselines.">,
+    Option<"emitSummary", "emit-summary", "bool", /*default=*/"true",
+           "Emit the PR1 adora.dep_summary DictionaryAttr on the enclosing "
+           "func. Kept on during the PR2 gradual-rollout window.">,
+    Option<"crossCheck", "cross-check-summary-vs-token", "bool",
+           /*default=*/"false",
+           "Assert that the SSA token edges match the dep_summary edges. "
+           "CI-only; fails the pass on mismatch.">,
+    Option<"tokenGraphPath", "dump-token-graph", "std::string",
+           /*default=*/"\"\"",
+           "If non-empty, write a Graphviz DOT file of the async-token dep "
+           "chain to this path after threading.  Nodes are BlockLoad/Store/Kernel "
+           "ops; edges are the SSA !ADORA.token def-use arcs.  Requires "
+           "emit-token=true.">
+  ];
+}
+
+//===----------------------------------------------------------------------===//
+// PR4 commit A — Assign stream IDs to async-capable ops
+//===----------------------------------------------------------------------===//
+def AssignStreams : Pass<"adora-assign-streams", "func::FuncOp"> {
+  let summary = "Assign stream IDs to async-capable ops in the token dep graph.";
+  let description = [{
+    Topologically sorts async-capable ops (DataBlockLoad/Store, Kernel) by their
+    asyncDependencies SSA edges, then greedily assigns a stream ID to each op:
+      - Root ops (no asyncDependencies) receive the next available stream ID
+        (round-robin, wrapping at max-streams).
+      - Dependent ops inherit the minimum stream ID among their predecessors.
+
+    The assigned stream ID is written as a `stream : i32` attribute on each op.
+    This annotation is consumed by adora-lower-async-tokens (PR4 commit B) to
+    emit adora.signal/wait on the correct hardware stream.
+
+    Must run before adora-lower-async-tokens (which strips asyncToken results
+    and asyncDependencies operands).
+  }];
+  let constructor = "mlir::ADORA::createAssignStreamsPass()";
+  let options = [
+    Option<"maxStreams", "max-streams", "unsigned", /*default=*/"4",
+           "Maximum number of distinct streams to allocate (default: 4).">
+  ];
+}
+
+//===----------------------------------------------------------------------===//
+// PR4 commit E — Buffer reuse: eliminate redundant BlockStore/BlockLoad pairs
+//===----------------------------------------------------------------------===//
+def BufferReuse : Pass<"adora-buffer-reuse", "func::FuncOp"> {
+  let summary = "Eliminate redundant BlockStore/BlockLoad pairs for on-chip buffer reuse.";
+  let description = [{
+    After adora-schedule-tasks has threaded !ADORA.token deps, any
+    BlockLoad async [%tok] that reads back exactly the same block that
+    the token-producing BlockStore just wrote can be replaced with the
+    BlockStore's source (typically a LocalMemAlloc).  The BlockLoad is
+    erased; the data stays on-chip and flows directly to the consumer.
+
+    Must run after adora-schedule-tasks="emit-token=true" and before
+    adora-lower-async-tokens (which erases asyncDependencies).
+  }];
+  let constructor = "mlir::ADORA::createBufferReusePass()";
+}
+
+//===----------------------------------------------------------------------===//
+// PR3 commit B — Lower !ADORA.token def-use chains to explicit event ops
+//===----------------------------------------------------------------------===//
+def LowerAsyncTokens : Pass<"adora-lower-async-tokens", "func::FuncOp"> {
+  let summary = "Lower SSA !ADORA.token edges to adora.event.create/signal/wait/destroy.";
+  let description = [{
+    Walks each FuncOp and for every async-capable op (DataBlockLoad/Store,
+    Kernel) that produces an asyncToken, inserts:
+      adora.event.create  (before the producer)
+      adora.signal        (after the producer)
+    And for every consumer op with asyncDependencies, inserts:
+      adora.wait          (before the consumer)
+    Finally inserts adora.event.destroy after the last use of each event.
+    The source ops are rebuilt in their synchronous form (no asyncToken,
+    no asyncDependencies) after the event ops are wired.
+
+    Option drop-tokens-only skips event emission and just removes the token
+    operands/results; useful for debugging the lowering chain.
+  }];
+  let constructor = "mlir::ADORA::createLowerAsyncTokensPass()";
+  let options = [
+    Option<"dropTokensOnly", "drop-tokens-only", "bool", /*default=*/"false",
+           "Drop SSA tokens without emitting event ops (debug mode).">,
+    Option<"defaultStream", "default-stream", "int32_t", /*default=*/"0",
+           "Stream id passed to adora.signal/wait (reserved for PR4 multi-stream).">
+  ];
 }
 
 //===----------------------------------------------------------------------===//

@@ -37,7 +37,7 @@ include "mlir/Interfaces/InferTypeOpInterface.td"
 // Explicit Data Block Movement Operation (Load and Store)
 //===----------------------------------------------------------------------===//
 
-def ADORA_DataBlockLoadOp: ADORA_Op<"BlockLoad", []>{
+def ADORA_DataBlockLoadOp: ADORA_Op<"BlockLoad", [AttrSizedOperandSegments]>{
   let summary = "Load a part of the whole array data block to a faster memory where HW accelerator can access.";
   let description = [{
     This operation takes in an array memref,a header index of the data block which will be moved, and the block size.
@@ -76,13 +76,21 @@ def ADORA_DataBlockLoadOp: ADORA_Op<"BlockLoad", []>{
                    "MemRefType":$resultType, "DenseI64ArrayAttr":$strides)>,
     OpBuilder<(ins "Value":$DataBlock, "AffineMap":$map, "ValueRange":$operands, 
                    "MemRefType":$resultType, "ArrayRef<int64_t>":$strides)>,
+
+    //// async form (strides may be null, KernelName may be empty)
+    OpBuilder<(ins "Value":$DataBlock, "AffineMap":$map, "ValueRange":$operands,
+                   "MemRefType":$resultType, "DenseI64ArrayAttr":$strides,
+                   "std::string":$KernelName,
+                   "ValueRange":$asyncDependencies, "bool":$produceToken)>,
   ];
   
 	//Ignore Variadic<Index>:$offset at this moment
   let arguments = (ins Arg<AnyMemRef, "the reference to load from", [MemRead]>:$OriginalMemref
-                  , Variadic<Index>:$indices);
+                  , Variadic<Index>:$indices
+                  , Variadic<ADORA_TokenType>:$asyncDependencies);
   
-  let results = (outs AnyStaticShapeMemRef: $result);
+  let results = (outs AnyStaticShapeMemRef:$result,
+                      Optional<ADORA_TokenType>:$asyncToken);
   let extraClassDeclaration = [{
     // unsigned int BlockLen = 0;
     // void setBlockLen(unsigned l){ BlockLen = l;};
@@ -143,7 +151,7 @@ def ADORA_DataBlockLoadOp: ADORA_Op<"BlockLoad", []>{
       return getOriginalMemrefType();
     }
     operand_range getMapOperands() {
-      return {operand_begin() + 1, operand_end()};
+      return getIndices();
     }
     void setMapOperands(mlir::ValueRange newoperands);
 
@@ -170,10 +178,11 @@ def ADORA_DataBlockLoadOp: ADORA_Op<"BlockLoad", []>{
 
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
+  let hasCanonicalizer = 1; // PR2: DropUnusedAsyncToken / DedupAsyncDeps
 }
 
 
-def ADORA_DataBlockStoreOp: ADORA_Op<"BlockStore", []>{
+def ADORA_DataBlockStoreOp: ADORA_Op<"BlockStore", [AttrSizedOperandSegments]>{
   let summary = "Store a smaller memref to a bigger memref at a specified position.";
   let description = [{
     This operation takes in a source array memref which comes from a BlockLoad Op. After the excution 
@@ -210,14 +219,21 @@ def ADORA_DataBlockStoreOp: ADORA_Op<"BlockStore", []>{
                    "AffineMap":$map, "ValueRange":$operands, "DenseI64ArrayAttr":$strides)>,
 
     OpBuilder<(ins "Value":$SourceMemref, "Value":$TargetMemref, 
-                   "AffineMap":$map, "ValueRange":$operands, "ArrayRef<int64_t>":$strides)>, 
+                   "AffineMap":$map, "ValueRange":$operands, "ArrayRef<int64_t>":$strides)>,
+
+    //// async form
+    OpBuilder<(ins "Value":$SourceMemref, "Value":$TargetMemref,
+                   "AffineMap":$map, "ValueRange":$operands,
+                   "DenseI64ArrayAttr":$strides, "std::string":$KernelName,
+                   "ValueRange":$asyncDependencies, "bool":$produceToken)>,
   ];
 
 	//Ignore Variadic<Index>:$offset at this moment
   let arguments = (ins Arg<AnyMemRef, "A memref from a BlockLoad Op", [MemWrite]>:$SourceMemref
                   , Arg<AnyMemRef, "the reference to store to", [MemWrite]>:$TargetMemref
-                  , Variadic<Index>:$indices);
-  // let results = (outs AnyStaticShapeMemRef: $result); /// No results for 
+                  , Variadic<Index>:$indices
+                  , Variadic<ADORA_TokenType>:$asyncDependencies);
+  let results = (outs Optional<ADORA_TokenType>:$asyncToken);
   let extraClassDeclaration = [{
     // unsigned int BlockLen = 0;
     // void setBlockLen(unsigned l){ BlockLen = l;};
@@ -277,7 +293,7 @@ def ADORA_DataBlockStoreOp: ADORA_Op<"BlockStore", []>{
     }
 
     operand_range getMapOperands() {
-      return {operand_begin() + 2, operand_end()}; // + 2 or + 1?
+      return getIndices();
     }
     void setMapOperands(mlir::ValueRange newoperands);
 
@@ -304,6 +320,7 @@ def ADORA_DataBlockStoreOp: ADORA_Op<"BlockStore", []>{
 
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
+  let hasCanonicalizer = 1; // PR2: DropUnusedAsyncToken / DedupAsyncDeps
 }
 
 
@@ -639,6 +656,39 @@ def DeinterleaverOp : ADORA_Op<"deinterleaver">{
   // let assemblyFormat = "$in attr-dict `:` type($in) `->` type($out)";
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// PR3 — Async event primitives
+//
+// Appear only after `adora-lower-async-tokens` runs. They replace SSA
+// !ADORA.token def-use chains with explicit runtime-level synchronisation.
+// Lowered to llvm.call @adoraEvent*/adoraEventRecord/adoraEventWait by
+// `adora-to-llvm-async-runtime` (PR3 commit C).
+//===----------------------------------------------------------------------===//
+
+def ADORA_EventCreateOp : ADORA_Op<"event.create", []> {
+  let summary = "Allocate an ADORA async event handle (!ADORA.token).";
+  let results = (outs ADORA_TokenType:$token);
+  let assemblyFormat = "attr-dict `->` type($token)";
+}
+
+def ADORA_EventDestroyOp : ADORA_Op<"event.destroy", []> {
+  let summary = "Release an ADORA async event handle.";
+  let arguments = (ins ADORA_TokenType:$token);
+  let assemblyFormat = "$token attr-dict `:` type($token)";
+}
+
+def ADORA_SignalOp : ADORA_Op<"signal", []> {
+  let summary = "Signal (record) an ADORA async event on a stream.";
+  let arguments = (ins ADORA_TokenType:$token, I32Attr:$stream);
+  let assemblyFormat = "$token `on` `stream` $stream attr-dict `:` type($token)";
+}
+
+def ADORA_WaitOp : ADORA_Op<"wait", []> {
+  let summary = "Wait for an ADORA async event on a stream before proceeding.";
+  let arguments = (ins ADORA_TokenType:$token, I32Attr:$stream);
+  let assemblyFormat = "$token `on` `stream` $stream attr-dict `:` type($token)";
 }
 
 #endif // ADORA_OPS

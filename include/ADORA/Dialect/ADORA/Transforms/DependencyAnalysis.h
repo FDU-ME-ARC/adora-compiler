@@ -245,6 +245,18 @@ bool checkDependencyBetweenBlockStoreAndBlockLoad(ADORA::DataBlockStoreOp& store
 
 bool AccessSameDataBlock(ADORA::DataBlockLoadOp& op1, ADORA::DataBlockLoadOp& op2); // load-load
 bool AccessSameDataBlock(ADORA::DataBlockStoreOp& op1, ADORA::DataBlockLoadOp& op2); // store-load
+bool AccessSameDataBlock(ADORA::DataBlockStoreOp& op1, ADORA::DataBlockStoreOp& op2); // store-store (P1.0)
+
+// P1.0 — DataBlock-level RAR / WAW / WAR dependency checkers.
+// Semantics: same-backing-memref && (exact-same block || constant-box overlap).
+// Callers own the lexical-order check when direction matters (WAR).
+bool checkDependencyBetweenBlockLoadAndBlockLoad(
+    ADORA::DataBlockLoadOp& a,  ADORA::DataBlockLoadOp& b);
+bool checkDependencyBetweenBlockStoreAndBlockStore(
+    ADORA::DataBlockStoreOp& a, ADORA::DataBlockStoreOp& b);
+bool checkDependencyBetweenBlockLoadAndBlockStore(
+    ADORA::DataBlockLoadOp&  load,
+    ADORA::DataBlockStoreOp& store);
 
 } // namespace ADORA
 } // namespace mlir

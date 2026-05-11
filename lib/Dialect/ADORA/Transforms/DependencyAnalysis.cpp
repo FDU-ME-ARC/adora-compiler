@@ -552,83 +552,115 @@ static bool boxesOverlap(const Box &a, const Box &b) {
   return true;
 }
 
-// NOTE: non-const refs because generated op getters are not const-qualified.
-static bool mayOverlapDataBlockRegion(ADORA::DataBlockStoreOp &store,
-                                      ADORA::DataBlockLoadOp  &load) {
-  /// Conservative overlap dependency check:
-  /// - Must refer to the same backing array (store.target == load.original).
-  /// - If constant bounds can be derived, check overlap using per-dim intervals.
-  /// - If bounds cannot be derived, return true (conservative: may overlap).
+//===----------------------------------------------------------------------===//
+// DataBlock-level dependency — unified core + thin adapters.
+//
+// A DataBlock access is described by the quadruple (memref, map, operands,
+// shape). Given two such quadruples, `mayOverlapBoxesByQuadruple` judges
+// whether the two box regions may overlap. Every load-load / store-store /
+// load-store / store-load overlap checker is a one-liner on top of this.
+//
+// Similarly, every exact-same / checker wrapper is a one-liner.
+//===----------------------------------------------------------------------===//
 
-  if (store.getTargetMemref() != load.getOriginalMemref())
+/// Core overlap predicate — zero knowledge of LoadOp / StoreOp types.
+/// Returns:
+///   false  — provably disjoint (different memrefs, or disjoint const boxes)
+///   true   — possibly overlapping (same memref AND (overlapping const boxes
+///            OR at least one side could not be folded to a constant box))
+static bool mayOverlapBoxesByQuadruple(mlir::Value memA,
+                                       mlir::AffineMap mapA,
+                                       mlir::ValueRange opsA,
+                                       llvm::ArrayRef<int64_t> shapeA,
+                                       mlir::Value memB,
+                                       mlir::AffineMap mapB,
+                                       mlir::ValueRange opsB,
+                                       llvm::ArrayRef<int64_t> shapeB) {
+  if (memA != memB)
     return false;
-
-  auto shapeS = getBlockShapeForStore(store);
-  auto shapeL = getBlockShapeForLoad(load);
-
-  Box boxS, boxL;
-  bool okS = tryGetConstantBoxFromMapAndShape(store.getAffineMap(),
-                                             store.getMapOperands(),
-                                             shapeS, boxS);
-  bool okL = tryGetConstantBoxFromMapAndShape(load.getAffineMap(),
-                                             load.getMapOperands(),
-                                             shapeL, boxL);
-
-  if (!okS || !okL)
-    return true; // Conservative fallback.
-
-  return boxesOverlap(boxS, boxL);
-}
-
-
-
-/// Exact same datablock: BlockLoad vs BlockLoad.
-/// Two loads access the exact same data block if:
-///   1) They use the same original backing memref.
-///   2) After canonicalization, they have identical affine map and map operands.
-bool AccessSameDataBlock(ADORA::DataBlockLoadOp &op1,
-                         ADORA::DataBlockLoadOp &op2) {
-  if (op1.getOriginalMemref() != op2.getOriginalMemref())
-    return false;
-
-  return canonicalizeAndEqual(op1.getAffineMap(), op1.getMapOperands(),
-                              op2.getAffineMap(), op2.getMapOperands());
-}
-
-/// Exact same datablock: BlockStore(target) vs BlockLoad(original).
-/// A store and a load access the exact same data block if:
-///   1) store.target == load.original (same backing array)
-///   2) After canonicalization, they have identical affine map and map operands.
-bool AccessSameDataBlock(ADORA::DataBlockStoreOp &store,
-                         ADORA::DataBlockLoadOp &load) {
-  if (store.getTargetMemref() != load.getOriginalMemref())
-    return false;
-
-  return canonicalizeAndEqual(store.getAffineMap(), store.getMapOperands(),
-                              load.getAffineMap(),  load.getMapOperands());
-}
-
-/// Dependency check between a BlockStore and a BlockLoad.
-/// There are two supported modes:
-///   - ExactSameBlock: dependent only if they access the exact same block.
-///   - OverlapConservative: dependent if their block regions overlap, or if
-///     overlap cannot be disproved (conservative).
-/// Dependency check between a BlockStore and a BlockLoad.
-/// Policy:
-///   - If they access the exact same block => dependent.
-///   - Otherwise, if their block regions may overlap => dependent (conservative).
-bool checkDependencyBetweenBlockStoreAndBlockLoad(ADORA::DataBlockStoreOp &store,
-                                                 ADORA::DataBlockLoadOp &load) {
-  // Different backing arrays => no dependency.
-  if (store.getTargetMemref() != load.getOriginalMemref())
-    return false;
-
-  // Fast path: exact same block.
-  if (AccessSameDataBlock(store, load))
+  Box boxA, boxB;
+  if (!tryGetConstantBoxFromMapAndShape(mapA, opsA, shapeA, boxA))
+    return true; // conservative
+  if (!tryGetConstantBoxFromMapAndShape(mapB, opsB, shapeB, boxB))
     return true;
+  return boxesOverlap(boxA, boxB);
+}
 
-  // Conservative overlap test (may return true if overlap cannot be disproved).
-  return mayOverlapDataBlockRegion(store, load);
+// NOTE: non-const refs because generated op getters are not const-qualified.
+static bool mayOverlapDataBlockRegion(ADORA::DataBlockStoreOp &s,
+                                      ADORA::DataBlockLoadOp  &l) {
+  return mayOverlapBoxesByQuadruple(
+      s.getTargetMemref(),  s.getAffineMap(), s.getMapOperands(), getBlockShapeForStore(s),
+      l.getOriginalMemref(), l.getAffineMap(), l.getMapOperands(), getBlockShapeForLoad(l));
+}
+
+static bool mayOverlapDataBlockRegion(ADORA::DataBlockLoadOp &a,
+                                      ADORA::DataBlockLoadOp &b) {
+  return mayOverlapBoxesByQuadruple(
+      a.getOriginalMemref(), a.getAffineMap(), a.getMapOperands(), getBlockShapeForLoad(a),
+      b.getOriginalMemref(), b.getAffineMap(), b.getMapOperands(), getBlockShapeForLoad(b));
+}
+
+static bool mayOverlapDataBlockRegion(ADORA::DataBlockStoreOp &a,
+                                      ADORA::DataBlockStoreOp &b) {
+  return mayOverlapBoxesByQuadruple(
+      a.getTargetMemref(), a.getAffineMap(), a.getMapOperands(), getBlockShapeForStore(a),
+      b.getTargetMemref(), b.getAffineMap(), b.getMapOperands(), getBlockShapeForStore(b));
+}
+
+static bool mayOverlapDataBlockRegion(ADORA::DataBlockLoadOp  &l,
+                                      ADORA::DataBlockStoreOp &s) {
+  return mayOverlapBoxesByQuadruple(
+      l.getOriginalMemref(), l.getAffineMap(), l.getMapOperands(), getBlockShapeForLoad(l),
+      s.getTargetMemref(),   s.getAffineMap(), s.getMapOperands(), getBlockShapeForStore(s));
+}
+
+//===----------------------------------------------------------------------===//
+// Exact-same-block predicates. Memref equality + canonicalized map equality.
+//===----------------------------------------------------------------------===//
+bool AccessSameDataBlock(ADORA::DataBlockLoadOp &a, ADORA::DataBlockLoadOp &b) {
+  return a.getOriginalMemref() == b.getOriginalMemref() &&
+         canonicalizeAndEqual(a.getAffineMap(), a.getMapOperands(),
+                              b.getAffineMap(), b.getMapOperands());
+}
+
+bool AccessSameDataBlock(ADORA::DataBlockStoreOp &s, ADORA::DataBlockLoadOp &l) {
+  return s.getTargetMemref() == l.getOriginalMemref() &&
+         canonicalizeAndEqual(s.getAffineMap(), s.getMapOperands(),
+                              l.getAffineMap(), l.getMapOperands());
+}
+
+bool AccessSameDataBlock(ADORA::DataBlockStoreOp &a, ADORA::DataBlockStoreOp &b) {
+  return a.getTargetMemref() == b.getTargetMemref() &&
+         canonicalizeAndEqual(a.getAffineMap(), a.getMapOperands(),
+                              b.getAffineMap(), b.getMapOperands());
+}
+
+//===----------------------------------------------------------------------===//
+// Checker wrappers. All four follow the same policy:
+//   dependent iff (exact-same block) OR (conservative overlap)
+// Both sub-predicates already short-circuit on memref-inequality, so the
+// wrapper is pure disjunction.
+//===----------------------------------------------------------------------===//
+bool checkDependencyBetweenBlockStoreAndBlockLoad(ADORA::DataBlockStoreOp &s,
+                                                  ADORA::DataBlockLoadOp  &l) {
+  return AccessSameDataBlock(s, l) || mayOverlapDataBlockRegion(s, l);
+}
+
+bool checkDependencyBetweenBlockLoadAndBlockLoad(ADORA::DataBlockLoadOp &a,
+                                                 ADORA::DataBlockLoadOp &b) {
+  return AccessSameDataBlock(a, b) || mayOverlapDataBlockRegion(a, b);
+}
+
+bool checkDependencyBetweenBlockStoreAndBlockStore(ADORA::DataBlockStoreOp &a,
+                                                   ADORA::DataBlockStoreOp &b) {
+  return AccessSameDataBlock(a, b) || mayOverlapDataBlockRegion(a, b);
+}
+
+bool checkDependencyBetweenBlockLoadAndBlockStore(ADORA::DataBlockLoadOp  &l,
+                                                  ADORA::DataBlockStoreOp &s) {
+  // Reuse the (store, load) exact-same predicate — it's argument-symmetric.
+  return AccessSameDataBlock(s, l) || mayOverlapDataBlockRegion(l, s);
 }
 
 } // namespace

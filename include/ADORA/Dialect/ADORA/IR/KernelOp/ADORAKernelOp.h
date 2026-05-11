@@ -33,6 +33,9 @@
 #include "ADORA/Dialect/ADORA/IR/ADORAOpsDialect.h.inc"
 #endif
 
+#define GET_TYPEDEF_CLASSES
+#include "ADORA/Dialect/ADORA/IR/ADORAOpsTypes.h.inc"
+
 #define GET_OP_CLASSES
 #include "ADORA/Dialect/ADORA/IR/KernelOp/ADORAKernelOp.h.inc"
 #include "ADORA/Dialect/ADORA/IR/KernelOp/ADORAKernelOpTypes.h.inc"

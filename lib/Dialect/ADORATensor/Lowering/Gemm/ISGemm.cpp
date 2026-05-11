@@ -349,7 +349,7 @@ namespace mlir
                 BlockLoad.setStrides(ArrayRef<int64_t>({tile_row_size, 1}));
               }
 
-              A_in.push_back(BlockLoad);
+              A_in.push_back(BlockLoad.getResult());
             }
           }
 
@@ -379,7 +379,7 @@ namespace mlir
               BlockLoad.setStrides(ArrayRef<int64_t>({tile_row_size, 1}));
             }
 
-            A_in.push_back(BlockLoad);
+            A_in.push_back(BlockLoad.getResult());
           }
         }
         /////////////////////
@@ -408,7 +408,7 @@ namespace mlir
           BlockLoad.setId(std::to_string(BlockLoadStoreOpId++));
           setPingpongAttr(BlockLoad);
 
-          B_in.push_back(BlockLoad);
+          B_in.push_back(BlockLoad.getResult());
 
           /// has NO stride
         }
@@ -438,7 +438,7 @@ namespace mlir
           BlockLoad.setId(std::to_string(BlockLoadStoreOpId++));
           setPingpongAttr(BlockLoad);
 
-          C_in.push_back(BlockLoad);
+          C_in.push_back(BlockLoad.getResult());
 
           /// has stride
           if (temporal_count_dim_m != 1)

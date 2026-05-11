@@ -104,7 +104,7 @@ void emitTrace(const PipelineScheduleRequest& req,
        << (applied.double_buffer ? "true" : "false")
        << ",\"applied_prefetch_depth\":" << applied.prefetch_depth
        << ",\"used_fallback\":" << (d.used_fallback ? "true" : "false")
-       << ",\"advisory_only\":true"
+       << ",\"advisory_only\":false"
        << ",\"rationale\":\"" << agentTraceJsonEscape(d.rationale) << "\""
        << ",\"error\":\""     << agentTraceJsonEscape(d.error)     << "\"}";
     AgentTrace::emit(phase, "online_decision", os.str());

@@ -120,6 +120,46 @@ inline SmallVector<T> SetMergeForVector(const llvm::SmallVector<T>& v1, const ll
   return v;
 }
 
+//===----------------------------------------------------------------------===//
+// Async-token accessors (PR2)
+//
+// Uniform helpers to inspect the async form of the three async-capable ADORA
+// ops: DataBlockLoadOp / DataBlockStoreOp / KernelOp. Callers that do not
+// know the concrete op class use these to read asyncDependencies / asyncToken
+// without branching on op type themselves.
+//===----------------------------------------------------------------------===//
+
+/// Return the !ADORA.token produced by `op`, or a null Value when `op` is
+/// either not async-capable or currently in its synchronous form (i.e.,
+/// produceToken=false at construction time).
+inline ::mlir::Value getAsyncTokenOrNull(::mlir::Operation *op) {
+  if (auto l = ::mlir::dyn_cast_or_null<DataBlockLoadOp>(op))
+    return l.getAsyncToken();
+  if (auto s = ::mlir::dyn_cast_or_null<DataBlockStoreOp>(op))
+    return s.getAsyncToken();
+  if (auto k = ::mlir::dyn_cast_or_null<KernelOp>(op))
+    return k.getAsyncToken();
+  return {};
+}
+
+/// Return the asyncDependencies operand range of `op`. For non-async-capable
+/// ops, returns an empty OperandRange so callers can iterate unconditionally.
+inline ::mlir::OperandRange getAsyncDeps(::mlir::Operation *op) {
+  if (auto l = ::mlir::dyn_cast<DataBlockLoadOp>(op))
+    return l.getAsyncDependencies();
+  if (auto s = ::mlir::dyn_cast<DataBlockStoreOp>(op))
+    return s.getAsyncDependencies();
+  if (auto k = ::mlir::dyn_cast<KernelOp>(op))
+    return k.getAsyncDependencies();
+  return op->getOperands().take_front(0);
+}
+
+/// True iff `op` is one of the three async-capable ADORA ops.
+inline bool isAsyncCapable(::mlir::Operation *op) {
+  return ::mlir::isa_and_nonnull<DataBlockLoadOp, DataBlockStoreOp, KernelOp>(
+      op);
+}
+
 } // namespace ADORA
 } // namespace mlir
 
