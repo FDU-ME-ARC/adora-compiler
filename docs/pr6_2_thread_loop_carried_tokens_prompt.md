@@ -175,60 +175,117 @@ result，找不到则返回 null + 日志。
 
 ---
 
-## 3. 文件落点
+## 3. 文件落点（v4.1 — 嵌入式集成）
 
-### 新建
-- `lib/Dialect/ADORA/Transforms/ThreadLoopCarriedTokens.cpp`（~250 行）
+> **关键设计修正**：不再新增独立 pass。功能**嵌入 `ScheduleADORATasksPass`**。
+> 理由：LC 分析结果已在 ScheduleAdoraTasks 内部 in-memory 存在，拆独立 pass
+> 会把 `adora.lc_dep_summary`（调试 dump）被迫升格为 pass 间稳定契约。
+>
+> 同时借机清理 `ScheduleAdoraTasks.cpp`（当前 822 行，混有死代码 + 分析 + 改写）：
+> 纯分析 / 验证 / 小工具迁出到 `Analysis/` 或 `Utility/`，保留 IR 改写主线。
 
-### 修改
+### 分三类动作
 
-| 文件 | 改动 |
+#### A. 删除 `ScheduleAdoraTasks.cpp` 内的死代码（~60 行）
+- `generateTaskGraphFromBlock` 里被注释掉的 load-after-load 残块（约 line 117-125）
+- 函数末尾注释掉的"first, load-after-store"整块（约 line 150-165）
+- `ScheduleADORATasksInFunction` 开头对 `affineForOuterToSCF(func, 1)` 的调用
+  — v4 决策已弃用；函数本体仍留 `ADORAToSCF.cpp` 供他处可能使用
+
+#### B. 迁出到 `lib/Dialect/ADORA/Analysis/`（纯分析 / 验证）
+| 当前位置 | 迁到 | 备注 |
+|---|---|---|
+| `ScheduleAdoraTasks.cpp:185 analyzeDependencyInGraph` | `Analysis/TaskGraphDepAnalysis.cpp` | O(N²) RAW/WAR/WAW 边分析，纯只读 |
+| `ScheduleAdoraTasks.cpp:578 verifyTokensMatchSummary` | `Analysis/TaskGraphDepAnalysis.cpp` | CI cross-check，纯只读 |
+| `ScheduleAdoraTasks.cpp:683 collectEnclosingLoopsWithKernel` | `Analysis/LoopCarriedDep.cpp` | 已是 PR6.1 配套的 loop 枚举工具 |
+| `ScheduleAdoraTasks.cpp:263 appendDepEdgesToAttrList` | `Analysis/DepSummaryView.cpp`（已存在）| P4.0 序列化到 `adora.dep_summary` |
+| `ScheduleAdoraTasks.cpp:437 dumpTokenGraphAsDot` | `Analysis/DepSummaryView.cpp` | 调试可视化 |
+
+新增声明头文件：
+- `include/ADORA/Dialect/ADORA/Analysis/TaskGraphDepAnalysis.h`
+  — `analyzeDependencyInGraph(TaskGraph*)` + `verifyTokensMatchSummary(TaskGraph*)`
+
+#### C. 迁出到 `lib/Dialect/ADORA/Utility/`（小工具）
+| 当前位置 | 迁到 |
 |---|---|
-| `include/ADORA/Dialect/ADORA/Analysis/LoopCarriedDep.h` | 新增 `struct LCChain { Operation* producer; Operation* consumer; }` + `SmallVector<LCChain> groupEdgesIntoChains(const LoopCarriedDepResult&)` 声明 |
-| `lib/Dialect/ADORA/Analysis/LoopCarriedDep.cpp` | 实现 `groupEdgesIntoChains` |
-| `lib/Dialect/ADORA/Analysis/CMakeLists.txt` | 不需要改（同库） |
-| `include/ADORA/Dialect/ADORA/Transforms/Passes.td` | 新增 `ThreadLoopCarriedTokens` def（pass name: `adora-thread-loop-carried-tokens`，scope: `func::FuncOp`） |
-| `include/ADORA/Dialect/ADORA/Transforms/Passes.h` | 新增 `createThreadLoopCarriedTokensPass()` 声明 |
-| `lib/Dialect/ADORA/Transforms/CMakeLists.txt` | 注册新 cpp |
+| `ScheduleAdoraTasks.cpp:298-326 loadBuiltInAttrs / storeBuiltInAttrs / kernelBuiltInAttrs / migrateAttrs` | `Utility/Utility.cpp` 或新增 `Utility/AttrMigration.cpp` |
+
+#### D. 保留在 `ScheduleAdoraTasks.cpp`（IR 改写主线）
+- `generateTaskGraphFromBlock`（TaskGraph 构建，紧贴 schedule 主线）
+- `rebuildAsyncLoad / rebuildAsyncStore / rebuildAsyncKernel`（改 async deps，IR 改写）
+- `threadTokensOnDMAs`（块内 intra-iter token 编织，PR2 核心）
+- `RemoveRedundantBlockStoreLoadPair / RemoveRedundantBlockLoads`（冗余消除）
+- `ScheduleADORATasksPass` 类 + `ScheduleADORATasksInFunction`
+
+#### E. 新增 PR6.2 核心实现（嵌入 ScheduleAdoraTasks.cpp 或就近独立文件）
+- `lib/Dialect/ADORA/Transforms/ThreadLoopCarriedTokensImpl.cpp`
+  导出单函数：
+  ```cpp
+  LogicalResult threadLoopCarriedTokensOnAffineFor(
+      affine::AffineForOp forOp,
+      const analysis::LoopCarriedDepResult& result);
+  ```
+  由 `ScheduleAdoraTasksInFunction` 在 LC 分析拿到结果后**立即**调用。
+- 声明放 `include/ADORA/Dialect/ADORA/Transforms/ThreadLoopCarriedTokens.h`
+- `groupEdgesIntoChains` 放 `Analysis/LoopCarriedDep.{h,cpp}`（纯逻辑，属于分析）
+
+#### F. Pass option（开关 + 回滚通道）
+在 `Passes.td` 的 `ScheduleADORATasks` 加：
+```tablegen
+Option<"threadLCTokens", "thread-lc-tokens", "bool", /*default=*/"true",
+       "Rewrite affine.for with iter_args/affine.yield to carry "
+       "!ADORA.token across iterations (PR6.2).">
+```
 
 ### 不动
-- `lib/Dialect/ADORA/Lowering/ADORAToSCF.cpp`（`affineForOuterToSCF` 保留）
-- `ScheduleAdoraTasks.cpp`（PR6.1 产物消费方）
-- 现有 TaskGraph
+- `lib/Dialect/ADORA/Lowering/ADORAToSCF.cpp`（`affineForOuterToSCF` 留文件里，
+  仅从 ScheduleAdoraTasks 的调用点移除）
+- 现有 TaskGraph 数据结构 / API（瘦身留给独立 PR）
+- PR6.1 属性 `adora.lc_dep_summary` 生成逻辑（保留为调试 dump，本 PR 不依赖它）
 
 ---
 
-## 4. Pass 注册（TableGen 模板）
+## 4. 集成位点
 
-```tablegen
-def ThreadLoopCarriedTokens
-    : Pass<"adora-thread-loop-carried-tokens", "func::FuncOp"> {
-  let summary = "Thread !ADORA.token through affine.for iter_args based on "
-                "adora.lc_dep_summary, materializing loop-carried async deps.";
-  let description = [{
-    For every affine.for referenced by the `adora.lc_dep_summary` FuncOp
-    attribute (produced by --adora-schedule-tasks via the LoopCarriedDep
-    analysis), this pass rebuilds the loop in place with
-    `iter_args(!ADORA.token × N)` and inserts the corresponding
-    `affine.yield`, where N is the number of independent loop-carried
-    chains. The newly introduced iter_args are appended to the
-    `asyncDependencies` of the consumer op at iteration k+1, and the
-    producer op's token result is yielded back as the iter_arg for the
-    next iteration.
+在 `ScheduleAdoraTasks.cpp::ScheduleADORATasksInFunction` 中，PR6.1 的 LC 分析
+循环内**立即**调用改写：
 
-    The pass does NOT promote affine.for to scf.for (see
-    docs/affine_for_yield_token_verification.md for empirical proof that
-    affine.for fully supports custom token iter_args).
-  }];
-  let constructor =
-      "mlir::ADORA::createThreadLoopCarriedTokensPass()";
-  let dependentDialects = ["::mlir::ADORA::ADORADialect",
-                           "::mlir::affine::AffineDialect"];
+```cpp
+if (emitSummary || threadLCTokens) {
+  SmallVector<mlir::Attribute> lcAttrs;
+  int loopIdx = 0;
+  for (Operation *loopOp : analysis::collectEnclosingLoopsWithKernel(func)) {
+    auto r = analysis::analyzeLoopCarriedDeps(loopOp);
+    if (r.empty()) { loopIdx++; continue; }
+
+    // dump (可选)
+    if (emitSummary)
+      lcAttrs.push_back(
+          analysis::serializeLoopCarriedDeps(r, loopIdx, func.getContext()));
+
+    // PR6.2 — 原地 thread token
+    if (threadLCTokens) {
+      if (auto forOp = dyn_cast<affine::AffineForOp>(loopOp)) {
+        if (failed(threadLoopCarriedTokensOnAffineFor(forOp, r))) {
+          func.emitError("adora: failed to thread loop-carried tokens");
+          signalPassFailure();
+          return;
+        }
+      }
+    }
+    loopIdx++;
+  }
+  if (emitSummary && !lcAttrs.empty())
+    func->setAttr("adora.lc_dep_summary",
+                  ArrayAttr::get(func.getContext(), lcAttrs));
 }
 ```
 
-Pipeline 插入位置（待确认）：紧跟在 `--adora-schedule-tasks` 之后、
-`--adora-lower-async-tokens` 之前。
+**重要顺序约束**：本步骤必须在 `threadTokensOnDMAs` 之后、在 `adora.dep_summary`
+序列化之后。因为：
+- `threadTokensOnDMAs` 会改 DMA 的 `async [...]` 列表，本 pass 还要再 append `%lc_tok`
+- `adora.dep_summary` 序列化读的是 TaskGraph 的 dep edges，与 affine.for iter_args
+  无关，可以更早做
 
 ---
 
@@ -295,15 +352,17 @@ CHECK-NOT: ADORA.event.create
 
 ---
 
-## 8. PR 拆分（保持 ≤ 350 行 diff/PR）
+## 8. 单 PR 交付（不拆）
 
-| sub-PR | 内容 | 估行 |
-|---|---|---|
-| **6.2a** | Analysis 扩展：`groupEdgesIntoChains` | ~80 |
-| **6.2b** | Transform pass + 注册 + 编译 | ~250 |
-| **6.2c** | tests（04 / 05 / 可选 06） | ~120 |
-
-可视情况合并为单 PR 提交。
+按用户指示"不好拆就不拆了"，单 PR 一次交付，内容：
+1. ScheduleAdoraTasks.cpp 死代码清理 + 调用 `affineForOuterToSCF` 移除
+2. 迁出 analyze/verify/collect/dump/attr-migrate 到 Analysis/ 与 Utility/
+3. `Analysis/LoopCarriedDep.{h,cpp}` 新增 `groupEdgesIntoChains` + `LCChain`
+4. 新增 `Transforms/ThreadLoopCarriedTokensImpl.cpp` + 配套头
+5. `Passes.td` 加 `threadLCTokens` option
+6. `ScheduleAdoraTasksInFunction` 集成调用
+7. FileCheck tests（04/05）
+8. 编译 + run 全绿
 
 ---
 
