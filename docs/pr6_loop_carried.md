@@ -10,8 +10,10 @@
 
 为 `--adora-schedule-tasks` pass 增加 **跨迭代依赖分析**，识别外层 / 内层循环（scf.for, affine.for）相邻迭代之间通过同一 DRAM 区域产生的 RAW/WAR/WAW/RAR 边，并将结果序列化到 FuncOp 属性 `adora.lc_dep_summary`，供下游消费：
 
-- **PR6.2**：决定哪些 affine.for 需要 promote 到 scf.for
-- **PR6.3**：`threadLoopCarriedTokens` —— 真正插入 `scf.for iter_args(!ADORA.token)`
+- **PR6.2**：`threadLoopCarriedTokens` —— **直接在 `affine.for` 上**插入
+  `iter_args(!ADORA.token)` + `affine.yield %tok`，跨迭代传递 token
+  （**不再** promote 到 scf.for；详见第 5 节修订与 `docs/affine_for_yield_token_verification.md`）
+- **PR6.3**：`--lower-async-tokens` 扩展，识别 affine.for 的 token iter_args
 - 测试/可视化/CI 交叉校验
 
 > 本 PR **只产分析结果，不动 IR**。
@@ -217,29 +219,50 @@ if (emitSummary) {
 
 ---
 
-## 5. 下一步路线图
+## 5. 下一步路线图（v4 — 2025 修订）
 
-### PR6.2 — 把带 LC 边的内层 affine.for promote 到 scf.for
-读取 `adora.lc_dep_summary`，决定哪些 affine.for 需要 lowering 到 scf.for（为 iter_args 做准备）。
+> **关键认知修正**：早先计划假设 `affine.for` 不能 yield 自定义类型（`!ADORA.token`），
+> 因此把 PR6.2 切为"先 promote 到 scf.for"+ PR6.3"再 thread token"两步。
+> 经实测（详见 `docs/affine_for_yield_token_verification.md`）：
+> **`affine.for` 完全支持 `iter_args` / `affine.yield` 任意自定义类型**
+> （TableGen 定义为 `Variadic<AnyType>:$inits`，
+>  `mlir-opt` 与本仓 `cgra-opt` 均通过 round-trip 验证）。
+>
+> 因此 **取消 promote 步骤**，PR6.2 一步到位在 affine.for 上 thread token；
+> 后续 PR 编号顺移。`lib/Dialect/ADORA/Lowering/ADORAToSCF.cpp:56-131` 的
+> `affineForOuterToSCF` 不再服务于本特性，由独立 cleanup PR 评估去留。
 
-### PR6.3 — `threadLoopCarriedTokens`（真正插 iter_args）
-1. 对每个有 LC 边的 scf.for，确定需要 carry 的 token 数（一条 chain 一个）
-2. 循环前生成 `ADORA.null_token : !ADORA.token`（PR3 已有 event ops，可复用或新增）
-3. 给 scf.for 追加 `iter_args(%lc_tok = %null)`
-4. body 内把 `lc_tok` 加到后继 DMA 的 `async [...]` 依赖
-5. body 尾把前驱 DMA 的 token 作为 `scf.yield` 操作数
+### PR6.2 — `threadLoopCarriedTokens`（在 affine.for 上原地 thread）
 
-### PR6.4 — `--lower-async-tokens` 扩展
-识别 scf.for 的 token iter_args，降级到运行时 handle 传递。
+读 `adora.lc_dep_summary`，对每个命中的 `affine.for`：
 
-### PR6.5 — emit 层支持 scf.for iter_args
+1. `groupEdgesIntoChains()` 把 LC edges 聚成 N 条独立 chain
+   （每条 chain = iter k 的 producer op → iter k+1 的 consumer op）
+2. 循环前 `ADORA.event.create -> !ADORA.token` 生成 N 个 null sentinel
+3. **就地重建**一个新的 `affine.for`：
+   - `iter_args(%lc_1 = %null_1, ..., %lc_N = %null_N) -> (!ADORA.token × N)`
+   - body region 多出 N 个 token block argument
+4. splice 原 body ops；对每条 chain i：
+   - consumer op 的 `async [...]` deps 追加 `%lc_i`
+   - producer op 的 token result 作为 `affine.yield` 的第 i 个 operand
+5. RAUW 原 induction var + iter_args 结果；erase 旧 affine.for
+
+**不**改 scf.for、**不**碰 `affineForOuterToSCF`。
+
+### PR6.3 — `--lower-async-tokens` 扩展
+
+识别 **affine.for** 的 token iter_args（不是 scf.for），降级到 runtime handle 传递。
+
+### PR6.4 — emit 层支持 affine.for iter_args
 EmitCGRACall / EmitPytest / EmitVitisSDK 三处。
 
-### PR6.6（可选）— Load-after-Load 消除
-`adora.lc_dep_summary` 里的 `LC-RAR` 边天然指出可优化的同 tile 重复 load，独立 pass 实现。
+### PR6.5（可选）— Load-after-Load 消除
+`adora.lc_dep_summary` 里的 `LC-RAR` 边天然指出可优化的同 tile 重复 load，独立 pass。
 
 ### 解耦的清理 PR
-TaskGraph 瘦身 —— 重写 `RemoveRedundantBlockStoreLoadPair` → 删 TaskNode 派生类 + 邻接表。
+- TaskGraph 瘦身 —— 重写 `RemoveRedundantBlockStoreLoadPair` → 删 TaskNode 派生类 + 邻接表
+- `affineForOuterToSCF`（`ADORAToSCF.cpp:56-131`）去留评估：现 pipeline 是否还有
+  下游 pass 强依赖最外层为 `scf.for`；若否，删除整段函数
 
 ---
 
