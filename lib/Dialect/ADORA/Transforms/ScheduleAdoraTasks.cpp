@@ -687,8 +687,11 @@ collectEnclosingLoopsWithKernel(func::FuncOp func) {
     Region &region = op->getRegion(0);
     if (region.empty()) return;
     Block &body = region.front();
-    if (BlockContainsKernelOp(&body))
+    for (auto k : body.getOps<ADORA::KernelOp>()) {
+      (void)k;
       out.push_back(op);
+      break;
+    }
   });
   return out;
 }
@@ -777,7 +780,7 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
   //   - PR6.3: threadLoopCarriedTokens (real iter_args insertion)
   //   - tests / diagnostics
   if (emitSummary) {
-    SmallVector<Attribute> lcAttrs;
+    SmallVector<mlir::Attribute> lcAttrs;
     int loopIdx = 0;
     for (Operation *loopOp : collectEnclosingLoopsWithKernel(func)) {
       auto r = mlir::ADORA::analysis::analyzeLoopCarriedDeps(loopOp);

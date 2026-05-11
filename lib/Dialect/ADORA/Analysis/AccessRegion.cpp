@@ -8,7 +8,7 @@
 #include "ADORA/Dialect/ADORA/IR/ADORA.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
-#include "llvm/ADT/SmallDenseMap.h"
+#include "llvm/ADT/DenseMap.h"
 
 using namespace mlir;
 using namespace mlir::ADORA;
@@ -42,13 +42,11 @@ FailureOr<AccessRegion> AccessRegion::fromOp(Operation *op) {
     tileShape = load.getResultType().getShape();
     srcShape = load.getOriginalMemrefType().getShape();
   } else if (auto store = dyn_cast<ADORA::DataBlockStoreOp>(op)) {
-    r.memref = store.getOriginalMemref();
+    r.memref = store.getTargetMemref();
     map = store.getAffineMap();
     operands = store.getMapOperands();
-    // Store reads its source memref; the *tile* shape is the source operand
-    // (the local buffer). The DRAM region is sized by the same tile.
     tileShape = store.getSourceMemrefType().getShape();
-    srcShape = store.getOriginalMemrefType().getShape();
+    srcShape = store.getTargetMemrefType().getShape();
   } else {
     return failure();
   }
@@ -81,19 +79,21 @@ AccessRegion AccessRegion::shiftedByIV(Value iv, int64_t delta) const {
   if (ivPos < 0) return *this; // `iv` not in operands
   
   AccessRegion shifted = *this;
-  // Transform each startExpr: add `delta * D_ivPos` where D_ivPos is the 
-  // dimension variable at position ivPos.
   Builder b(iv.getContext());
-  AffineDimExpr dimIV = b.getAffineDimExpr(ivPos);
+  AffineExpr dimIV = b.getAffineDimExpr(ivPos);
+  // Build a replacement vector for replaceDims(ArrayRef<AffineExpr>) form:
+  // dims[i] -> AffineDimExpr(i), except dims[ivPos] -> dims[ivPos] + delta.
+  SmallVector<AffineExpr, 4> dimReplacements;
+  dimReplacements.reserve(operands.size());
+  for (unsigned i = 0; i < operands.size(); ++i) {
+    if ((int)i == ivPos)
+      dimReplacements.push_back(b.getAffineDimExpr(i) + delta);
+    else
+      dimReplacements.push_back(b.getAffineDimExpr(i));
+  }
   SmallVector<AffineExpr, 4> newExprs;
   for (auto e : startExprs) {
-    // startExprs are in the dim-space of the AffineMap. Substitute
-    // dim[ivPos] += delta.
-    AffineExpr shifted_e = e.replaceDims(
-        llvm::SmallDenseMap<unsigned, AffineExpr>{
-            {static_cast<unsigned>(ivPos), dimIV + delta}
-        }
-    );
+    AffineExpr shifted_e = e.replaceDims(dimReplacements);
     newExprs.push_back(shifted_e);
   }
   shifted.startExprs = newExprs;
