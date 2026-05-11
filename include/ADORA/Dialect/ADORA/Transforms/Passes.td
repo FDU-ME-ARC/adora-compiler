@@ -385,6 +385,12 @@ def ScheduleADORATasks: Pass<"adora-schedule-tasks", "func::FuncOp"> {
       2.
   }];
   let constructor = "mlir::ADORA::createScheduleADORATasksPass()";
+  let dependentDialects = [
+    "::mlir::ADORA::ADORADialect",
+    "::mlir::affine::AffineDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect"
+  ];
   // PR2 commit B: drive the !ADORA.token threading + dep_summary emission
   // + (CI-only) cross-check between the two representations.
   let options = [

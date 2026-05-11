@@ -44,6 +44,9 @@
 // This is the INTRA-iteration fence: within one (ti,tj,tk) body the store
 // waits for the load to finish before overwriting the C tile.
 
+// The outermost loop should now be scf.for
+// CHECK: scf.for
+
 // C-tile load acquires a token (WAR producer).
 // CHECK: %{{.*}}, %{{.*}} = ADORA.BlockLoad %arg2 {{.*}} -> !ADORA.token
 

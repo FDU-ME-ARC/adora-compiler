@@ -34,11 +34,13 @@
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/CommandLine.h"
 
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "ADORA/Dialect/ADORA/IR/ADORA.h"
 #include "ADORA/Dialect/ADORA/Utility/Utility.h"
 #include "ADORA/Dialect/ADORA/Transforms/Passes.h"
 #include "ADORA/Dialect/ADORA/Transforms/DependencyAnalysis.h"
 #include "ADORA/Dialect/ADORA/Transforms/TaskGraph/TaskGraph.h"
+#include "ADORA/Dialect/ADORA/Lowering/LowerPasses.h"
 #include "./PassDetail.h"
 
 using namespace llvm; // for llvm.errs()
@@ -701,9 +703,14 @@ static void wireLoopCarriedToken(AffineForOp forop,
   llvm::errs() << "  Cross-iteration token yield will be implemented in PR6.\n";
 }
 
+
+
 /// @brief A wrapper
 /// @param func 
 void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
+  // Convert outer affine.for to scf.for
+  (void)affineForOuterToSCF(func, 1);
+
   //////////////
   /// 1st step: get all block that needs to be scanned
   //////////////

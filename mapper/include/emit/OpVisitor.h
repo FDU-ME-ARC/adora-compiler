@@ -10,6 +10,7 @@
 #include "ADORA/Dialect/ADORA/IR/ADORA.h"
 #include "ADORA/Dialect/ADORATensor/IR/ADORATensor.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -41,8 +42,10 @@ public:
             func::ReturnOp,
 
             // // SCF statements.
-            // scf::ForOp, scf::IfOp, scf::ParallelOp, scf::ReduceOp,
-            // scf::ReduceReturnOp, scf::YieldOp,
+            scf::ForOp, 
+            // scf::IfOp, scf::ParallelOp, scf::ReduceOp,
+            // scf::ReduceReturnOp, 
+            scf::YieldOp,
 
             // Control flow(cf)
             mlir::cf::BranchOp,
@@ -140,12 +143,12 @@ public:
   HANDLE(func::ReturnOp);
 
   // SCF statements.
-  // HANDLE(scf::ForOp);
+  HANDLE(scf::ForOp);
   // HANDLE(scf::IfOp);
   // HANDLE(scf::ParallelOp);
   // HANDLE(scf::ReduceOp);
   // HANDLE(scf::ReduceReturnOp);
-  // HANDLE(scf::YieldOp);
+  HANDLE(scf::YieldOp);
   
   // CF
   HANDLE(cf::BranchOp);

@@ -19,26 +19,21 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Affine/Utils.h"
 #include "mlir/IR/Attributes.h"
-// #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/Support/LogicalResult.h"
-// #include "mlir/Support/MathExtras.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/Passes.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FormatVariadic.h"
-
-// #include <iostream>
-// #include <algorithm>
-// #include <functional>
 
 #include "./LowerPassDetail.h"
 #include "ADORA/Dialect/ADORA/Lowering/LowerPasses.h"
@@ -48,74 +43,155 @@ using namespace llvm; // for llvm.errs()
 using namespace mlir;
 using namespace mlir::affine;
 using namespace mlir::ADORA;
-// using Value = mlir::Value;
 
 #define PASS_NAME "ADORA-convert-loadstore-to-scf"
 
+namespace mlir {
+namespace ADORA {
+
+/// @brief Helper: convert outer affine.for to scf.for (inner loops stay affine).
+/// @param func function to transform
+/// @param outerDepth max outer loop depth to convert (default 1)
+/// @return success/failure
+LogicalResult affineForOuterToSCF(func::FuncOp func, unsigned outerDepth) {
+  // Collect top-level affine.for ops first to avoid iterator invalidation
+  SmallVector<AffineForOp> toConvert;
+  func.walk([&](AffineForOp forop) {
+    // Check depth by counting parent affine.for ops
+    unsigned depth = 0;
+    Operation *parent = forop->getParentOp();
+    while (parent) {
+      if (isa<AffineForOp>(parent))
+        depth++;
+      parent = parent->getParentOp();
+    }
+    if (depth < outerDepth) {
+      toConvert.push_back(forop);
+    }
+  });
+
+  // Now convert each collected affine.for to scf.for
+  for (auto forop : toConvert) {
+    OpBuilder builder(forop);
+    Location loc = forop.getLoc();
+
+    // Step 1: Expand lb, ub, step
+    auto expand = [&](AffineMap map, ValueRange operands) -> Value {
+      auto expanded = expandAffineMap(builder, loc, map, operands);
+      if (!expanded || expanded->size() != 1) {
+        return Value();
+      }
+      return (*expanded)[0];
+    };
+
+    Value lb = expand(forop.getLowerBoundMap(), forop.getLowerBoundOperands());
+    Value ub = expand(forop.getUpperBoundMap(), forop.getUpperBoundOperands());
+    Value step = builder.create<arith::ConstantIndexOp>(loc, forop.getStep().getSExtValue());
+    if (!lb || !ub) {
+      continue; // skip, too complex
+    }
+
+    // Step 2: Create scf.for
+    scf::ForOp scfFor;
+    if (forop.getNumResults() == 0) {
+      scfFor = builder.create<scf::ForOp>(loc, lb, ub, step);
+    } else {
+      // With iter args (not yet handled; skip for now)
+      continue;
+    }
+
+    // Step 3: Move body
+    Block *srcBody = forop.getBody();
+    // Save terminator info first (affine.yield)
+    Operation *terminator = srcBody->getTerminator();
+    // Move body ops first
+    scfFor.getBody()->clear();
+    scfFor.getBody()->getOperations().splice(
+        scfFor.getBody()->begin(),
+        srcBody->getOperations(),
+        srcBody->begin(),
+        std::prev(srcBody->end())); // stop before terminator!
+    // Now add scf.yield (empty, since affine.yield is empty)
+    {
+      OpBuilder b(forop.getContext());
+      b.setInsertionPointToEnd(scfFor.getBody());
+      b.create<scf::YieldOp>(loc);
+    }
+    // Now erase old terminator
+    terminator->erase();
+
+    // Step 4: Replace induction variable uses
+    srcBody->getArgument(0).replaceAllUsesWith(scfFor.getInductionVar());
+
+    // Step 5: Replace the original affine.for with the new scf.for
+    forop.replaceAllUsesWith(scfFor.getResults());
+    forop.erase();
+  }
+  return success();
+}
+
+} // namespace ADORA
+} // namespace mlir
+
 namespace {
 
-/// Apply the affine map from an 'affine.load' operation to its operands, and
-/// feed the results to a newly created 'memref.load' operation (which replaces
-/// the original 'affine.load').
-struct BlockLoadOpLowering : public OpRewritePattern<ADORA::DataBlockLoadOp> {
-public:
-  using OpRewritePattern<ADORA::DataBlockLoadOp>::OpRewritePattern;
+/// Lower affine.load to memref.load by expanding affine map.
+struct AffineLoadOpLowering : public OpRewritePattern<AffineLoadOp> {
+  using OpRewritePattern<AffineLoadOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(ADORA::DataBlockLoadOp op,
+  LogicalResult matchAndRewrite(AffineLoadOp op,
                                 PatternRewriter &rewriter) const override {
-    // Expand affine map from 'affineLoadOp'.
-    // SmallVector<Value> indices(op.getMapOperands());
-    auto resultOperands =
-        ::mlir::affine::expandAffineMap(rewriter, op.getLoc(), op.getAffineMap(), op.getMapOperands());
-    // llvm::errs() << "[debug] op: " << op << "\n";
-    // for(auto oper : *resultOperands){
-    //   llvm::errs() << "[debug] oper: " << oper << "\n";
-    // }
-    if (!resultOperands)
+    auto indices = expandAffineMap(rewriter, op.getLoc(),
+                                   op.getAffineMap(), op.getMapOperands());
+    if (!indices)
       return failure();
-
-    // Build vector.load memref[expandedMap.results].
-    // rewriter.replaceOpWithNewOp<memref::LoadOp>(op, op.getMemRef(),
-    //                                             *resultOperands);
+    rewriter.replaceOpWithNewOp<memref::LoadOp>(op, op.getMemRef(), *indices);
     return success();
   }
 };
 
+/// Lower affine.store to memref.store by expanding affine map.
+struct AffineStoreOpLowering : public OpRewritePattern<AffineStoreOp> {
+  using OpRewritePattern<AffineStoreOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(AffineStoreOp op,
+                                PatternRewriter &rewriter) const override {
+    auto indices = expandAffineMap(rewriter, op.getLoc(),
+                                   op.getAffineMap(), op.getMapOperands());
+    if (!indices)
+      return failure();
+    rewriter.replaceOpWithNewOp<memref::StoreOp>(op, op.getValue(),
+                                                 op.getMemRef(), *indices);
+    return success();
+  }
+};
 
 } // namespace
-
 
 namespace {
 /// A pass converting Func operations into the LLVM IR dialect.
 struct ConvertADORAToSCFPass
     : public ConvertADORAToSCFBase<ConvertADORAToSCFPass> {
   ConvertADORAToSCFPass() = default;
-  
+
   SmallVector<::llvm::StringRef, 8> KernelNameVec;
 
   void runOnOperation() override {
-
-    // if (failed(LLVM::LLVMDialect::verifyDataLayoutString(
-    //         this->dataLayout, [this](const Twine &message) {
-    //           getOperation().emitError() << message.str();
-    //         }))) {
-    //   signalPassFailure();
-    //   return;
-    // // }
-
     ModuleOp m = getOperation();
 
     RewritePatternSet patterns(&getContext());
-    patterns.add<BlockLoadOpLowering>(patterns.getContext());
+    patterns.add<
+        AffineLoadOpLowering, AffineStoreOpLowering
+    >(patterns.getContext());
 
     ConversionTarget target(getContext());
-    target.addLegalDialect<arith::ArithDialect, scf::SCFDialect>();
+    target.addLegalDialect<arith::ArithDialect, scf::SCFDialect, memref::MemRefDialect>();
+    // Legalize ADORA ops and any remaining affine ops
+    target.addLegalDialect<ADORA::ADORADialect>();
+    target.addLegalOp<AffineForOp, AffineLoadOp, AffineStoreOp>();
 
     if (failed(applyPartialConversion(m, target, std::move(patterns))))
       signalPassFailure();
-
-    // m->setAttr(LLVM::LLVMDialect::getDataLayoutAttrName(),
-    //            StringAttr::get(m.getContext(), this->dataLayout));
   }
 };
 } // namespace
@@ -123,4 +199,3 @@ struct ConvertADORAToSCFPass
 std::unique_ptr<OperationPass<ModuleOp>> mlir::ADORA::createConvertADORAToSCFPass() {
   return std::make_unique<ConvertADORAToSCFPass>();
 }
-
