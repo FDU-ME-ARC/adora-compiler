@@ -59,6 +59,28 @@ LoopCarriedDepResult analyzeLoopCarriedDeps(Operation *loopOp);
 Attribute serializeLoopCarriedDeps(const LoopCarriedDepResult &r,
                                     int loopIdx, MLIRContext *ctx);
 
+// ---------------------------------------------------------------------------
+// PR6.2 helper: chain aggregation.
+// ---------------------------------------------------------------------------
+//
+// A `LCChain` is the unit consumed by `threadLoopCarriedTokensOnAffineFor`:
+// one iter_arg / one yield operand per chain.  Edges sharing the same
+// (producer, consumer) pair are merged into a single chain (their hazards
+// can all be enforced by one token), so chain count ≤ unique (src,dst)
+// pairs in the LoopCarriedDepResult.
+//
+// RAR edges are deliberately *not* turned into chains by default: they are
+// hints for load-after-load elimination (PR6.5), not real hazards.  Pass
+// `includeRAR=true` to opt in.
+struct LCChain {
+  Operation *producer = nullptr;  // op at iter k whose token we will yield
+  Operation *consumer = nullptr;  // op at iter k+1 that gets the token in deps
+  LCKind     kind = LCKind::RAW;  // representative kind
+};
+
+SmallVector<LCChain> groupEdgesIntoChains(const LoopCarriedDepResult &r,
+                                          bool includeRAR = false);
+
 } // namespace analysis
 } // namespace ADORA
 } // namespace mlir

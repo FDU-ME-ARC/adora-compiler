@@ -6,6 +6,7 @@ add_mlir_dialect_library(MLIRADORATransforms
   LowerAsyncTokens.cpp
   ScheduleAdoraTasks.cpp
   SimplifyLoadStore.cpp
+  ThreadLoopCarriedTokensImpl.cpp
 
   TaskGraph/TaskNode.cpp
   TaskGraph/TaskGraph.cpp

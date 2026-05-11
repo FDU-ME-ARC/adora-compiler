@@ -127,3 +127,29 @@ Attribute mlir::ADORA::analysis::serializeLoopCarriedDeps(
   };
   return b.getDictionaryAttr(outer);
 }
+
+// ---------------------------------------------------------------------------
+// PR6.2: chain aggregation.
+// Merge edges sharing the same (src, dst) pair into one chain. RAR edges
+// are skipped unless the caller asks for them (they correspond to load-
+// after-load elimination, not a real hazard).
+// ---------------------------------------------------------------------------
+SmallVector<LCChain> mlir::ADORA::analysis::groupEdgesIntoChains(
+    const LoopCarriedDepResult &r, bool includeRAR) {
+  SmallVector<LCChain> chains;
+  // O(N^2) dedup against already-collected chains; chain count is tiny in
+  // practice (single-digit), so this is fine and avoids hashing Operation*.
+  for (const auto &e : r.edges) {
+    if (!includeRAR && e.kind == LCKind::RAR) continue;
+    bool dup = false;
+    for (auto &c : chains) {
+      if (c.producer == e.src && c.consumer == e.dst) {
+        dup = true;
+        break;
+      }
+    }
+    if (dup) continue;
+    chains.push_back({e.src, e.dst, e.kind});
+  }
+  return chains;
+}

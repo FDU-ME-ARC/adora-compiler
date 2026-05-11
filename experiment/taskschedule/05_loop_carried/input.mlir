@@ -21,13 +21,23 @@
 module {
   func.func @loop_carried_min(%arg0 : memref<16xf32>) {
     affine.for %tk = 0 to 4 {
+      // Load accumulator tile (loop-carried across tk iterations).
       %c = ADORA.BlockLoad %arg0 [0] : memref<16xf32> -> memref<16xf32>
-          {Id = "c_load", KernelName = "loop_carried_min_kernel"}
+          {Id = "0", KernelName = "loop_carried_min_kernel"}
+      // Scratchpad output.
+      %c_local = ADORA.LocalMemAlloc memref<16xf32>
+          {Id = "1", KernelName = "loop_carried_min_kernel"}
+      // Kernel consumes %c and produces into %c_local so the SSA edge
+      // Load → Kernel → Store exists for the intra-iter dep analyzer.
       ADORA.kernel {
+        affine.for %i = 0 to 16 {
+          %v = affine.load %c[%i] : memref<16xf32>
+          affine.store %v, %c_local[%i] : memref<16xf32>
+        }
         ADORA.terminator
       } {KernelName = "loop_carried_min_kernel"}
-      ADORA.BlockStore %c, %arg0 [0] : memref<16xf32> -> memref<16xf32>
-          {Id = "c_store", KernelName = "loop_carried_min_kernel"}
+      ADORA.BlockStore %c_local, %arg0 [0] : memref<16xf32> -> memref<16xf32>
+          {Id = "2", KernelName = "loop_carried_min_kernel"}
     }
     return
   }

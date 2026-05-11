@@ -411,7 +411,12 @@ def ScheduleADORATasks: Pass<"adora-schedule-tasks", "func::FuncOp"> {
            "If non-empty, write a Graphviz DOT file of the async-token dep "
            "chain to this path after threading.  Nodes are BlockLoad/Store/Kernel "
            "ops; edges are the SSA !ADORA.token def-use arcs.  Requires "
-           "emit-token=true.">
+           "emit-token=true.">,
+    Option<"threadLCTokens", "thread-lc-tokens", "bool", /*default=*/"true",
+           "PR6.2: rewrite enclosing affine.for in-place with "
+           "iter_args(!ADORA.token) / affine.yield to carry loop-carried "
+           "token deps across iterations. Requires emit-token=true to "
+           "have any effect.">
   ];
 }
 
