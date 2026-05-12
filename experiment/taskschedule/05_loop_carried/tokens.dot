@@ -1,0 +1,14 @@
+digraph token_graph {
+  rankdir=LR;
+  node [shape=box, fontsize=10];
+  "0x563d9c019c40" [label="ADORA.BlockStore\nId=2\nloop_carried_min_kernel", style=filled, fillcolor=lightcoral];
+  "0x563d9c03ebe0" [label="ADORA.BlockLoad\nId=0\nloop_carried_min_kernel", style=filled, fillcolor=lightblue];
+  "0x563d9c029dc0" [label="ADORA.kernel\nloop_carried_min_kernel", style=filled, fillcolor=lightyellow];
+  "0x563d9c03d310" [label="affine.yield"];
+  "0x563d9c03ebe0" -> "0x563d9c03d310" [label="token", color=darkgreen];
+  "0x563d9c03ebe0" -> "0x563d9c019c40" [label="token", color=darkgreen];
+  "0x563d9c03ebe0" -> "0x563d9c029dc0" [label="token", color=darkgreen];
+  "0x563d9c029dc0" -> "0x563d9c019c40" [label="token", color=darkgreen];
+  "0x563d9c019c40" -> "0x563d9c03d310" [label="token", color=darkgreen];
+  "0x563d9c019c40" -> "0x563d9c03d310" [label="token", color=darkgreen];
+}
