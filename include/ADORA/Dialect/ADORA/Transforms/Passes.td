@@ -394,11 +394,12 @@ def ScheduleADORATasks: Pass<"adora-schedule-tasks", "func::FuncOp"> {
   // PR2 commit B: drive the !ADORA.token threading + dep_summary emission
   // + (CI-only) cross-check between the two representations.
   let options = [
-    Option<"emitTokens", "emit-token", "bool", /*default=*/"false",
+    Option<"emitTokens", "emit-token", "bool", /*default=*/"true",
            "Thread SSA !ADORA.token values through DataBlockLoad/Store/Kernel "
-           "ops based on graph dep edges. When false (default) the pass only "
-           "emits the PR1 adora.dep_summary attribute, preserving byte-level "
-           "output compatibility with pre-PR2 baselines.">,
+           "ops based on graph dep edges. Default true (PR6.2 flip): tokens are "
+           "the canonical IR-level carrier of async deps, consumed by "
+           "adora-buffer-reuse / adora-assign-streams / adora-lower-async-tokens "
+           "(PR6.3). Set false only to reproduce pre-PR6 byte-level baselines.">,
     Option<"emitSummary", "emit-summary", "bool", /*default=*/"true",
            "Emit the PR1 adora.dep_summary DictionaryAttr on the enclosing "
            "func. Kept on during the PR2 gradual-rollout window.">,

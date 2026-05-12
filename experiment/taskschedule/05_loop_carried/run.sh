@@ -12,7 +12,7 @@ echo "    PR6: loop-carried Store(tk=N)→Load(tk=N+1) detected but not yet wire
 echo ""
 
 "${CGRA_OPT}" "${DIR}/input.mlir" \
-    --adora-schedule-tasks="emit-token=true dump-token-graph=${DIR}/tokens.dot" \
+    --adora-schedule-tasks="dump-token-graph=${DIR}/tokens.dot" \
     2>"${DIR}/stderr.txt" > "${DIR}/output_token.mlir"
 
 echo "--- token chain ---"
@@ -30,7 +30,7 @@ fi
 echo ""
 echo "--- FileCheck ---"
 "${CGRA_OPT}" "${DIR}/input.mlir" \
-    --adora-schedule-tasks="emit-token=true" \
+    --adora-schedule-tasks \
     2>/dev/null | "${FC}" "${DIR}/check.mlir"
 echo "  PASSED ✓"
 

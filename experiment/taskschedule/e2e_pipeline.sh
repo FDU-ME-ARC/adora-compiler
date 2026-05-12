@@ -34,7 +34,7 @@ for d in "${DIR}"/*/; do
     echo -n "▶ ${name}: "
 
     if ! "${CGRA_OPT}" "${d}/input.mlir" \
-        --adora-schedule-tasks="emit-token=true" \
+        --adora-schedule-tasks \
         --adora-assign-streams \
         --adora-lower-async-tokens \
         --adora-to-llvm-async-runtime \

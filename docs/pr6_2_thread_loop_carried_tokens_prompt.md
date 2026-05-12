@@ -20,6 +20,60 @@
 
 ---
 
+## 0.1 执行模型 + token 的定位（本次澄清）
+
+本仓**没有 runtime 层**。并发由 host 端对 emit 产物（`EmitCGRACall` /
+`EmitPytest` / `EmitVitisSDK`）做**静态依赖分析**后决定多 stream issue：
+emit 出的指令流携带依赖标注，host 分析器读标注即可决定哪些指令可并行下发。
+
+在此前提下，`!ADORA.token` 的定位是**编译期依赖凭证**，不是 runtime event：
+
+1. **信息保真** — 把编译器在 IR 层做的符号依赖分析（AffineMap + IV shift +
+   overlap）结果固化到 SSA 边上，避免 emit 后在已展开/下沉的形态上重算；
+2. **多 emit backend 共享** — 三个 emitter 不各自重写依赖分析；
+3. **IR pass 间共同词汇** — `RemoveRedundantBlockStoreLoadPair`（已在用 TaskGraph
+   邻接表）等 pass 之间的依赖信息交换；
+4. **可验证** — pipeline 内 `--verify-each` + FileCheck + `adora.dep_summary ↔
+   token graph` 双向 cross-check（`verifyTokensMatchSummary`）。
+
+### token 的生命周期（PR6.x 全景）
+
+```
+┌─────────────────────────┐
+│ schedule-tasks (PR6.2)  │  产出 !ADORA.token SSA 值 + async [...] operand
+│                         │  + affine.for iter_args / affine.yield
+└──────────┬──────────────┘
+           ↓
+┌─────────────────────────┐
+│ IR pass 层消费          │  RemoveRedundantBlockStoreLoadPair 等
+│                         │  未来 DMA merge / prefetch hoist 等
+└──────────┬──────────────┘
+           ↓
+┌─────────────────────────┐
+│ lower-async-tokens      │  把 !ADORA.token SSA 值降级为 op attribute：
+│ (PR6.3)                 │    op {adora.wait_ids = [1,2], adora.signal_id = 3,
+│                         │        adora.lc_wait_ids = [4], adora.lc_iter_distance = 1}
+│                         │  `ADORA.event.create/destroy` 消失
+│                         │  `affine.for iter_args(!ADORA.token)` 塌回无 iter_args 形态
+└──────────┬──────────────┘
+           ↓
+┌─────────────────────────┐
+│ emit (PR6.4)            │  三个 emitter 只读上述属性，写依赖编号到各自输出格式
+│                         │  emit 产物中完全没有 `!ADORA.token` 类型痕迹
+└─────────────────────────┘
+```
+
+### 默认发射 token（本 PR 一并翻转）
+
+`--adora-schedule-tasks` 此前的 `emit-token` 默认 `false` 属历史遗留。本 PR
+**把默认翻转为 `true`**，理由：
+
+1. 当前关掉 token 等于 pipeline 残缺，下游 PR6.3/6.4 都无法工作；
+2. 与 MLIR 生态（`gpu.async.token` / `async.token`）一致，token 是默认产物；
+3. 保留 option 作为调试 opt-out（回归 pre-PR6 baseline / 对照实验）。
+
+---
+
 ## 1. 目标
 
 读取 PR6.1 已写到 `func->setAttr("adora.lc_dep_summary", ...)`（见
@@ -230,12 +284,20 @@ result，找不到则返回 null + 日志。
 - `groupEdgesIntoChains` 放 `Analysis/LoopCarriedDep.{h,cpp}`（纯逻辑，属于分析）
 
 #### F. Pass option（开关 + 回滚通道）
-在 `Passes.td` 的 `ScheduleADORATasks` 加：
+在 `Passes.td` 的 `ScheduleADORATasks` 加 / 改：
 ```tablegen
 Option<"threadLCTokens", "thread-lc-tokens", "bool", /*default=*/"true",
        "Rewrite affine.for with iter_args/affine.yield to carry "
-       "!ADORA.token across iterations (PR6.2).">
+       "!ADORA.token across iterations (PR6.2).">,
+// 本 PR 同时翻转已有 emit-token 默认值 false → true，option 本身保留：
+Option<"emitToken", "emit-token", "bool", /*default=*/"true",
+       "Emit !ADORA.token SSA values along async dependency edges. "
+       "Default true; set false only to reproduce pre-PR6 baseline.">
 ```
+
+`experiment/taskschedule/04_gemm_tiled/run.sh` 与
+`experiment/taskschedule/05_loop_carried/run.sh` 中显式写的 `emit-token=true`
+参数在默认翻转后可精简移除（保留亦向后兼容）。
 
 ### 不动
 - `lib/Dialect/ADORA/Lowering/ADORAToSCF.cpp`（`affineForOuterToSCF` 留文件里，
@@ -328,6 +390,25 @@ CHECK-NOT: ADORA.event.create
 构造一个 producer-token / consumer-async-deps 类型不匹配的 input，预期 pass
 报 diagnostic 但**不**崩。
 
+### 5.5 默认开关回归（新增，对应 §0.1 默认翻转）
+
+`test/ADORA/Transforms/schedule_tasks_default_emit_token.mlir`：
+- **不传** `emit-token` / `thread-lc-tokens`，直接跑 `cgra-opt --adora-schedule-tasks`
+- 期望默认就织出 `async [%tok]` + `iter_args(!ADORA.token)`
+
+```mlir
+// RUN: cgra-opt --adora-schedule-tasks %s | FileCheck %s
+// CHECK: async [%{{.*}}]
+// CHECK: iter_args({{.*}}: !ADORA.token)
+// CHECK: affine.yield %{{.*}} : !ADORA.token
+```
+
+另加一条反向：`--adora-schedule-tasks='emit-token=false'` 仍能产出 pre-PR6
+形态（CHECK-NOT token），保证 opt-out 通道畅通。
+
+整链 smoke：`tools/adoracc/adoracc.py` 跑 04 任意 `.mlir` 不报 verifier
+error（确认默认开关翻转没把下游 pass 击穿）。
+
 ---
 
 ## 6. 风险 & 限制
@@ -339,6 +420,8 @@ CHECK-NOT: ADORA.event.create
 | `affine.for` 已经有 iter_args（非 token） | 当前 codebase 不存在这种情况；首版断言不允许 | TODO：未来支持时把 inits 拼到末尾 |
 | sentinel token 的语义 | `ADORA.event.create` 产的 token 必须 "signaled-at-birth"，否则第 0 次迭代会等死 | PR3 已定义此语义；如未定义需补 attr，详 PR3 |
 | `affineForOuterToSCF` 仍可能在 pipeline 内被调用 | 仅作用于"包住 kernel 的最外层"，与本 pass 处理的内层 loop 互不相干 | 跑通后再独立 cleanup PR |
+| `emit-token` 默认翻转为 true | 下游 pass / emitter 若对 `!ADORA.token` 类型未声明合法性，可能新触发 verifier error | pipeline smoke（adoracc 跑 04/05）+ `--verify-each`；如击穿，给相应 op / region 补 TypeInterface 而非回滚开关 |
+| PR6.3 / PR6.4 尚未落地时默认发 token | 目前已有消费者仅 `threadTokensOnDMAs` 自身 + `RemoveRedundantBlockStoreLoadPair`（不读 token，读 TaskGraph），整链可编可跑 | 验证：04_gemm_tiled 完整 adoracc pipeline 不回归；emit 阶段因未 lower 而忽略 async operand 属于预期（由 PR6.3 填坑）|
 
 ---
 
