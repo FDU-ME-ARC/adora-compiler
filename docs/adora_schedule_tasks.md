@@ -155,3 +155,41 @@ bash e2e_pipeline.sh      # 4 个例子完整 4-pass pipeline 验证
 - Experiment：`experiment/taskschedule/`
 - PR 历史：`docs/pr4_review.md`
 - 设计文档：`docs/async_token_design.md`
+
+---
+
+## 附录：迭代更新记录
+
+### 更新（2026-05-11）：外层循环 affine.for → scf.for 转换 + emit 支持计划与实现
+**分支**：`jhlou/scheduletasks`
+
+#### 已实现功能
+1. **`affineForOuterToSCF` helper 函数**（`include/ADORA/Dialect/ADORA/Lowering/LowerPasses.h` + `lib/Dialect/ADORA/Lowering/ADORAToSCF.cpp`）
+   - 用于将 func 中的外层 affine.for 循环转换为 scf.for（inner 循环保留 affine.for）
+   - 深度计算：`affineForOuterToSCF` 通过 count parent affine.for ops 判断循环深度，仅转换 depth < outerDepth
+   - loop body 移动：将 body ops splice 到新 scf.for 中，添加 scf::YieldOp
+2. **`ScheduleADORATasks` pass 调用**
+   - 在 `ScheduleADORATasksInFunction` 开始处调用 `affineForOuterToSCF(func, 1)`
+3. **给 `ScheduleADORATasksPass` 加上 dependentDialects**
+   - 在 `include/ADORA/Dialect/ADORA/Transforms/Passes.td` 中添加依赖 `scf::SCFDialect` 和 `arith::ArithDialect`
+4. **完善 `ConvertADORAToSCFPass`**
+   - Legalize `ADORA::ADORADialect`（保留 `DataBlockLoadOp/DataBlockStoreOp/LocalMemAllocOp`）
+   - 仅对 `affine.load/affine.store` 做 lowering（用 AffineLoadOpLowering/AffineStoreOpLowering，通过 `expandAffineMap`）
+
+#### emit 中 scf.for 支持计划（待实现）
+| 文件 | 改动内容 |
+| --- | --- |
+| `mapper/include/emit/OpVisitor.h` | 在 `TypeSwitch::Case` 列表中取消注释 `scf::ForOp` 和 `scf::YieldOp`，并加上 scf 头文件 include（`#include "mlir/Dialect/SCF/IR/SCF.h"`） |
+| `mapper/src/emit/EmitCGRACall.cpp` | 实现 `visitOp(scf::ForOp op)` 和 `visitOp(scf::YieldOp op)`，模仿 `affine::AffineForOp` 的实现但直接用 lb/ub/step value 而不是 affine map |
+| `mapper/src/emit/EmitPytest.cpp` | 实现 `visitOp(scf::ForOp op)` 和 `visitOp(scf::YieldOp op)`，模仿 `affine::AffineForOp` 的实现但直接用 `range(lb, ub, step)` 和 lb/ub/step value lookup |
+| `mapper/src/emit/EmitVitisSDK.cpp` | 实现 `visitOp(scf::ForOp op)` 和 `visitOp(scf::YieldOp op)`，模仿 `affine::AffineForOp` 的实现 |
+
+#### PR6 预留：loop-carried token yield 框架
+当前转换仅处理无 `iter_args` 的外循环，为 PR6 预留空间：
+- 后续 PR6 中会实现：在 `affineForOuterToSCF` 中检测 loop-carried load/store pair（已由 `findLoopCarriedStoreLoadPair` 检测），然后在 new `scf.for` 中添加 `!ADORA.token` 的 iter_args，在 body yield 时传递 token。
+- 现在的 `[PR6-TODO]` 诊断保留不变。
+
+#### 测试
+- `test/cgra-opt/schedule/schedule_gemm_tiled.mlir` 通过 `--adora-schedule-tasks` 正常运行，输出有 scf.for（外层）和 affine.for（内层）的混合结构
+- 在 `schedule_gemm_tiled.mlir` 中加上了 `// CHECK: scf.for` 断言
+

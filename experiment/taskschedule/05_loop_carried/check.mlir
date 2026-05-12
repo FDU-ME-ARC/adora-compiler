@@ -1,7 +1,6 @@
-// PR6.2 loop-carried token threading on the innermost affine.for of
-// 04_gemm_tiled (the tk-reduction loop carrying the C-tile accumulator).
+// PR6.2 loop-carried token threading on 05_loop_carried's affine.for.
 //
-// CHECK-LABEL: func.func @gemm_tiled
+// CHECK-LABEL: func.func @loop_carried_min
 // CHECK: ADORA.event.create -> !ADORA.token
 // CHECK: affine.for {{.*}} iter_args
 // CHECK-SAME: !ADORA.token

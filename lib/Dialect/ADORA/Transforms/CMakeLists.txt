@@ -6,10 +6,10 @@ add_mlir_dialect_library(MLIRADORATransforms
   LowerAsyncTokens.cpp
   ScheduleAdoraTasks.cpp
   SimplifyLoadStore.cpp
+  ThreadLoopCarriedTokensImpl.cpp
 
   TaskGraph/TaskNode.cpp
   TaskGraph/TaskGraph.cpp
-  TaskGraph/DepSummaryView.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJ_INCLUDE_DIR}/ADORA/Dialect/ADORA/IR
@@ -24,6 +24,7 @@ add_mlir_dialect_library(MLIRADORATransforms
   MLIRIR
   MLIRADORALoopTransforms
   MLIRADORAKernelExtract
+  MLIRADORAAnalysis
   GeneralCDFGGen
   MLIRAffineDialect
   MLIRADORATransformsUtility

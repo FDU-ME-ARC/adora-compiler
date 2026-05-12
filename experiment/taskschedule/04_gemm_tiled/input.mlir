@@ -54,8 +54,22 @@
 // BlockStore consumes the C-load token (WAR consumer).
 // CHECK: ADORA.BlockStore async [%{{.*}}] %{{.*}}, %arg2
 
-// TODO(PR6 loop-carried): once iter_args token yield is implemented, verify:
-//   ADORA.BlockLoad async [%token_from_prev_iter] %arg2 ...
+// --- PR6.1: loop-carried dep analysis result (adora.lc_dep_summary) ---
+//
+// The tk-loop is a reduction loop: every iteration reads and writes the same
+// C-tile at [ti*16, tj*16]. analyzeLoopCarriedDeps detects:
+//   - LC-RAW  (BlockStore in iter k → BlockLoad in iter k+1, same C-tile)
+//   - LC-WAW  (BlockStore in iter k → BlockStore in iter k+1, same C-tile)
+//
+// CHECK: "adora.lc_dep_summary"
+// CHECK-SAME: LC-RAW
+// CHECK-SAME: LC-WAW
+
+// TODO(PR6.3 loop-carried token yield): once iter_args token yield is
+// implemented, also verify:
+//   scf.for {{.*}} iter_args(%lc_tok = {{.*}}) -> !ADORA.token
+//   ADORA.BlockLoad async [%lc_tok] %arg2 ...
+//   scf.yield %{{.*}} : !ADORA.token
 
 module {
   func.func @gemm_tiled(%arg0: memref<64x64xf32>,   // A

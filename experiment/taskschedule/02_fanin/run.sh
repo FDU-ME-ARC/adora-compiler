@@ -11,7 +11,7 @@ echo "    LoadA and LoadB are independent: can run on different DMA streams"
 echo ""
 
 "${CGRA_OPT}" "${DIR}/input.mlir" \
-    --adora-schedule-tasks="emit-token=true dump-token-graph=${DIR}/tokens.dot" \
+    --adora-schedule-tasks="dump-token-graph=${DIR}/tokens.dot" \
     2>/dev/null > "${DIR}/output_token.mlir"
 
 echo "--- token chain ---"
@@ -26,7 +26,7 @@ grep "stream" "${DIR}/output_streams.mlir" 2>/dev/null | sed 's/^/  /' || echo "
 echo ""
 echo "--- FileCheck ---"
 "${CGRA_OPT}" "${DIR}/input.mlir" \
-    --adora-schedule-tasks="emit-token=true" \
+    --adora-schedule-tasks \
     2>/dev/null | "${FC}" "${DIR}/check.mlir"
 echo "  PASSED ✓"
 

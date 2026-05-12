@@ -34,11 +34,15 @@
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/CommandLine.h"
 
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "ADORA/Dialect/ADORA/IR/ADORA.h"
 #include "ADORA/Dialect/ADORA/Utility/Utility.h"
+#include "ADORA/Dialect/ADORA/Analysis/LoopCarriedDep.h"
+#include "ADORA/Dialect/ADORA/Transforms/ThreadLoopCarriedTokens.h"
 #include "ADORA/Dialect/ADORA/Transforms/Passes.h"
 #include "ADORA/Dialect/ADORA/Transforms/DependencyAnalysis.h"
 #include "ADORA/Dialect/ADORA/Transforms/TaskGraph/TaskGraph.h"
+#include "ADORA/Dialect/ADORA/Lowering/LowerPasses.h"
 #include "./PassDetail.h"
 
 using namespace llvm; // for llvm.errs()
@@ -496,7 +500,9 @@ static void dumpTokenGraphAsDot(func::FuncOp func, llvm::StringRef path) {
 ///      outgoing edge.
 ///   4. Patch TaskNode back-pointers via oldToNew so graph metadata stays
 ///      valid after the old ops are erased.
-static void threadTokensOnDMAs(TaskGraph *graph) {
+static void threadTokensOnDMAs(
+    TaskGraph *graph,
+    const llvm::DenseSet<mlir::Operation *> &extraProducers = {}) {
   using mlir::Operation;
   using mlir::Value;
 
@@ -513,12 +519,18 @@ static void threadTokensOnDMAs(TaskGraph *graph) {
     preds[d].push_back(s);
     hasOut.insert(s);
   }
+  // PR6.2: any op that the LC analyzer flagged as a loop-carried producer
+  // also needs its token result materialised, even if it has no intra-block
+  // successor.  Adding to hasOut + all triggers rebuild-with-token below.
+  for (auto *p : extraProducers) {
+    if (!p || !p->getBlock()) continue;
+    hasOut.insert(p);
+  }
   if (preds.empty() && hasOut.empty()) return;
 
   llvm::SetVector<Operation *> all;
   for (auto &kv : preds) {
-    all.insert(kv.first);
-    for (auto *s : kv.second) all.insert(s);
+    all.insert(kv.first);    for (auto *s : kv.second) all.insert(s);
   }
   for (auto *s : hasOut) all.insert(s);
 
@@ -660,50 +672,49 @@ void RemoveRedundantBlockLoads(TaskGraph* graph){
   (void)graph;
 }
 
+// ============================================================================
+// PR6.1 — loop-carried dep analysis glue.
+//
+// The real work lives in lib/Dialect/ADORA/Analysis/LoopCarriedDep.cpp; this
+// file only collects the enclosing scf.for / affine.for ops containing a
+// KernelOp body, runs the analyzer, and serialises the result into
+// `adora.lc_dep_summary` on the FuncOp.
+//
+// The earlier prototype (`findLoopCarriedStoreLoadPair` + `wireLoopCarriedToken`)
+// was removed — precision and scope upgraded, and loop-carried token threading
+// is deferred to PR6.3 where it will consume the structured result here.
+// ============================================================================
 
-
-/// @brief Detect whether an AffineForOp body has a loop-carried RAW dep:
-///        a BlockStore writes a memref that a BlockLoad in the SAME body reads.
-///        This is the tk-loop C-tile pattern: Store(C[ti,tj]) → Load(C[ti,tj]).
-///
-/// @return {storeOp, loadOp} pair if found, else {nullptr, nullptr}
-static std::pair<ADORA::DataBlockStoreOp, ADORA::DataBlockLoadOp>
-findLoopCarriedStoreLoadPair(mlir::Block *body) {
-  llvm::SmallVector<ADORA::DataBlockStoreOp> stores;
-  llvm::SmallVector<ADORA::DataBlockLoadOp>  loads;
-  for (auto &op : *body) {
-    if (auto s = dyn_cast<ADORA::DataBlockStoreOp>(&op)) stores.push_back(s);
-    if (auto l = dyn_cast<ADORA::DataBlockLoadOp>(&op))  loads.push_back(l);
-  }
-  for (auto store : stores)
-    for (auto load : loads)
-      if (checkDependencyBetweenBlockStoreAndBlockLoad(store, load))
-        return {store, load};
-  return {nullptr, nullptr};
+/// Collect every scf.for / affine.for in `func` whose body directly contains
+/// an ADORA::KernelOp. Nested loops are each returned individually (caller
+/// can decide per-level policy later).
+static SmallVector<Operation*>
+collectEnclosingLoopsWithKernel(func::FuncOp func) {
+  SmallVector<Operation*> out;
+  func.walk([&](Operation *op) {
+    if (!isa<scf::ForOp, affine::AffineForOp>(op)) return;
+    Region &region = op->getRegion(0);
+    if (region.empty()) return;
+    Block &body = region.front();
+    for (auto k : body.getOps<ADORA::KernelOp>()) {
+      (void)k;
+      out.push_back(op);
+      break;
+    }
+  });
+  return out;
 }
 
-/// @brief PR6 TODO — wire loop-carried token yield (affine.for → scf.for iter_args).
-///
-/// This function will convert an AffineForOp with a loop-carried Store→Load
-/// RAW dep into a scf.for with iter_args(!ADORA.token), threading the store
-/// token from iteration tk to the load in iteration tk+1.
-///
-/// Currently emits a diagnostic note and returns without transforming.
-/// Full implementation tracked in PR6.
-static void wireLoopCarriedToken(AffineForOp forop,
-                                  ADORA::DataBlockStoreOp store,
-                                  ADORA::DataBlockLoadOp  load) {
-  llvm::errs() << "[PR6-TODO] loop-carried token detected in "
-               << forop->getParentOp()->getName()
-               << " — affine.for → scf.for iter_args conversion not yet implemented.\n"
-               << "  Store: "; store.dump();
-  llvm::errs() << "  Load:  "; load.dump();
-  llvm::errs() << "  Cross-iteration token yield will be implemented in PR6.\n";
-}
 
 /// @brief A wrapper
 /// @param func 
 void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
+  // PR6.2 (v4): keep affine.for. Loop-carried tokens are threaded via
+  // affine.for iter_args / affine.yield in the LC pass below — no need to
+  // promote to scf.for.  (Empirically verified affine.for supports custom
+  // token iter_args; see docs/affine_for_yield_token_verification.md.)
+  // (void)affineForOuterToSCF(func, 1);
+
   //////////////
   /// 1st step: get all block that needs to be scanned
   //////////////
@@ -727,6 +738,21 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
   //////////////
   int idx = 0;
   SmallVector<mlir::Attribute> allEdgeAttrs; // P4.0 — accumulated across blocks
+
+  // PR6.2: pre-scan loop-carried producers so threadTokensOnDMAs can force
+  // a token result on them even if they have no intra-block successor
+  // (typical case: a BlockStore at iter k feeding a BlockLoad at iter k+1).
+  llvm::DenseSet<mlir::Operation *> lcProducers;
+  if (emitTokens && threadLCTokens) {
+    for (Operation *loopOp :
+         collectEnclosingLoopsWithKernel(func)) {
+      auto r = mlir::ADORA::analysis::analyzeLoopCarriedDeps(loopOp);
+      for (const auto &c :
+           mlir::ADORA::analysis::groupEdgesIntoChains(r, /*includeRAR=*/false))
+        if (c.producer) lcProducers.insert(c.producer);
+    }
+  }
+
   for(auto block : blocks){
     TaskGraph* graph = new TaskGraph;
 
@@ -744,19 +770,11 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
 
     // Step D: thread SSA !ADORA.token along dep edges
     if (emitTokens)
-      threadTokensOnDMAs(graph);
+      threadTokensOnDMAs(graph, lcProducers);
 
-    // Step D2: wire loop-carried token yield for affine.for bodies
-    // with a Store→Load loop-carried RAW dep on the same memref tile.
-    if (emitTokens) {
-      if (auto *parentOp = block->getParentOp()) {
-        if (auto forop = dyn_cast<AffineForOp>(parentOp)) {
-          auto [store, load] = findLoopCarriedStoreLoadPair(block);
-          if (store && load)
-            wireLoopCarriedToken(forop, store, load);
-        }
-      }
-    }
+    // Step D2 (PR6.1) — loop-carried dep analysis is now done at the FuncOp
+    // level after the block-pass loop completes (see lc_dep_summary below),
+    // because LC edges live per-enclosing-loop, not per-block.
 
     // Step E: cross-check tokens vs dep_summary (CI only)
     if (emitTokens && crossCheck) {
@@ -779,6 +797,41 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
   if (emitSummary)
     func->setAttr("adora.dep_summary",
                   ArrayAttr::get(func.getContext(), allEdgeAttrs));
+
+  // PR6.1 — run loop-carried dep analysis at the FuncOp level: every
+  // enclosing scf.for / affine.for whose body contains a KernelOp gets
+  // analysed; non-empty results are serialised into `adora.lc_dep_summary`.
+  //
+  // Output is consumed by:
+  //   - PR6.2: decides which inner affine.for must be promoted to scf.for
+  //   - PR6.3: threadLoopCarriedTokens (real iter_args insertion)
+  //   - tests / diagnostics
+  if (emitSummary || threadLCTokens) {
+    SmallVector<mlir::Attribute> lcAttrs;
+    int loopIdx = 0;
+    for (Operation *loopOp : collectEnclosingLoopsWithKernel(func)) {
+      auto r = mlir::ADORA::analysis::analyzeLoopCarriedDeps(loopOp);
+      if (r.empty()) { loopIdx++; continue; }
+      if (emitSummary) {
+        lcAttrs.push_back(
+            mlir::ADORA::analysis::serializeLoopCarriedDeps(
+                r, loopIdx, func.getContext()));
+      }
+      // PR6.2: thread loop-carried tokens through affine.for iter_args.
+      if (threadLCTokens && emitTokens) {
+        if (auto fo = dyn_cast<affine::AffineForOp>(loopOp)) {
+          if (failed(mlir::ADORA::threadLoopCarriedTokensOnAffineFor(fo, r))) {
+            signalPassFailure();
+            return;
+          }
+        }
+      }
+      loopIdx++;
+    }
+    if (emitSummary && !lcAttrs.empty())
+      func->setAttr("adora.lc_dep_summary",
+                    ArrayAttr::get(func.getContext(), lcAttrs));
+  }
 
   // PR1 — mark the enclosing module as post-schedule so downstream passes and
   // the mapper can assert scheduling has run. `adora.dep_summary` remains the
