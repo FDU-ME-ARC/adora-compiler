@@ -624,6 +624,30 @@ int main(int argc, char **argv) {
     }
   };
 
+  // Phase 0 T1: consume adora.dep_summary / adora.lc_dep_summary produced by
+  // ScheduleADORATasksPass on each FuncOp. For now this is observational only
+  // — we emit a single AgentTrace event per function that reports the number
+  // of regular / loop-carried edges seen. Future work (T3/T4) will feed these
+  // into the OnlineRanker/PipelineScheduler decision context instead of the
+  // hand-rolled dep graph inside mapping.cpp.
+  if(AgentTrace::enabled()){
+    moduleop.walk([&](func::FuncOp func) {
+      auto depAttr   = func->getAttrOfType<mlir::ArrayAttr>("adora.dep_summary");
+      auto lcDepAttr = func->getAttrOfType<mlir::ArrayAttr>("adora.lc_dep_summary");
+      if(!depAttr && !lcDepAttr) return WalkResult::advance();
+      std::ostringstream payload;
+      payload << "{\"func\":\""
+              << agentTraceJsonEscape(func.getSymName().str())
+              << "\",\"edges\":"
+              << (depAttr   ? (int)depAttr.size()   : 0)
+              << ",\"lc_edges\":"
+              << (lcDepAttr ? (int)lcDepAttr.size() : 0)
+              << ",\"source\":\"FuncOp.adora.dep_summary\"}";
+      AgentTrace::emit("cgra_mapper", "dep_summary_consumed", payload.str());
+      return WalkResult::advance();
+    });
+  }
+
   moduleop.walk([&](func::FuncOp func) {
     SmallVector<ADORA::KernelOp> kernels;
     func.walk([&](ADORA::KernelOp kernel) {
