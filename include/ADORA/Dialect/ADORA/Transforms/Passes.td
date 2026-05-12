@@ -394,11 +394,12 @@ def ScheduleADORATasks: Pass<"adora-schedule-tasks", "func::FuncOp"> {
   // PR2 commit B: drive the !ADORA.token threading + dep_summary emission
   // + (CI-only) cross-check between the two representations.
   let options = [
-    Option<"emitTokens", "emit-token", "bool", /*default=*/"false",
+    Option<"emitTokens", "emit-token", "bool", /*default=*/"true",
            "Thread SSA !ADORA.token values through DataBlockLoad/Store/Kernel "
-           "ops based on graph dep edges. When false (default) the pass only "
-           "emits the PR1 adora.dep_summary attribute, preserving byte-level "
-           "output compatibility with pre-PR2 baselines.">,
+           "ops based on graph dep edges. Default true (PR6.2 flip): tokens are "
+           "the canonical IR-level carrier of async deps, consumed by "
+           "adora-buffer-reuse / adora-assign-streams / adora-lower-async-tokens "
+           "(PR6.3). Set false only to reproduce pre-PR6 byte-level baselines.">,
     Option<"emitSummary", "emit-summary", "bool", /*default=*/"true",
            "Emit the PR1 adora.dep_summary DictionaryAttr on the enclosing "
            "func. Kept on during the PR2 gradual-rollout window.">,
@@ -411,7 +412,12 @@ def ScheduleADORATasks: Pass<"adora-schedule-tasks", "func::FuncOp"> {
            "If non-empty, write a Graphviz DOT file of the async-token dep "
            "chain to this path after threading.  Nodes are BlockLoad/Store/Kernel "
            "ops; edges are the SSA !ADORA.token def-use arcs.  Requires "
-           "emit-token=true.">
+           "emit-token=true.">,
+    Option<"threadLCTokens", "thread-lc-tokens", "bool", /*default=*/"true",
+           "PR6.2: rewrite enclosing affine.for in-place with "
+           "iter_args(!ADORA.token) / affine.yield to carry loop-carried "
+           "token deps across iterations. Requires emit-token=true to "
+           "have any effect.">
   ];
 }
 

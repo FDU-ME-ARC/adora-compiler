@@ -15,7 +15,7 @@
 //   kernel_3mm_2's kernel receives tokens from kernel_3mm_0/1 BlockStores via
 //   the kernel→kernel dep wired by RemoveRedundantBlockStoreLoadPair.
 //
-// RUN: %cgra-opt %s --adora-schedule-tasks="emit-token=true" 2>/dev/null \
+// RUN: %cgra-opt %s --adora-schedule-tasks 2>/dev/null \
 // RUN:   | FileCheck %s
 
 // kernel_3mm_0: root loads produce tokens, kernel waits, store waits kernel.

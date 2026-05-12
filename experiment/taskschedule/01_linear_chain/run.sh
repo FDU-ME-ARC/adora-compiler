@@ -12,7 +12,7 @@ echo ""
 
 # 1. run pass
 "${CGRA_OPT}" "${DIR}/input.mlir" \
-    --adora-schedule-tasks="emit-token=true dump-token-graph=${DIR}/tokens.dot" \
+    --adora-schedule-tasks="dump-token-graph=${DIR}/tokens.dot" \
     2>/dev/null > "${DIR}/output_token.mlir"
 
 # 2. show token chain
@@ -23,7 +23,7 @@ grep -E "async|!ADORA\.token" "${DIR}/output_token.mlir" | sed 's/^/  /'
 echo ""
 echo "--- FileCheck ---"
 "${CGRA_OPT}" "${DIR}/input.mlir" \
-    --adora-schedule-tasks="emit-token=true" \
+    --adora-schedule-tasks \
     2>/dev/null | "${FC}" "${DIR}/check.mlir"
 echo "  PASSED ✓"
 

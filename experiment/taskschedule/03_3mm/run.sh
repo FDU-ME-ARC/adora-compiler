@@ -12,7 +12,7 @@ echo "    on-chip LocalMemAlloc buffers from kernel_0/1 are reused directly"
 echo ""
 
 "${CGRA_OPT}" "${DIR}/input.mlir" \
-    --adora-schedule-tasks="emit-token=true dump-token-graph=${DIR}/tokens.dot" \
+    --adora-schedule-tasks="dump-token-graph=${DIR}/tokens.dot" \
     2>/dev/null > "${DIR}/output_token.mlir"
 
 echo "--- token chain ---"
@@ -34,7 +34,7 @@ fi
 echo ""
 echo "--- FileCheck ---"
 "${CGRA_OPT}" "${DIR}/input.mlir" \
-    --adora-schedule-tasks="emit-token=true" \
+    --adora-schedule-tasks \
     2>/dev/null | "${FC}" "${DIR}/check.mlir"
 echo "  PASSED ✓"
 

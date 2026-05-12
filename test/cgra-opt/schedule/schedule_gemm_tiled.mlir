@@ -29,7 +29,7 @@
 //   1. The intra-iteration BlockStore produces a token.
 //   2. The BlockLoad of A and B (no RAW pred) has no async dep.
 //
-// RUN: %cgra-opt %s --adora-schedule-tasks="emit-token=true" 2>/dev/null \
+// RUN: %cgra-opt %s --adora-schedule-tasks 2>/dev/null \
 // RUN:   | FileCheck %s
 
 // --- What the pass currently does (intra-iteration WAR dep) ---
