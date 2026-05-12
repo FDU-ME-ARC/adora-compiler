@@ -1,1 +1,2 @@
-[dump-token-graph] written to /data00/home/loujiahang/adora/adora-compiler/experiment/taskschedule/04_gemm_tiled/tokens.dot
+<unknown>:0: error: <Pass-Options-Parser>: no such option dump-token-graph
+

@@ -1,0 +1,87 @@
+
+========================================================================
+2026-05-10T18:55:40
+cwd: None
++ /data00/home/loujiahang/adora/adora-compiler/build/bin/cgra-opt --allow-unregistered-dialect --affine-loop-normalize --affine-simplify-structures --normalize-memrefs /data00/home/loujiahang/adora/adora-compiler/test/cgra-mapper/FPVecAdd/FPVecAdd.mlir -o /data00/home/loujiahang/adora/adora-compiler/test/cgra-mapper/FPVecAdd/Output/FPVecAdd.mlir.tmp/adora-cc-ir/tempfiles/DFGs/FPVecAdd_normalized.mlir
+------------------------------------------------------------------------
+
+========================================================================
+2026-05-10T18:55:40
+cwd: None
++ /data00/home/loujiahang/adora/adora-compiler/build/bin/cgra-opt --canonicalize -reconcile-unrealized-casts --affine-loop-fusion --adora-extract-affine-for-to-kernel --arith-expand --memref-expand -cse /data00/home/loujiahang/adora/adora-compiler/test/cgra-mapper/FPVecAdd/Output/FPVecAdd.mlir.tmp/adora-cc-ir/tempfiles/DFGs/FPVecAdd_normalized.mlir -o /data00/home/loujiahang/adora/adora-compiler/test/cgra-mapper/FPVecAdd/Output/FPVecAdd.mlir.tmp/adora-cc-ir/0_kernels/FPVecAdd_kernel.mlir
+------------------------------------------------------------------------
+
+========================================================================
+2026-05-10T18:55:40
+cwd: None
++ /data00/home/loujiahang/adora/adora-compiler/build/bin/cgra-opt --adora-simplify-affine-loop-levels --canonicalize -cse --adora-simplify-loadstore --adora-math-rewrite --adora-adjust-kernel-mem-footprint=cachesize=128 singlearraysize=8 disable-remainder-block explicit-datablock /data00/home/loujiahang/adora/adora-compiler/test/cgra-mapper/FPVecAdd/Output/FPVecAdd.mlir.tmp/adora-cc-ir/0_kernels/FPVecAdd_kernel.mlir -o /data00/home/loujiahang/adora/adora-compiler/test/cgra-mapper/FPVecAdd/Output/FPVecAdd.mlir.tmp/adora-cc-ir/1_kernels_opt/FPVecAdd_opt.mlir
+------------------------------------------------------------------------
+affine.for %arg4 = 0 to 20 {
+  %0 = affine.load %arg0[%arg4] : memref<?xf32>
+  %1 = affine.load %arg1[%arg4] : memref<?xf32>
+  %2 = arith.addf %0, %1 : f32
+  affine.store %2, %arg2[%arg4] : memref<?xf32>
+  %3 = arith.mulf %0, %1 : f32
+  affine.store %3, %arg3[%arg4] : memref<?xf32>
+}
+affine.for %arg4 = 0 to 20 {
+  %0 = affine.load %arg0[%arg4] : memref<?xf32>
+  %1 = affine.load %arg1[%arg4] : memref<?xf32>
+  %2 = arith.addf %0, %1 : f32
+  affine.store %2, %arg2[%arg4] : memref<?xf32>
+  %3 = arith.mulf %0, %1 : f32
+  affine.store %3, %arg3[%arg4] : memref<?xf32>
+}
+0: outermost, innermost
+affine.for %arg4 = 0 to 20 {
+  %0 = affine.load %arg0[%arg4] : memref<?xf32>
+  %1 = affine.load %arg1[%arg4] : memref<?xf32>
+  %2 = arith.addf %0, %1 : f32
+  affine.store %2, %arg2[%arg4] : memref<?xf32>
+  %3 = arith.mulf %0, %1 : f32
+  affine.store %3, %arg3[%arg4] : memref<?xf32>
+}
+affine.for %arg4 = 0 to 20 {
+  %0 = affine.load %arg0[%arg4] : memref<?xf32>
+  %1 = affine.load %arg1[%arg4] : memref<?xf32>
+  %2 = arith.addf %0, %1 : f32
+  affine.store %2, %arg2[%arg4] : memref<?xf32>
+  %3 = arith.mulf %0, %1 : f32
+  affine.store %3, %arg3[%arg4] : memref<?xf32>
+}
+affine.for %arg4 = 0 to 20 {
+  %0 = affine.load %arg0[%arg4] : memref<?xf32>
+  %1 = affine.load %arg1[%arg4] : memref<?xf32>
+  %2 = arith.addf %0, %1 : f32
+  affine.store %2, %arg2[%arg4] : memref<?xf32>
+  %3 = arith.mulf %0, %1 : f32
+  affine.store %3, %arg3[%arg4] : memref<?xf32>
+}
+0: outermost, innermost
+[debug] newMemRef: memref<20xf32>
+[debug] before remove LoadExpr: d0
+[debug] BlockLoadExpr: 0
+[debug] after remove LoadExpr: d0
+[debug] After replace Kernel: 
+ADORA.kernel {
+  affine.for %arg4 = 0 to 20 {
+    %0 = affine.load %result[%arg4] : memref<20xf32>
+    %1 = affine.load %arg1[%arg4] : memref<?xf32>
+    %2 = arith.addf %0, %1 : f32
+    affine.store %2, %arg2[%arg4] : memref<?xf32>
+    %3 = arith.mulf %0, %1 : f32
+    affine.store %3, %arg3[%arg4] : memref<?xf32>
+  }
+  ADORA.terminator
+} {KernelName = "f32VecAddMul"}
+PLEASE submit a bug report to https://github.com/llvm/llvm-project/issues/ and include the crash backtrace.
+Stack dump:
+0.	Program arguments: /data00/home/loujiahang/adora/adora-compiler/build/bin/cgra-opt --adora-simplify-affine-loop-levels --canonicalize -cse --adora-simplify-loadstore --adora-math-rewrite "--adora-adjust-kernel-mem-footprint=cachesize=128 singlearraysize=8 disable-remainder-block explicit-datablock" /data00/home/loujiahang/adora/adora-compiler/test/cgra-mapper/FPVecAdd/Output/FPVecAdd.mlir.tmp/adora-cc-ir/0_kernels/FPVecAdd_kernel.mlir -o /data00/home/loujiahang/adora/adora-compiler/test/cgra-mapper/FPVecAdd/Output/FPVecAdd.mlir.tmp/adora-cc-ir/1_kernels_opt/FPVecAdd_opt.mlir
+Stack dump without symbol names (ensure you have llvm-symbolizer in your PATH or set the environment var `LLVM_SYMBOLIZER_PATH` to point to it):
+0  cgra-opt  0x000055ecc0a2e7a4
+1  cgra-opt  0x000055ecc0a2ebc5
+2  cgra-opt  0x000055ecc0a2c015
+3  cgra-opt  0x000055ecc0a2e03c
+4  libc.so.6 0x00007faec1e10520
+5  cgra-opt  0x000055ecbdd1a888
+6  cgra-opt  0x00007ffd26856fe0

@@ -706,6 +706,8 @@ collectEnclosingLoopsWithKernel(func::FuncOp func) {
 }
 
 
+
+
 /// @brief A wrapper
 /// @param func 
 void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){

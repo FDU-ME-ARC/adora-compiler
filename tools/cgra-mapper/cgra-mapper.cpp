@@ -21,6 +21,7 @@
 #include "../../lib/DFG/inc/mlir_cdfg.h"
 #include "ADORA/Dialect/ADORA/IR/ADORA.h"
 // #include "ADORA/Dialect/ADORA/Transforms/Passes.h"
+#include "ADORA/Dialect/ADORA/Transforms/Passes.h"
 // #include "ADORA/Dialect/ADORA/Lowering/LowerPasses.h"
 #include "ADORA/Dialect/ADORATensor/IR/ADORATensor.h"
 #include "ADORA/Misc/Passes.h"
@@ -175,6 +176,18 @@ int main(int argc, char **argv) {
     "verbose", 
     cl::Optional, 
     cl::desc("Detail information"),
+    cl::value_desc("bool"),
+    cl::init(false));
+
+  // PR6.4 — opt-in switch to run schedule-tasks + assign-streams +
+  // lower-async-tokens on the module right before per-kernel mapping &
+  // emit. Default off keeps cgra-mapper byte-identical to pre-PR6.
+  static cl::opt<bool> enableAsync(
+    "enable-async",
+    cl::Optional,
+    cl::desc("Run --adora-schedule-tasks + --adora-assign-streams + "
+             "--adora-lower-async-tokens before emit so PR6.4 dep_summary "
+             "path drives BlockStore await-gather. Default false."),
     cl::value_desc("bool"),
     cl::init(false));
 
@@ -473,6 +486,25 @@ int main(int argc, char **argv) {
   SimplifyBlockAccessOp(moduleop);
   ADORA::simplifyConstantAffineApplyOpsInRegion(moduleop.getBodyRegion());
   ADORA::simplifyAddAffineApplyOpsInRegionButOutOfKernel(moduleop.getBodyRegion());
+
+  /// PR6.4 — optionally run schedule-tasks → assign-streams →
+  /// lower-async-tokens so that BlockStore ops carry adora.dep_summary
+  /// attributes (+ stripped token iter_args) that EmitPytest consumes
+  /// via its dep_summary fallback path (getDepsTaskNames Path 2).
+  if (enableAsync.getValue()) {
+    mlir::PassManager pm(&context);
+    auto &fpm = pm.nest<mlir::func::FuncOp>();
+    fpm.addPass(mlir::ADORA::createScheduleADORATasksPass());
+    fpm.addPass(mlir::ADORA::createAssignStreamsPass());
+    fpm.addPass(mlir::ADORA::createLowerAsyncTokensPass());
+    if (mlir::failed(pm.run(moduleop))) {
+      llvm::errs() << "cgra-mapper: --enable-async pipeline failed.\n";
+      return 1;
+    }
+    if (verbose.getValue())
+      llvm::errs() << "cgra-mapper: async pipeline (schedule-tasks + "
+                      "assign-streams + lower-async-tokens) applied.\n";
+  }
 
   moduleop.dump();
 
