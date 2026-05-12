@@ -1,15 +1,10 @@
 //===----------------------------------------------------------------------===//
-// DepSummaryView.cpp — parser impl for P4.0's `adora.dep_summary`.
+// DepSummaryView.cpp — parser impl for `adora.dep_summary`.
 //
-// Attribute schema (grouped form, produced by ScheduleAdoraTasks):
-//   adora.dep_summary = [
-//     { block_idx: i64, edges: [
-//         { src: i64, dst: i64, kind: str, overlap: i1 },
-//         ... ] },
-//     ...
-//   ]
+// Moved from lib/Dialect/ADORA/Transforms/TaskGraph/DepSummaryView.cpp to the
+// Analysis library (PR6.1). No behavioural change.
 //===----------------------------------------------------------------------===//
-#include "ADORA/Dialect/ADORA/Transforms/TaskGraph/DepSummaryView.h"
+#include "ADORA/Dialect/ADORA/Analysis/DepSummaryView.h"
 
 #include "llvm/Support/Debug.h"
 
@@ -19,10 +14,6 @@ namespace mlir {
 namespace ADORA {
 
 namespace {
-
-/// Generic lookup + dyn_cast on a DictionaryAttr field.
-/// Using the free mlir::dyn_cast form per LLVM 17+ guidance (old member-form
-/// is deprecated). Returns nullptr on miss or wrong type.
 template <typename AttrT>
 static AttrT tryGet(DictionaryAttr dict, StringRef name) {
   if (!dict)
@@ -32,7 +23,6 @@ static AttrT tryGet(DictionaryAttr dict, StringRef name) {
     return nullptr;
   return mlir::dyn_cast<AttrT>(a);
 }
-
 } // namespace
 
 static bool decodeEdge(DictionaryAttr edgeDict, int64_t blockIdx,

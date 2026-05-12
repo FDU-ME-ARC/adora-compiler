@@ -1,21 +1,21 @@
-// PR2 — verify --adora-schedule-tasks threads SSA !ADORA.token (emit-token=true)
-// and preserves dep_summary-only path (emit-token=false, NFC).
+// PR6.2 — verify --adora-schedule-tasks defaults `emit-token` to true.
 //
-// Uses generic-form IR with pre-built BlockLoad/Store/Kernel ops to bypass
-// the adora-adjust-kernel-mem-footprint pass (pre-existing crash, unrelated).
+// Without passing any option, the pass must produce SSA !ADORA.token values
+// and async operand lists. The opt-out form `emit-token=false` must still
+// produce pre-PR6 baseline (dep_summary only, NO token).
 //
 // RUN: %cgra-opt %s --adora-schedule-tasks 2>/dev/null \
-// RUN:   | FileCheck %s --check-prefix=TOKEN
+// RUN:   | FileCheck %s --check-prefix=DEFAULT
 // RUN: %cgra-opt %s --adora-schedule-tasks="emit-token=false" 2>/dev/null \
-// RUN:   | FileCheck %s --check-prefix=NOTOKEN
+// RUN:   | FileCheck %s --check-prefix=OPTOUT
 
-// TOKEN: adora.scheduled
-// TOKEN: adora.dep_summary
-// TOKEN: !ADORA.token
+// DEFAULT: adora.scheduled
+// DEFAULT: adora.dep_summary
+// DEFAULT: !ADORA.token
 
-// NOTOKEN-NOT: !ADORA.token
-// NOTOKEN: adora.scheduled
-// NOTOKEN: adora.dep_summary
+// OPTOUT-NOT: !ADORA.token
+// OPTOUT: adora.scheduled
+// OPTOUT: adora.dep_summary
 
 #map = affine_map<()[s0] -> (0)>
 

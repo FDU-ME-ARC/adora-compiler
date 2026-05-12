@@ -26,6 +26,7 @@
 #include "ADORA/Dialect/ADORA/Utility/Utility.h"
 #include "./PassDetail.h"
 
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -150,6 +151,11 @@ static Operation *rebuildStoreSync(DataBlockStoreOp old) {
         n == "operandSegmentSizes") continue;
     newOp->setAttr(a.getName(), a.getValue());
   }
+  // Drop any residual uses of the old store's asyncToken (e.g. PR6.2 yield
+  // operand on a loop-carried store) before erase. The new op is sync and
+  // does not produce a token; consumers will be cleaned up by Pass 5.
+  if (Value asyncTok = old.getAsyncToken())
+    asyncTok.dropAllUses();
   old.erase();
   return newOp.getOperation();
 }
@@ -171,6 +177,88 @@ static Operation *rebuildKernelSync(KernelOp old) {
     asyncTok.dropAllUses();
   old.erase();
   return newOp.getOperation();
+}
+
+// ---- PR6.3: strip !ADORA.token iter_args / results from affine.for --------
+//
+// PR6.2 rewrites each affine.for whose body carries a loop-carried dependency
+// into the form
+//
+//     %t0 = ADORA.event.create -> !ADORA.token          // sentinel
+//     %tN:1 = affine.for %iv = lb to ub
+//               iter_args(%tk = %t0) -> !ADORA.token {
+//       %res, %prod = ADORA.BlockLoad ... async [%tk] -> !ADORA.token
+//       ...
+//       affine.yield %prod : !ADORA.token
+//     }
+//
+// By the time this pass reaches Pass 5, Passes 1-3 have already rewritten
+// every ADORA async op in the body to sync form (`asyncDeps=[]`,
+// `produceToken=false`). The body therefore no longer references any token
+// iter_arg region-argument, and the affine.yield still carries operands
+// whose defining ops have been erased (their OpOperand slots were cleared
+// by dropAllUses() in the rebuild helpers). We rebuild the affine.for here
+// with zero iter_args and an empty yield so the resulting IR verifies.
+//
+// Only the "all iter_args are !ADORA.token" shape is supported — the exact
+// output of PR6.2 threadLoopCarriedTokensOnAffineFor (which refuses to
+// thread into loops that already had iter_args). Mixed shapes emit a
+// warning and are left untouched.
+static void stripTokenIterArgsFromAffineFor(affine::AffineForOp oldFor) {
+  MLIRContext *ctx = oldFor.getContext();
+  auto tokTy = TokenType::get(ctx);
+
+  unsigned nIter = oldFor.getNumIterOperands();
+  if (nIter == 0)
+    return;
+  for (Type t : oldFor.getResultTypes()) {
+    if (t != tokTy) {
+      oldFor.emitWarning(
+          "adora-pr6.3: affine.for has non-token iter_args; "
+          "stripping is not yet implemented for mixed shapes. "
+          "Skipping.");
+      return;
+    }
+  }
+
+  OpBuilder b(oldFor);
+  auto newFor = b.create<affine::AffineForOp>(
+      oldFor.getLoc(),
+      oldFor.getLowerBoundOperands(), oldFor.getLowerBoundMap(),
+      oldFor.getUpperBoundOperands(), oldFor.getUpperBoundMap(),
+      oldFor.getStep().getSExtValue());
+  // Default builder with no iter_args auto-creates an empty affine.yield.
+
+  Block *oldBody = oldFor.getBody();
+  Block *newBody = newFor.getBody();
+
+  // Splice all body ops EXCEPT the old affine.yield into newBody,
+  // BEFORE the auto-generated empty yield.
+  newBody->getOperations().splice(
+      newBody->begin(),
+      oldBody->getOperations(),
+      oldBody->begin(), std::prev(oldBody->end()));
+
+  // Remap induction variable: old block-arg-0 → new block-arg-0.
+  oldBody->getArgument(0).replaceAllUsesWith(newBody->getArgument(0));
+
+  // Token iter-arg block args should be dead after Pass 3 rebuild
+  // (sync ops carry empty asyncDeps). Drop any residual uses defensively
+  // so erase() does not hit a "still has uses" assertion.
+  for (unsigned i = 1, n = oldBody->getNumArguments(); i < n; ++i)
+    oldBody->getArgument(i).dropAllUses();
+
+  // PR6.2 yields producer-token Values; by now Pass 3 has erased those
+  // producers and cleared the yield's OpOperands. Erase the stale yield.
+  oldBody->getTerminator()->erase();
+
+  // Old affine.for results are the terminal loop-carried tokens. PR6.2
+  // intentionally leaves them unused; be defensive in case a later pass
+  // wired something in.
+  for (Value r : oldFor.getResults())
+    r.dropAllUses();
+
+  oldFor.erase();
 }
 
 // ---- main pass logic -------------------------------------------------------
@@ -258,6 +346,21 @@ void LowerAsyncTokensPass::runOnOperation() {
     }
     emitDestroy(b, lastUse->getLoc(), lastUse, ev);
   }
+
+  // Pass 5 (PR6.3): strip !ADORA.token iter_args from affine.for ops.
+  // Passes 1-4 only handle straight-line async ops; loop-carried token plumbing
+  // emitted by PR6.2 (iter_args / affine.yield of !ADORA.token) survives until
+  // here. Rebuild each such loop without token iter_args so verifier passes
+  // and downstream emitters (PR6.4) see clean affine.for.
+  SmallVector<affine::AffineForOp> loopsToStrip;
+  func.walk([&](affine::AffineForOp fo) {
+    auto tokTy = TokenType::get(fo.getContext());
+    for (Type t : fo.getResultTypes()) {
+      if (t == tokTy) { loopsToStrip.push_back(fo); break; }
+    }
+  });
+  for (affine::AffineForOp fo : loopsToStrip)
+    stripTokenIterArgsFromAffineFor(fo);
 }
 
 } // namespace

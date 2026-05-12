@@ -10,6 +10,9 @@
 #define ADORA_CONVERSION_KERNELCALLTOLLVM_H_
 
 #include <memory>
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Support/LogicalResult.h"
 
 namespace mlir {
 class LowerToLLVMOptions;
@@ -19,7 +22,8 @@ class OperationPass;
 class Pass;
 namespace ADORA {
 
-
+/// Convert outer affine.for to scf.for (inner loops stay affine).
+LogicalResult affineForOuterToSCF(func::FuncOp func, unsigned outerDepth = 1);
 
 std::unique_ptr<OperationPass<ModuleOp>> createConvertKernelCallToLLVMPass();
 std::unique_ptr<OperationPass<ModuleOp>> createConvertADORAToSCFPass();

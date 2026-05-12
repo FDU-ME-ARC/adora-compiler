@@ -682,6 +682,64 @@ public:
     indent() << "\n";
     return true;
   }
+
+  /// SCF statements.
+  bool visitOp(scf::ForOp op) { 
+    indent() << "for (";
+    auto iterVar = op.getInductionVar();
+
+    // Emit lower bound.
+    std::string lbStr = _cgracallemitter->lookupName(op.getLowerBound());
+    if(lbStr.empty()) {
+      // try to read as constant op
+      auto cstOp = op.getLowerBound().getDefiningOp<arith::ConstantIndexOp>();
+      if(cstOp) {
+        lbStr = std::to_string(cstOp.value());
+      } else {
+        llvm::errs() << "Warning: could not find lb value in scf.for\n";
+        lbStr = "0";
+      }
+    }
+    _os << "int " << EmitNewValueAndGetName(iterVar, "int") << " = " << lbStr << "; ";
+
+    // Emit upper bound.
+    std::string ubStr = _cgracallemitter->lookupName(op.getUpperBound());
+    if(ubStr.empty()) {
+      auto cstOp = op.getUpperBound().getDefiningOp<arith::ConstantIndexOp>();
+      if(cstOp) {
+        ubStr = std::to_string(cstOp.value());
+      } else {
+        llvm::errs() << "Warning: could not find ub value in scf.for\n";
+        ubStr = "0";
+      }
+    }
+    _os << _cgracallemitter->lookupName(iterVar) << " < " << ubStr << "; ";
+
+    // Emit step.
+    std::string stepStr = _cgracallemitter->lookupName(op.getStep());
+    if(stepStr.empty()) {
+      auto cstOp = op.getStep().getDefiningOp<arith::ConstantIndexOp>();
+      if(cstOp) {
+        stepStr = std::to_string(cstOp.value());
+      } else {
+        llvm::errs() << "Warning: could not find step value in scf.for\n";
+        stepStr = "1";
+      }
+    }
+    _os << _cgracallemitter->lookupName(iterVar) << " = " << _cgracallemitter->lookupName(iterVar) << " + " << stepStr << "){\n";
+
+    _cgracallemitter->emitBlock(*(op.getBody()), _os);
+    // reduce
+    indent() << "}\n";
+    indent() << "\n";
+    indent() << "\n";
+    indent() << "\n";
+    return true;
+  }
+
+  bool visitOp(scf::YieldOp op) { 
+    return true; 
+  }
   // bool visitOp(AffineIfOp op) { return emitter.emitAffineIf(op), true; }
   // bool visitOp(AffineParallelOp op) {
   //   return emitter.emitAffineParallel(op), true;

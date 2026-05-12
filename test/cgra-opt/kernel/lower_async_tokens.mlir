@@ -7,7 +7,7 @@
 //   2. adora-lower-async-tokens                → lowers to event ops
 //
 // RUN: cgra-opt %s \
-// RUN:   --adora-schedule-tasks="emit-token=true" \
+// RUN:   --adora-schedule-tasks \
 // RUN:   --adora-lower-async-tokens \
 // RUN:   2>/dev/null | FileCheck %s
 

@@ -86,10 +86,44 @@ namespace
       return 0;
     }
 
+    // PR6.4 — mapping from string Id attribute to defining op, populated once
+    // per function before emission. Used when SSA async tokens are no longer
+    // available (post --adora-lower-async-tokens) and deps must be read from
+    // adora.dep_summary attributes instead.
+    llvm::DenseMap<int64_t, mlir::Operation *> _idToOp;
+    mlir::ArrayAttr _depSummary;     // cached adora.dep_summary on current func
+    mlir::ArrayAttr _lcDepSummary;   // cached adora.lc_dep_summary on current func
+
+    // Build _idToOp / _depSummary caches for the enclosing func of `op`.
+    void ensureDepSummaryCache(mlir::Operation *op) {
+      auto func = op->getParentOfType<mlir::func::FuncOp>();
+      if (!func) return;
+      // dep_summary is a func-level ArrayAttr of blocks; pick block 0.
+      if (!_depSummary) {
+        if (auto a = func->getAttrOfType<mlir::ArrayAttr>("adora.dep_summary"))
+          _depSummary = a;
+      }
+      if (!_lcDepSummary) {
+        if (auto a = func->getAttrOfType<mlir::ArrayAttr>("adora.lc_dep_summary"))
+          _lcDepSummary = a;
+      }
+      if (!_idToOp.empty()) return;
+      func.walk([&](mlir::Operation *o) {
+        if (auto idAttr = o->getAttrOfType<mlir::StringAttr>("Id")) {
+          int64_t idNum = 0;
+          if (!idAttr.getValue().getAsInteger(10, idNum))
+            _idToOp[idNum] = o;
+        }
+      });
+    }
+
     // Collect Python task variable names that the given BlockStore op
-    // depends on (via asyncDependencies tokens from upstream BlockStores).
+    // depends on. First try SSA async tokens (pre-lower form); if none,
+    // fall back to adora.dep_summary attribute lookup (PR6.4 path).
     llvm::SmallVector<std::string> getDepsTaskNames(ADORA::DataBlockStoreOp op) {
       llvm::SmallVector<std::string> names;
+
+      // Path 1: SSA tokens (backward-compat with PR4-F pre-lower pipelines).
       for (mlir::Value tok : ADORA::getAsyncDeps(op.getOperation())) {
         mlir::Operation *producer = tok.getDefiningOp();
         if (!producer) continue;
@@ -97,14 +131,70 @@ namespace
         if (it != _storeToTask.end())
           names.push_back(it->second);
       }
+      if (!names.empty()) return names;
+
+      // Path 2 (PR6.4): read adora.dep_summary + Id attribute lookup.
+      ensureDepSummaryCache(op.getOperation());
+      if (!_depSummary) return names;
+      auto idAttr = op->getAttrOfType<mlir::StringAttr>("Id");
+      if (!idAttr) return names;
+      int64_t dstId = 0;
+      if (idAttr.getValue().getAsInteger(10, dstId)) return names;
+      for (mlir::Attribute blk : _depSummary) {
+        auto blkDict = blk.dyn_cast<mlir::DictionaryAttr>();
+        if (!blkDict) continue;
+        auto edges = blkDict.get("edges").dyn_cast_or_null<mlir::ArrayAttr>();
+        if (!edges) continue;
+        for (mlir::Attribute e : edges) {
+          auto eDict = e.dyn_cast<mlir::DictionaryAttr>();
+          if (!eDict) continue;
+          auto dst = eDict.get("dst").dyn_cast_or_null<mlir::IntegerAttr>();
+          auto src = eDict.get("src").dyn_cast_or_null<mlir::IntegerAttr>();
+          auto kind = eDict.get("kind").dyn_cast_or_null<mlir::StringAttr>();
+          if (!dst || !src) continue;
+          if (dst.getInt() != dstId) continue;
+          // Only producer→consumer dep kinds translate to gather; skip WAR
+          // (write-after-read) since the reader is the consumer.
+          if (kind && kind.getValue() == "WAR") continue;
+          auto it = _idToOp.find(src.getInt());
+          if (it == _idToOp.end()) continue;
+          auto taskIt = _storeToTask.find(it->second);
+          if (taskIt != _storeToTask.end())
+            names.push_back(taskIt->second);
+        }
+      }
       return names;
     }
 
-    // True if this store's token result has any downstream users
-    // (i.e., another op consumes the token → this task feeds a downstream task).
+    // True if this store's token result has any downstream users, OR (PR6.4)
+    // any dep_summary edge names this store as a src for a RAW dep.
     bool storeHasConsumers(ADORA::DataBlockStoreOp op) {
-      mlir::Value tok = ADORA::getAsyncTokenOrNull(op.getOperation());
-      return tok && !tok.use_empty();
+      if (mlir::Value tok = ADORA::getAsyncTokenOrNull(op.getOperation()))
+        if (!tok.use_empty()) return true;
+
+      ensureDepSummaryCache(op.getOperation());
+      if (!_depSummary) return false;
+      auto idAttr = op->getAttrOfType<mlir::StringAttr>("Id");
+      if (!idAttr) return false;
+      int64_t srcId = 0;
+      if (idAttr.getValue().getAsInteger(10, srcId)) return false;
+      for (mlir::Attribute blk : _depSummary) {
+        auto blkDict = blk.dyn_cast<mlir::DictionaryAttr>();
+        if (!blkDict) continue;
+        auto edges = blkDict.get("edges").dyn_cast_or_null<mlir::ArrayAttr>();
+        if (!edges) continue;
+        for (mlir::Attribute e : edges) {
+          auto eDict = e.dyn_cast<mlir::DictionaryAttr>();
+          if (!eDict) continue;
+          auto src = eDict.get("src").dyn_cast_or_null<mlir::IntegerAttr>();
+          auto kind = eDict.get("kind").dyn_cast_or_null<mlir::StringAttr>();
+          if (!src) continue;
+          if (src.getInt() != srcId) continue;
+          if (kind && kind.getValue() == "WAR") continue;
+          return true;
+        }
+      }
+      return false;
     }
 
     /// @brief emit a new op to python, add this one to op_name_list.
@@ -1178,6 +1268,74 @@ namespace
 
       _os << "\n";
       return true;
+    }
+
+    /// SCF statements.
+    bool visitOp(scf::ForOp op)
+    {
+      if (op.getOperation()->hasAttr("EmitSkip"))
+      {
+        return true;
+      }
+
+      indent() << "for ";
+      auto iterVar = op.getInductionVar();
+      
+      // Emit lower bound.
+      std::string lbStr = _pytestemitter->lookupName(op.getLowerBound());
+      if(lbStr.empty()) {
+        // try to read as constant op
+        auto cstOp = op.getLowerBound().getDefiningOp<arith::ConstantIndexOp>();
+        if(cstOp) {
+          lbStr = std::to_string(cstOp.value());
+        } else {
+          llvm::errs() << "Warning: could not find lb value in scf.for\n";
+          lbStr = "0";
+        }
+      }
+      _os << EmitNewValueAndGetName(iterVar, "int") << " in range(" << lbStr << ", ";
+
+      // Emit upper bound.
+      std::string ubStr = _pytestemitter->lookupName(op.getUpperBound());
+      if(ubStr.empty()) {
+        auto cstOp = op.getUpperBound().getDefiningOp<arith::ConstantIndexOp>();
+        if(cstOp) {
+          ubStr = std::to_string(cstOp.value());
+        } else {
+          llvm::errs() << "Warning: could not find ub value in scf.for\n";
+          ubStr = "0";
+        }
+      }
+      _os << ubStr << ", ";
+
+      // Emit step.
+      std::string stepStr = _pytestemitter->lookupName(op.getStep());
+      if(stepStr.empty()) {
+        auto cstOp = op.getStep().getDefiningOp<arith::ConstantIndexOp>();
+        if(cstOp) {
+          stepStr = std::to_string(cstOp.value());
+        } else {
+          llvm::errs() << "Warning: could not find step value in scf.for\n";
+          stepStr = "1";
+        }
+      }
+      _os << stepStr << "):\n";
+
+      if (op.getOperation()->hasAttr("ADORAGemm"))
+      {
+        _pytestemitter->emitGemmBlock(*(op.getBody()), _os);
+      }
+      else
+      {
+        _pytestemitter->emitBlock(*(op.getBody()), _os);
+      }
+
+      _os << "\n";
+      return true;
+    }
+
+    bool visitOp(scf::YieldOp op) { 
+      return true; 
     }
 
     // bool visitOp(AffineIfOp op) { return emitter.emitAffineIf(op), true; }
