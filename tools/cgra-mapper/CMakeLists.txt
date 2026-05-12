@@ -41,7 +41,7 @@ set(LIBS
   MLIRADORAOps
   GeneralCDFGGen
   # MLIRADORAMisc
-  # MLIRADORATransforms
+  MLIRADORATransforms
   # MLIRADORALowerings
 
   #ADORATensor
