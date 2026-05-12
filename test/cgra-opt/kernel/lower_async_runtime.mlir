@@ -12,7 +12,7 @@
 //   3. adora-to-llvm-async-runtime
 //
 // RUN: cgra-opt %s \
-// RUN:   --adora-schedule-tasks="emit-token=true" \
+// RUN:   --adora-schedule-tasks \
 // RUN:   --adora-lower-async-tokens \
 // RUN:   --adora-to-llvm-async-runtime \
 // RUN:   2>/dev/null | FileCheck %s
