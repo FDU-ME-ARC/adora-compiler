@@ -70,7 +70,7 @@ void appendLog(const std::string& path, const std::string& record) {
     ofs << record << "\n";
 }
 
-bool parseSelectedIndex(const std::string& body, int& outIndex, std::string& outRationale, bool& outFallback, std::string& outError) {
+bool parseSelectedIndex(const std::string& body, int& outIndex, std::string& outRationale, std::string& outScratchpad, bool& outFallback, std::string& outError) {
     // Tiny purpose-built JSON peek. We expect a flat object containing an
     // integer `selected_index`, plus optional `rationale`, `used_fallback`,
     // `client_error` strings/booleans. Parsing nested objects is unnecessary.
@@ -104,6 +104,15 @@ bool parseSelectedIndex(const std::string& body, int& outIndex, std::string& out
         if(endQuote != std::string::npos) {
             outRationale = body.substr(ratPos + 1, endQuote - ratPos - 1);
         }
+    }
+
+    auto scPos = valueStart(findKey("scratchpad"));
+    if(scPos != std::string::npos && body[scPos] == '"') {
+        auto endQuote = body.find('"', scPos + 1);
+        while(endQuote != std::string::npos && body[endQuote - 1] == '\\')
+            endQuote = body.find('"', endQuote + 1);
+        if(endQuote != std::string::npos)
+            outScratchpad = body.substr(scPos + 1, endQuote - scPos - 1);
     }
 
     auto fbPos = valueStart(findKey("used_fallback"));
@@ -331,7 +340,8 @@ OnlineRanker::Decision OnlineRanker::rankOnce(const std::string& requestJson, in
         std::string rationale;
         std::string clientError;
         bool fallback = false;
-        if(parseSelectedIndex(body, idx, rationale, fallback, clientError)) {
+        std::string scratchpad;
+        if(parseSelectedIndex(body, idx, rationale, scratchpad, fallback, clientError)) {
             if(idx < 0 || idx >= candidate_count) {
                 decision.error = "selected_index_out_of_range";
             } else {
@@ -339,6 +349,7 @@ OnlineRanker::Decision OnlineRanker::rankOnce(const std::string& requestJson, in
                 decision.selected_index = idx;
                 decision.used_fallback = fallback;
                 decision.rationale = rationale;
+                decision.scratchpad = scratchpad;
                 if(decision.error.empty() && !clientError.empty()) {
                     decision.error = clientError;
                 }
@@ -355,6 +366,7 @@ OnlineRanker::Decision OnlineRanker::rankOnce(const std::string& requestJson, in
         rec << "{"
             << "\"request\":" << requestJson << ","
             << "\"response_raw\":\"" << onlineRankerJsonEscape(body) << "\","
+            << "\"scratchpad\":\"" << onlineRankerJsonEscape(decision.scratchpad) << "\","
             << "\"succeeded\":" << (decision.succeeded ? "true" : "false") << ","
             << "\"selected_index\":" << decision.selected_index << ","
             << "\"used_fallback\":" << (decision.used_fallback ? "true" : "false") << ","
@@ -500,9 +512,10 @@ OnlineRanker::Decision OnlineRanker::rankDaemon(const std::string& requestJson, 
         std::string firstLine = (nl != std::string::npos) ? body.substr(0, nl) : body;
         int idx = 0;
         std::string rationale;
+        std::string scratchpad;
         std::string clientError;
         bool fallback = false;
-        if(parseSelectedIndex(firstLine, idx, rationale, fallback, clientError)){
+        if(parseSelectedIndex(firstLine, idx, rationale, scratchpad, fallback, clientError)){
             if(idx < 0 || idx >= candidate_count){
                 decision.error = "selected_index_out_of_range";
             } else {
@@ -510,6 +523,7 @@ OnlineRanker::Decision OnlineRanker::rankDaemon(const std::string& requestJson, 
                 decision.selected_index = idx;
                 decision.used_fallback = fallback;
                 decision.rationale = rationale;
+                decision.scratchpad = scratchpad;
                 if(decision.error.empty() && !clientError.empty()){
                     decision.error = clientError;
                 }
@@ -527,6 +541,7 @@ OnlineRanker::Decision OnlineRanker::rankDaemon(const std::string& requestJson, 
             << "\"mode\":\"daemon\","
             << "\"request\":" << requestJson << ","
             << "\"response_raw\":\"" << onlineRankerJsonEscape(body) << "\","
+            << "\"scratchpad\":\"" << onlineRankerJsonEscape(decision.scratchpad) << "\","
             << "\"succeeded\":" << (decision.succeeded ? "true" : "false") << ","
             << "\"selected_index\":" << decision.selected_index << ","
             << "\"used_fallback\":" << (decision.used_fallback ? "true" : "false") << ","

@@ -35,6 +35,7 @@ public:
         int selected_index = 0;     // valid only if succeeded
         bool used_fallback = false; // ranker reported fallback path
         std::string rationale;
+        std::string scratchpad;   // S: chain-of-thought before selection
         std::string error;
     };
 
