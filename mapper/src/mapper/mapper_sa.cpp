@@ -29,6 +29,10 @@ bool MapperSA::mapper(){
             "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"obj_opt\":" + std::string(_objOpt ? "true" : "false") + "}"
         );
     }
+    // P: let LLM observe the full DFG + hardware topology before per-node decisions.
+    if(OnlineRanker::enabled())
+        OnlineRanker::prePlace(_mapping->getDFG(), getADG(), agentTraceContext());
+
     bool succeed;
     if(_objOpt){ // objective optimization
         succeed = pnrSyncOpt();
@@ -554,6 +558,10 @@ int MapperSA::tryCandidates(Mapping* mapping, DFGNode* dfgNode, const std::vecto
         {
             auto hw = OnlineRanker::historyWindowJson();
             if(!hw.empty()) req << "," << hw;
+        }
+        {
+            auto ps = OnlineRanker::strategyJson();
+            if(!ps.empty()) req << "," << ps;
         }
         req << "}";
 

@@ -6,6 +6,9 @@
 #include <sys/types.h>
 #include <vector>
 
+class DFG;
+class ADG;
+
 // Online placement ranker bridge.
 //
 // Speaks the JSON contract documented in
@@ -67,6 +70,10 @@ public:
     // caller must populate `candidate_count` so we can validate the response.
     static Decision rank(const std::string& requestJson, int candidate_count);
 
+    // P: pre-placement global observation.
+    static void prePlace(DFG* dfg, ADG* adg, const std::string& kernelName);
+    static std::string strategyJson();  // returns "placement_strategy":"..." fragment
+
     // H: cross-kernel history window.
     struct HistoryEntry {
         std::string kernel;
@@ -106,6 +113,9 @@ private:
     static pid_t _daemonPid;
     static int _daemonStdin;
     static int _daemonStdout;
+
+    // P: pre-placement strategy
+    static std::string _strategy;
 
     // H: history window state
     static std::vector<HistoryEntry> _history;

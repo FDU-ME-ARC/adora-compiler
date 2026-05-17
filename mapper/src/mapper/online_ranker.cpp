@@ -1,4 +1,7 @@
 #include "mapper/online_ranker.h"
+#include "dfg/dfg.h"
+#include "dfg/dfg_node.h"
+#include "dfg/dfg_edge.h"
 #include "adg/adg.h"
 #include "adg/adg_node.h"
 
@@ -34,6 +37,82 @@ OnlineRanker::AdgContext OnlineRanker::_adgContext;
 pid_t OnlineRanker::_daemonPid = -1;
 int OnlineRanker::_daemonStdin = -1;
 int OnlineRanker::_daemonStdout = -1;
+
+// P: pre-placement
+std::string OnlineRanker::_strategy;
+
+void OnlineRanker::prePlace(DFG* dfg, ADG* adg, const std::string& kernelName) {
+    if(!_enabled || !dfg || !adg) return;
+    _strategy.clear();
+
+    // Serialize DFG nodes
+    std::ostringstream req;
+    req << "{\"schema_version\":\"mapper-online-v0\","
+        << "\"phase\":\"pre_placement_observe\","
+        << "\"kernel\":\"" << onlineRankerJsonEscape(kernelName) << "\","
+        << "\"dfg\":{\"nodes\":[";
+    bool first = true;
+    for(auto& kv : dfg->nodes()) {
+        auto* n = kv.second;
+        if(!first) req << ",";
+        req << "{\"id\":" << n->id()
+            << ",\"name\":\"" << onlineRankerJsonEscape(n->name()) << "\""
+            << ",\"op\":\"" << onlineRankerJsonEscape(n->operation()) << "\"}";
+        first = false;
+    }
+    req << "],\"edges\":[";
+    first = true;
+    for(auto& kv : dfg->edges()) {
+        auto* e = kv.second;
+        if(!first) req << ",";
+        req << "{\"src\":" << e->srcId()
+            << ",\"dst\":" << e->dstId()
+            << ",\"back\":" << (e->isBackEdge() ? "true" : "false") << "}";
+        first = false;
+    }
+    req << "]}";
+
+    // Serialize ADG heatmap (initial state, all free at prePlace time)
+    int maxRow = 0, maxCol = 0;
+    for(auto& kv : adg->nodes()) {
+        auto* n = kv.second;
+        if(n->x() > maxCol) maxCol = n->x();
+        if(n->y() > maxRow) maxRow = n->y();
+    }
+    std::vector<std::vector<char>> grid(maxRow+1, std::vector<char>(maxCol+1, '.'));
+    for(auto& kv : adg->nodes()) {
+        auto* n = kv.second;
+        if(n->x() >= 0 && n->y() >= 0 && n->y() <= maxRow && n->x() <= maxCol) {
+            char sym = dynamic_cast<IOBNode*>(n) ? 'I' : 'G';
+            grid[n->y()][n->x()] = sym;
+        }
+    }
+    req << ",\"hw_occupancy\":{\"mesh\":\"" << (maxRow+1) << "x" << (maxCol+1) << "\","
+        << "\"grid\":[";
+    for(int r = 0; r <= maxRow; r++) {
+        if(r) req << ",";
+        req << "\"";
+        for(int c = 0; c <= maxCol; c++) {
+            if(c) req << " ";
+            req << grid[r][c];
+        }
+        req << "\"";
+    }
+    req << "]}}";
+
+    // Send and parse placement_strategy
+    auto dec = rank(req.str(), 1);  // candidate_count=1, we just want a text response
+    if(!dec.rationale.empty())
+        _strategy = dec.rationale;
+    // Also check for explicit placement_strategy field (parsed as scratchpad by convention)
+    if(!dec.scratchpad.empty())
+        _strategy = dec.scratchpad;
+}
+
+std::string OnlineRanker::strategyJson() {
+    if(_strategy.empty()) return "";
+    return "\"placement_strategy\":\"" + onlineRankerJsonEscape(_strategy) + "\"";
+}
 
 // H: history window
 std::vector<OnlineRanker::HistoryEntry> OnlineRanker::_history;
