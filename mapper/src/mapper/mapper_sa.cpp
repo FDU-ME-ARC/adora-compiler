@@ -29,6 +29,10 @@ bool MapperSA::mapper(){
             "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"obj_opt\":" + std::string(_objOpt ? "true" : "false") + "}"
         );
     }
+    // R: load prior reflection lessons before this run.
+    if(OnlineRanker::enabled())
+        OnlineRanker::loadReflection();
+
     // P: let LLM observe the full DFG + hardware topology before per-node decisions.
     if(OnlineRanker::enabled())
         OnlineRanker::prePlace(_mapping->getDFG(), getADG(), agentTraceContext());
@@ -46,6 +50,10 @@ bool MapperSA::mapper(){
             "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"succeed\":" + std::string(succeed ? "true" : "false") + "}"
         );
     }
+    // R: reflect on this run and persist lessons for future kernels.
+    if(OnlineRanker::enabled())
+        OnlineRanker::reflect(agentTraceContext(), _mapping->II(), _mapping->maxLat(), succeed);
+
     return succeed;
 }
 
@@ -562,6 +570,10 @@ int MapperSA::tryCandidates(Mapping* mapping, DFGNode* dfgNode, const std::vecto
         {
             auto ps = OnlineRanker::strategyJson();
             if(!ps.empty()) req << "," << ps;
+        }
+        {
+            auto rc = OnlineRanker::reflectionContextJson();
+            if(!rc.empty()) req << "," << rc;
         }
         req << "}";
 

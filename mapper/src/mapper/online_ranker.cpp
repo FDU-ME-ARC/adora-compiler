@@ -41,6 +41,102 @@ int OnlineRanker::_daemonStdout = -1;
 // P: pre-placement
 std::string OnlineRanker::_strategy;
 
+// R: reflection
+std::string OnlineRanker::_reflection;
+std::string OnlineRanker::_reflectionPath;
+
+std::string OnlineRanker::reflectionPath() {
+    if(!_reflectionPath.empty()) return _reflectionPath;
+    if(_logFile.empty()) return "";
+    // Derive <logdir>/reflection.json from the log file path
+    auto slash = _logFile.rfind('/');
+    _reflectionPath = (slash != std::string::npos ? _logFile.substr(0, slash + 1) : "./")
+                      + "reflection.json";
+    return _reflectionPath;
+}
+
+void OnlineRanker::loadReflection() {
+    _reflection.clear();
+    std::string path = reflectionPath();
+    if(path.empty()) return;
+    std::ifstream ifs(path);
+    if(!ifs.good()) return;
+    std::ostringstream buf;
+    buf << ifs.rdbuf();
+    std::string body = buf.str();
+    // Parse "lessons":"..." from the JSON
+    auto findKey = [&](const std::string& key) -> std::string::size_type {
+        return body.find("\"" + key + "\"");
+    };
+    auto lesPos = body.find(':', findKey("lessons"));
+    if(lesPos == std::string::npos) return;
+    while(lesPos < body.size() && (std::isspace((unsigned char)body[lesPos]) || body[lesPos] == ':')) ++lesPos;
+    if(lesPos >= body.size() || body[lesPos] != '"') return;
+    auto endQ = body.find('"', lesPos + 1);
+    while(endQ != std::string::npos && body[endQ - 1] == '\\')
+        endQ = body.find('"', endQ + 1);
+    if(endQ == std::string::npos) return;
+    _reflection = body.substr(lesPos + 1, endQ - lesPos - 1);
+}
+
+void OnlineRanker::reflect(const std::string& kernelName, int ii, int maxLat, bool succeeded) {
+    if(!_enabled) return;
+    std::string path = reflectionPath();
+
+    std::ostringstream req;
+    req << "{\"schema_version\":\"mapper-online-v0\","
+        << "\"phase\":\"post_placement_reflect\","
+        << "\"kernel\":\"" << onlineRankerJsonEscape(kernelName) << "\","
+        << "\"result\":{\"succeeded\":" << (succeeded ? "true" : "false")
+        << ",\"ii\":" << ii
+        << ",\"max_latency\":" << maxLat << "}";
+
+    // Inject prior reflection as context
+    if(!_reflection.empty())
+        req << ",\"prior_reflection\":\"" << onlineRankerJsonEscape(_reflection) << "\"";
+
+    // Inject history window
+    std::string hw = historyWindowJson();
+    if(!hw.empty()) req << "," << hw;
+
+    // Inject strategy if available
+    if(!_strategy.empty())
+        req << ",\"placement_strategy\":\"" << onlineRankerJsonEscape(_strategy) << "\"";
+
+    req << "}";
+
+    auto dec = rank(req.str(), 1);
+
+    // Extract lessons from rationale or scratchpad
+    std::string lessons;
+    if(!dec.scratchpad.empty()) lessons = dec.scratchpad;
+    else if(!dec.rationale.empty()) lessons = dec.rationale;
+    if(lessons.empty()) return;
+
+    _reflection = lessons;
+
+    // Write reflection.json
+    if(path.empty()) return;
+    std::ofstream ofs(path);
+    if(!ofs.good()) return;
+    // Timestamp
+    auto now = std::chrono::system_clock::now();
+    auto t   = std::chrono::system_clock::to_time_t(now);
+    char tsbuf[32];
+    std::strftime(tsbuf, sizeof(tsbuf), "%Y-%m-%dT%H:%M:%SZ", std::gmtime(&t));
+    ofs << "{\n"
+        << "  \"schema_version\": \"mapper-reflect-v0\",\n"
+        << "  \"updated_at\": \"" << tsbuf << "\",\n"
+        << "  \"kernel\": \"" << onlineRankerJsonEscape(kernelName) << "\",\n"
+        << "  \"lessons\": \"" << onlineRankerJsonEscape(lessons) << "\"\n"
+        << "}\n";
+}
+
+std::string OnlineRanker::reflectionContextJson() {
+    if(_reflection.empty()) return "";
+    return "\"prior_reflection\":\"" + onlineRankerJsonEscape(_reflection) + "\"";
+}
+
 void OnlineRanker::prePlace(DFG* dfg, ADG* adg, const std::string& kernelName) {
     if(!_enabled || !dfg || !adg) return;
     _strategy.clear();

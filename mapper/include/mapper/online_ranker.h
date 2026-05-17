@@ -89,6 +89,14 @@ public:
                                int mapped_count);
     static std::string historyWindowJson();  // returns "history_window":[...] fragment
 
+    // R: post-mapping reflection.
+    // loadReflection() reads lessons from <logdir>/reflection.json into _reflection.
+    // reflect() asks the ranker to produce updated lessons and writes them back.
+    // reflectionContextJson() returns a "prior_reflection":"..." fragment for rank requests.
+    static void loadReflection();
+    static void reflect(const std::string& kernelName, int ii, int maxLat, bool succeeded);
+    static std::string reflectionContextJson();
+
     // Tear down the daemon child (if any). Safe to call multiple times. Also
     // invoked implicitly at exit in case the mapper forgets.
     static void shutdown();
@@ -120,6 +128,11 @@ private:
     // H: history window state
     static std::vector<HistoryEntry> _history;
     static const int HISTORY_WINDOW_SIZE = 8;
+
+    // R: reflection state
+    static std::string _reflection;      // lessons loaded from / written to reflection.json
+    static std::string _reflectionPath;  // derived from _logFile on first use
+    static std::string reflectionPath(); // resolves and caches _reflectionPath
 };
 
 std::string onlineRankerJsonEscape(const std::string& value);
