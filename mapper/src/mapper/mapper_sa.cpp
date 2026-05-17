@@ -551,6 +551,10 @@ int MapperSA::tryCandidates(Mapping* mapping, DFGNode* dfgNode, const std::vecto
                 << "\"adg_hash\":\"" << agentTraceJsonEscape(adgCtx.adg_hash) << "\","
                 << "\"adg_summary_ref\":\"" << agentTraceJsonEscape(adgCtx.adg_summary_path) << "\"}";
         }
+        {
+            auto hw = OnlineRanker::historyWindowJson();
+            if(!hw.empty()) req << "," << hw;
+        }
         req << "}";
 
         auto decision = OnlineRanker::rank(req.str(), static_cast<int>(candidates.size()));
@@ -566,10 +570,18 @@ int MapperSA::tryCandidates(Mapping* mapping, DFGNode* dfgNode, const std::vecto
         if(AgentTrace::enabled()){
             AgentTrace::emit("mapper_place_node", "online_decision", evt.str());
         }
-        if(decision.succeeded && decision.selected_index > 0){
-            auto chosen = orderedCandidates[decision.selected_index];
-            orderedCandidates.erase(orderedCandidates.begin() + decision.selected_index);
-            orderedCandidates.insert(orderedCandidates.begin(), chosen);
+        if(decision.succeeded){
+            auto& chosenPe = orderedCandidates[decision.selected_index];
+            OnlineRanker::appendHistory(
+                agentTraceContext(),
+                dfgNode->name(), dfgNode->operation(),
+                chosenPe->name(), chosenPe->type(),
+                dfgNode->id());
+            if(decision.selected_index > 0){
+                auto chosen = orderedCandidates[decision.selected_index];
+                orderedCandidates.erase(orderedCandidates.begin() + decision.selected_index);
+                orderedCandidates.insert(orderedCandidates.begin(), chosen);
+            }
         }
     }
 

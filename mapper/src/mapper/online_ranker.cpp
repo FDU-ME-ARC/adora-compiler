@@ -35,6 +35,40 @@ pid_t OnlineRanker::_daemonPid = -1;
 int OnlineRanker::_daemonStdin = -1;
 int OnlineRanker::_daemonStdout = -1;
 
+// H: history window
+std::vector<OnlineRanker::HistoryEntry> OnlineRanker::_history;
+
+void OnlineRanker::appendHistory(const std::string& kernel,
+                                  const std::string& node, const std::string& op,
+                                  const std::string& pe_name, const std::string& pe_type,
+                                  int mapped_count) {
+    HistoryEntry e;
+    e.kernel = kernel; e.dfg_node_name = node; e.operation = op;
+    e.chosen_pe_name = pe_name; e.chosen_pe_type = pe_type;
+    e.mapped_count_then = mapped_count;
+    _history.push_back(e);
+    if((int)_history.size() > HISTORY_WINDOW_SIZE)
+        _history.erase(_history.begin());
+}
+
+std::string OnlineRanker::historyWindowJson() {
+    if(_history.empty()) return "";
+    std::ostringstream out;
+    out << "\"history_window\":[";
+    for(size_t i = 0; i < _history.size(); ++i) {
+        const auto& e = _history[i];
+        if(i) out << ",";
+        out << "{\"kernel\":\"" << onlineRankerJsonEscape(e.kernel) << "\""
+            << ",\"dfg_node\":\"" << onlineRankerJsonEscape(e.dfg_node_name) << "\""
+            << ",\"op\":\"" << onlineRankerJsonEscape(e.operation) << "\""
+            << ",\"chosen_pe\":\"" << onlineRankerJsonEscape(e.chosen_pe_name) << "\""
+            << ",\"pe_type\":\"" << onlineRankerJsonEscape(e.chosen_pe_type) << "\""
+            << ",\"mapped_then\":" << e.mapped_count_then << "}";
+    }
+    out << "]";
+    return out.str();
+}
+
 namespace {
 
 std::vector<std::string> shellSplit(const std::string& cmd) {

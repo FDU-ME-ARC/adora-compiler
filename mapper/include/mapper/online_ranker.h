@@ -67,6 +67,21 @@ public:
     // caller must populate `candidate_count` so we can validate the response.
     static Decision rank(const std::string& requestJson, int candidate_count);
 
+    // H: cross-kernel history window.
+    struct HistoryEntry {
+        std::string kernel;
+        std::string dfg_node_name;
+        std::string operation;
+        std::string chosen_pe_name;
+        std::string chosen_pe_type;
+        int mapped_count_then = 0;
+    };
+    static void appendHistory(const std::string& kernel,
+                               const std::string& node, const std::string& op,
+                               const std::string& pe_name, const std::string& pe_type,
+                               int mapped_count);
+    static std::string historyWindowJson();  // returns "history_window":[...] fragment
+
     // Tear down the daemon child (if any). Safe to call multiple times. Also
     // invoked implicitly at exit in case the mapper forgets.
     static void shutdown();
@@ -91,6 +106,10 @@ private:
     static pid_t _daemonPid;
     static int _daemonStdin;
     static int _daemonStdout;
+
+    // H: history window state
+    static std::vector<HistoryEntry> _history;
+    static const int HISTORY_WINDOW_SIZE = 8;
 };
 
 std::string onlineRankerJsonEscape(const std::string& value);
