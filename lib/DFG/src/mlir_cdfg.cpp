@@ -125,8 +125,8 @@ LLVMCDFG::LLVMCDFG(llvm::StringRef name, std::string OpNameFile): _name(name), _
   /// Read in op name file to convert arith/memref/scf dialect to low-level hardware op
   std::ifstream infile(OpNameFile);
   if (!infile.is_open()) {
-    std::cerr << "No OpName File!!\n";
-    return;
+    std::cerr << "Fatal: cannot open OpName file: " << OpNameFile << "\n";
+    exit(1);
   }
   
   std::string line;

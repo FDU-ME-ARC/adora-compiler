@@ -206,6 +206,13 @@ int main(int argc, char **argv) {
     cl::desc("Allow N mapping jobs at once within each func.func (default to be 1)"),
     cl::value_desc("[N]"),
     cl::init(1));
+
+  static cl::opt<std::string> opNameFile(
+    "op-name-file",
+    cl::Optional,
+    cl::desc("MLIR-op to DFG-type name mapping file (overrides GENERAL_OP_NAME_ENV)"),
+    cl::value_desc("filename"),
+    cl::init(""));
   // spdlog::cfg::helpers::load_levels("true");
 
   InitLLVM y(argc, argv);
@@ -323,13 +330,16 @@ int main(int argc, char **argv) {
   std::vector<ADORA_TENSOR_MAPPER*>tensor_mapper_Vec;
 
   std::string GeneralOpNameFile_str;
-  if (GeneralOpNameFile == nullptr) {
-    std::cerr << "Environment variable \" GENERAL_OP_NAME_ENV \" is not set." << std::endl;
-    GeneralOpNameFile_str = "/home/jhlou/CGRVOPT/cgra-opt/lib/DFG/Documents/GeneralOpName.txt";
-    std::cerr << "Using \" GENERAL_OP_NAME_ENV \" = \"/home/jhlou/CGRVOPT/cgra-opt/lib/DFG/Documents/GeneralOpName.txt\"" << std::endl;
-  }
-  else
+  if (!opNameFile.empty()) {
+    GeneralOpNameFile_str = opNameFile;
+  } else if (GeneralOpNameFile != nullptr) {
     GeneralOpNameFile_str = GeneralOpNameFile;
+  } else {
+    llvm::errs() << "error: op-name mapping file not specified.\n"
+                 << "  Set GENERAL_OP_NAME_ENV or pass --op-name-file=<path>\n"
+                 << "  e.g. --op-name-file=lib/DFG/Documents/GeneralOpName.txt\n";
+    return 1;
+  }
 
   /////////////////////////
   /// Map ADORA Tensor
@@ -351,23 +361,20 @@ int main(int argc, char **argv) {
   ADORA::simplifyConstantAffineApplyOpsInRegion(moduleop.getBodyRegion());
   ADORA::simplifyAddAffineApplyOpsInRegionButOutOfKernel(moduleop.getBodyRegion());
 
-  /// PR6.4 — optionally run schedule-tasks → assign-streams →
-  /// lower-async-tokens so that BlockStore ops carry adora.dep_summary
-  /// attributes (+ stripped token iter_args) that EmitPytest consumes
-  /// via its dep_summary fallback path (getDepsTaskNames Path 2).
+  /// Optionally run schedule-tasks to insert !ADORA.token chain.
+  /// Stream coloring is computed inside EmitPytest from SSA token edges
+  /// (no assign-streams pass needed).  lower-async-tokens is only for
+  /// the LLVM firmware path and must NOT run before Python emit.
   if (enableAsync.getValue()) {
     mlir::PassManager pm(&context);
     auto &fpm = pm.nest<mlir::func::FuncOp>();
     fpm.addPass(mlir::ADORA::createScheduleADORATasksPass());
-    fpm.addPass(mlir::ADORA::createAssignStreamsPass());
-    fpm.addPass(mlir::ADORA::createLowerAsyncTokensPass());
     if (mlir::failed(pm.run(moduleop))) {
       llvm::errs() << "cgra-mapper: --enable-async pipeline failed.\n";
       return 1;
     }
     if (verbose.getValue())
-      llvm::errs() << "cgra-mapper: async pipeline (schedule-tasks + "
-                      "assign-streams + lower-async-tokens) applied.\n";
+      llvm::errs() << "cgra-mapper: async pipeline (schedule-tasks) applied.\n";
   }
 
   moduleop.dump();

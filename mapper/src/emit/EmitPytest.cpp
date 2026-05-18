@@ -78,122 +78,54 @@ namespace
     // map from BlockStore Operation* → Python task variable name
     llvm::DenseMap<mlir::Operation*, std::string> _storeToTask;
 
-    // Read hardware stream ID from the 'stream : i32' attribute (PR4-A).
-    // Falls back to 0 when the attribute is absent.
-    int getStreamId(mlir::Operation *op) {
-      if (auto a = op->getAttrOfType<mlir::IntegerAttr>("stream"))
-        return static_cast<int>(a.getInt());
-      return 0;
-    }
-
-    // PR6.4 — mapping from string Id attribute to defining op, populated once
-    // per function before emission. Used when SSA async tokens are no longer
-    // available (post --adora-lower-async-tokens) and deps must be read from
-    // adora.dep_summary attributes instead.
-    llvm::DenseMap<int64_t, mlir::Operation *> _idToOp;
-    mlir::ArrayAttr _depSummary;     // cached adora.dep_summary on current func
-    mlir::ArrayAttr _lcDepSummary;   // cached adora.lc_dep_summary on current func
-
-    // Build _idToOp / _depSummary caches for the enclosing func of `op`.
-    void ensureDepSummaryCache(mlir::Operation *op) {
-      auto func = op->getParentOfType<mlir::func::FuncOp>();
-      if (!func) return;
-      // dep_summary is a func-level ArrayAttr of blocks; pick block 0.
-      if (!_depSummary) {
-        if (auto a = func->getAttrOfType<mlir::ArrayAttr>("adora.dep_summary"))
-          _depSummary = a;
-      }
-      if (!_lcDepSummary) {
-        if (auto a = func->getAttrOfType<mlir::ArrayAttr>("adora.lc_dep_summary"))
-          _lcDepSummary = a;
-      }
-      if (!_idToOp.empty()) return;
-      func.walk([&](mlir::Operation *o) {
-        if (auto idAttr = o->getAttrOfType<mlir::StringAttr>("Id")) {
-          int64_t idNum = 0;
-          if (!idAttr.getValue().getAsInteger(10, idNum))
-            _idToOp[idNum] = o;
+    // Compute stream IDs by graph-colouring the SSA token edges.
+    // Called once at the start of emitBlock; results stored in _streamId.
+    // Replaces the assign-streams IR-attribute approach: no IR attr needed.
+    void computeStreamIds(mlir::Block &block) {
+      if (!_pytestemitter) return;
+      auto &sid = _pytestemitter->_streamId;
+      sid.clear();
+      int nextStream = 0;
+      for (mlir::Operation &op : block) {
+        if (!ADORA::isAsyncCapable(&op)) continue;
+        int minPred = -1;
+        for (mlir::Value tok : ADORA::getAsyncDeps(&op)) {
+          auto *prod = tok.getDefiningOp();
+          if (!prod) continue;
+          auto it = sid.find(prod);
+          if (it != sid.end())
+            minPred = (minPred < 0) ? it->second
+                                    : std::min(minPred, it->second);
         }
-      });
+        sid[&op] = (minPred < 0)
+                   ? (nextStream++ % PytestEmitter::kMaxStreams)
+                   : minPred;
+      }
     }
 
     // Collect Python task variable names that the given BlockStore op
-    // depends on. First try SSA async tokens (pre-lower form); if none,
-    // fall back to adora.dep_summary attribute lookup (PR6.4 path).
+    // depends on via SSA async tokens.
     llvm::SmallVector<std::string> getDepsTaskNames(ADORA::DataBlockStoreOp op) {
-      llvm::SmallVector<std::string> names;
+      return getDepsTaskNames(op.getOperation());
+    }
 
-      // Path 1: SSA tokens (backward-compat with PR4-F pre-lower pipelines).
-      for (mlir::Value tok : ADORA::getAsyncDeps(op.getOperation())) {
+    // Generic: collect task variable names for all async-token deps of any op.
+    llvm::SmallVector<std::string> getDepsTaskNames(mlir::Operation *op) {
+      llvm::SmallVector<std::string> names;
+      for (mlir::Value tok : ADORA::getAsyncDeps(op)) {
         mlir::Operation *producer = tok.getDefiningOp();
         if (!producer) continue;
         auto it = _storeToTask.find(producer);
         if (it != _storeToTask.end())
           names.push_back(it->second);
       }
-      if (!names.empty()) return names;
-
-      // Path 2 (PR6.4): read adora.dep_summary + Id attribute lookup.
-      ensureDepSummaryCache(op.getOperation());
-      if (!_depSummary) return names;
-      auto idAttr = op->getAttrOfType<mlir::StringAttr>("Id");
-      if (!idAttr) return names;
-      int64_t dstId = 0;
-      if (idAttr.getValue().getAsInteger(10, dstId)) return names;
-      for (mlir::Attribute blk : _depSummary) {
-        auto blkDict = blk.dyn_cast<mlir::DictionaryAttr>();
-        if (!blkDict) continue;
-        auto edges = blkDict.get("edges").dyn_cast_or_null<mlir::ArrayAttr>();
-        if (!edges) continue;
-        for (mlir::Attribute e : edges) {
-          auto eDict = e.dyn_cast<mlir::DictionaryAttr>();
-          if (!eDict) continue;
-          auto dst = eDict.get("dst").dyn_cast_or_null<mlir::IntegerAttr>();
-          auto src = eDict.get("src").dyn_cast_or_null<mlir::IntegerAttr>();
-          auto kind = eDict.get("kind").dyn_cast_or_null<mlir::StringAttr>();
-          if (!dst || !src) continue;
-          if (dst.getInt() != dstId) continue;
-          // Only producer→consumer dep kinds translate to gather; skip WAR
-          // (write-after-read) since the reader is the consumer.
-          if (kind && kind.getValue() == "WAR") continue;
-          auto it = _idToOp.find(src.getInt());
-          if (it == _idToOp.end()) continue;
-          auto taskIt = _storeToTask.find(it->second);
-          if (taskIt != _storeToTask.end())
-            names.push_back(taskIt->second);
-        }
-      }
       return names;
     }
 
-    // True if this store's token result has any downstream users, OR (PR6.4)
-    // any dep_summary edge names this store as a src for a RAW dep.
+    // True if this store's SSA token result has any downstream users.
     bool storeHasConsumers(ADORA::DataBlockStoreOp op) {
       if (mlir::Value tok = ADORA::getAsyncTokenOrNull(op.getOperation()))
-        if (!tok.use_empty()) return true;
-
-      ensureDepSummaryCache(op.getOperation());
-      if (!_depSummary) return false;
-      auto idAttr = op->getAttrOfType<mlir::StringAttr>("Id");
-      if (!idAttr) return false;
-      int64_t srcId = 0;
-      if (idAttr.getValue().getAsInteger(10, srcId)) return false;
-      for (mlir::Attribute blk : _depSummary) {
-        auto blkDict = blk.dyn_cast<mlir::DictionaryAttr>();
-        if (!blkDict) continue;
-        auto edges = blkDict.get("edges").dyn_cast_or_null<mlir::ArrayAttr>();
-        if (!edges) continue;
-        for (mlir::Attribute e : edges) {
-          auto eDict = e.dyn_cast<mlir::DictionaryAttr>();
-          if (!eDict) continue;
-          auto src = eDict.get("src").dyn_cast_or_null<mlir::IntegerAttr>();
-          auto kind = eDict.get("kind").dyn_cast_or_null<mlir::StringAttr>();
-          if (!src) continue;
-          if (src.getInt() != srcId) continue;
-          if (kind && kind.getValue() == "WAR") continue;
-          return true;
-        }
-      }
+        return !tok.use_empty();
       return false;
     }
 
@@ -519,7 +451,7 @@ namespace
 
         if (IsLastBlockStoreOp(op))
         {
-          int streamId = getStreamId(op.getOperation());
+          int streamId = _pytestemitter ? (_pytestemitter->_streamId.count(op.getOperation()) ? _pytestemitter->_streamId[op.getOperation()] : 0) : 0;
           auto depNames = getDepsTaskNames(op);
           bool hasDeps = !depNames.empty();
           bool hasConsumers = storeHasConsumers(op);
@@ -724,7 +656,7 @@ namespace
 
       if (IsLastBlockStoreOp(op))
       {
-        int streamId = getStreamId(op.getOperation());
+        int streamId = _pytestemitter ? (_pytestemitter->_streamId.count(op.getOperation()) ? _pytestemitter->_streamId[op.getOperation()] : 0) : 0;
         auto depNames = getDepsTaskNames(op);
         bool hasDeps = !depNames.empty();
         bool hasConsumers = storeHasConsumers(op);
@@ -837,6 +769,17 @@ namespace
         ADG *adg = _pytestemitter->getADG();
         _pytestemitter->GenerateCGRACFGAndEXE(op, _pytestemitter->KnToConfiguration[op], adg);
       }
+      // Await any async DMA tasks this kernel depends on before launching.
+      auto depTasks = getDepsTaskNames(op.getOperation());
+      if (!depTasks.empty()) {
+        indent() << "await asyncio.gather(";
+        for (size_t i = 0; i < depTasks.size(); ++i) {
+          if (i > 0) _os << ", ";
+          _os << depTasks[i];
+        }
+        _os << ")\n";
+      }
+
       if (!op.getKernelName().empty())
       {
         indent() << "### " << op.getKernelName() << "\n";
@@ -1814,6 +1757,7 @@ void PytestEmitter::emitBlock(mlir::Block &block, llvm::raw_ostream &os)
   addIndent();
 
   opEmitter->setIndent(getIndent());
+  opEmitter->computeStreamIds(block);  // graph-colour SSA token edges → _streamId
   block.dump();
 
   for (auto &op : block)

@@ -547,7 +547,7 @@ void BaseEmitter::DataBlockOperationsToSPADInfo(ADORA::KernelOp& kernel, MapperS
       //// set allocation's info
       Operation* srcOfblockstore = GetTheSourceOperationOfBlockStore(blockstore);
 
-      std::set<int> IONodes = dfg->ioNodes();
+      std::set<int> IONodes = dfg->getOutNodes();
       for(auto& id : IONodes){
         DFGIONode* IoNode = dynamic_cast<DFGIONode*>(dfg->node(id));
         if(IoNode->memRefName() == BlockStoreName){
