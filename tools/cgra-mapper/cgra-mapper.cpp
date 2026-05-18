@@ -212,7 +212,7 @@ int main(int argc, char **argv) {
     cl::Optional,
     cl::desc("MLIR-op to DFG-type name mapping file (overrides GENERAL_OP_NAME_ENV)"),
     cl::value_desc("filename"),
-    cl::init(""));
+    cl::init("lib/DFG/Documents/GeneralOpName.txt"));
   // spdlog::cfg::helpers::load_levels("true");
 
   InitLLVM y(argc, argv);
@@ -329,17 +329,9 @@ int main(int argc, char **argv) {
 
   std::vector<ADORA_TENSOR_MAPPER*>tensor_mapper_Vec;
 
-  std::string GeneralOpNameFile_str;
-  if (!opNameFile.empty()) {
-    GeneralOpNameFile_str = opNameFile;
-  } else if (GeneralOpNameFile != nullptr) {
-    GeneralOpNameFile_str = GeneralOpNameFile;
-  } else {
-    llvm::errs() << "error: op-name mapping file not specified.\n"
-                 << "  Set GENERAL_OP_NAME_ENV or pass --op-name-file=<path>\n"
-                 << "  e.g. --op-name-file=lib/DFG/Documents/GeneralOpName.txt\n";
-    return 1;
-  }
+  // Priority: GENERAL_OP_NAME_ENV > --op-name-file > default (lib/DFG/Documents/GeneralOpName.txt)
+  std::string GeneralOpNameFile_str =
+      (GeneralOpNameFile != nullptr) ? GeneralOpNameFile : opNameFile.getValue();
 
   /////////////////////////
   /// Map ADORA Tensor
