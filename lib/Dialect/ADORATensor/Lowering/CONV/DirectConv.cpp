@@ -48,13 +48,13 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
 {
     return [=](OpBuilder &builder, Location loc, ValueRange ivs) mutable
     {
-        llvm::outs() << "\n[DEBUG-DirectConv] Generating OS-style Conv with R,S as outer loops...\n";
+
 
         Value iv_n = ivs[0], iv_k = ivs[1], iv_p = ivs[2], iv_q = ivs[3], iv_r = ivs[4], iv_s = ivs[5];
         int64_t T_N = tileSizes[DimN], T_K = tileSizes[DimK], T_P = tileSizes[DimP], T_Q = tileSizes[DimQ];
 
-        int64_t T_H_in = (T_P - 1) * meta.strides[0] + 1;
-        int64_t T_W_in = (T_Q - 1) * meta.strides[1] + 1;
+        int64_t T_H_in = (T_P - 1) * meta.strides[0] + meta.bounds[5]; // receptive field: includes kernel height R
+        int64_t T_W_in = (T_Q - 1) * meta.strides[1] + meta.bounds[6]; // receptive field: includes kernel width S
 
         unsigned OpId = 0;
         SmallVector<ADORA::DataBlockStoreOp> stores;
@@ -110,7 +110,7 @@ StationaryBodyBuilderFn BuildTiledDirectConvBody(
             storeY.setId(std::to_string(OpId++));
             storeY.setKernelName("ConvDirect");
 
-            // ADORA::setPingpongAttr(yInit);
+            ADORA::setPingpongAttr(storeY);
             yInits.push_back(yInit.getResult());
             yAllocs.push_back(yAlloc.getResult());
             stores.push_back(storeY);
@@ -334,7 +334,6 @@ mlir::affine::AffineForOp LowerDirectConvPipeline(OpBuilder &b, ConvOp op, Systo
     b.setInsertionPointAfter(nLoop);
 
     op.replaceAllUsesWith(finalResult);
-    nLoop->dump();
     return nLoop;
 }
 

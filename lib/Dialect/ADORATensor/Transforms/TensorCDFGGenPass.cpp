@@ -68,7 +68,6 @@ std::unique_ptr<OperationPass<ModuleOp>> createADORATensorOpCdfgGenPass()
 void ADORATensorOpCdfgGenPass::runOnOperation()
 {
   mlir::ModuleOp m = getOperation();
-  llvm::errs() << "[test] kernel! " ; m->dump() ;
 
   /// Get function name
   func::FuncOp Func;
@@ -83,9 +82,7 @@ void ADORATensorOpCdfgGenPass::runOnOperation()
     /// Generating DFG
     std::string GeneralOpNameFile_str;
     if (GeneralOpNameFile == nullptr) {
-      std::cerr << "Environment variable \" GENERAL_OP_NAME_ENV \" is not set." << std::endl;
-      GeneralOpNameFile_str = "/home/jhlou/CGRVOPT/cgra-opt/lib/DFG/Documents/GeneralOpName.txt";
-      std::cerr << "Using \" GENERAL_OP_NAME_ENV \" = \"/home/jhlou/CGRVOPT/cgra-opt/lib/DFG/Documents/GeneralOpName.txt\"" << std::endl;
+      GeneralOpNameFile_str = "lib/DFG/Documents/GeneralOpName.txt";
     }
     else
       GeneralOpNameFile_str = GeneralOpNameFile;
@@ -101,9 +98,7 @@ void ADORATensorOpCdfgGenPass::runOnOperation()
 
     TensorOpCDFGVisitor engine(m->getContext());
     m.walk([&](mlir::Operation* op) {
-      if(engine.dispatchVisitor(op)){
-        m.dump();
-      }
+      engine.dispatchVisitor(op);
     });
     // simplifyLoopLevelsInModuleOp(m);
     // m.dump();

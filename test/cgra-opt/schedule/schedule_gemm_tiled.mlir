@@ -44,21 +44,20 @@
 // This is the INTRA-iteration fence: within one (ti,tj,tk) body the store
 // waits for the load to finish before overwriting the C tile.
 
-// The outermost loop should now be scf.for
-// CHECK: scf.for
+// schedule-tasks emits affine.for with iter_args carrying !ADORA.token
+// across iterations (loop-carried token for the C-tile WAR chain).
+// CHECK: affine.for {{.*}} iter_args({{.*}}) -> (!ADORA.token
 
-// C-tile load acquires a token (WAR producer).
-// CHECK: %{{.*}}, %{{.*}} = ADORA.BlockLoad %arg2 {{.*}} -> !ADORA.token
+// C-tile load receives the loop-carried token from the previous iteration
+// (WAR dep: prev store must finish before this load reads the same tile).
+// CHECK: %{{.*}}, %{{.*}} = ADORA.BlockLoad async [%{{.*}}] %arg2 {{.*}} -> !ADORA.token
 
 // A-tile and B-tile loads have no dep predecessor → plain (no async).
 // CHECK: ADORA.BlockLoad %arg0
 // CHECK: ADORA.BlockLoad %arg1
 
-// BlockStore consumes the C-load token (WAR consumer).
+// BlockStore consumes multiple tokens: kernel result + WAR token + loop-carried tokens.
 // CHECK: ADORA.BlockStore async [%{{.*}}] %{{.*}}, %arg2
-
-// TODO(PR6 loop-carried): once iter_args token yield is implemented, verify:
-//   ADORA.BlockLoad async [%token_from_prev_iter] %arg2 ...
 
 module {
   func.func @gemm_tiled(%arg0: memref<64x64xf32>,   // A

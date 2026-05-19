@@ -70,6 +70,14 @@ public:
   /// Gemm
   ////////////////
   void emitGemmBlock(mlir::Block &block, llvm::raw_ostream &os);
+
+  // Stream IDs computed from SSA token edges at emit time (replaces the
+  // assign-streams IR attribute approach).  Populated by computeStreamIds()
+  // at the start of emitBlock.  Public so PyOpEmitter (in EmitPytest.cpp)
+  // can populate and read it.
+  llvm::DenseMap<mlir::Operation *, int> _streamId;
+  static constexpr int kMaxStreams = 4;
+
 private:
   llvm::SmallDenseMap<mlir::Value, Op_Name_C> _value_name_list;
 

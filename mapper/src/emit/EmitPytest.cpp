@@ -765,9 +765,10 @@ namespace
       indent() << "\n";
       if (!MapHasKey(_pytestemitter->KnToCfgExe, op))
       {
-        // Configuration cfg = ;
         ADG *adg = _pytestemitter->getADG();
-        _pytestemitter->GenerateCGRACFGAndEXE(op, _pytestemitter->KnToConfiguration[op], adg);
+        if (adg != nullptr) {
+          _pytestemitter->GenerateCGRACFGAndEXE(op, _pytestemitter->KnToConfiguration[op], adg);
+        }
       }
       // Await any async DMA tasks this kernel depends on before launching.
       auto depTasks = getDepsTaskNames(op.getOperation());
@@ -1292,10 +1293,13 @@ namespace
     // bool visitOp(AffineMinOp op) {
     //   return emitter.emitAffineMaxMin(op, "min"), true;
     // }
-    // bool visitOp(AffineLoadOp op) {
-    // return
-    // return emitter.emitAffineLoad(op), true;
-    // }
+    bool visitOp(::mlir::affine::AffineLoadOp op) { return true; }
+    bool visitOp(::mlir::arith::AddFOp op) { return true; }
+    bool visitOp(::mlir::arith::SubFOp op) { return true; }
+    bool visitOp(::mlir::arith::MulFOp op) { return true; }
+    bool visitOp(::mlir::arith::DivFOp op) { return true; }
+    bool visitOp(::mlir::arith::RemFOp op) { return true; }
+    bool visitOp(::mlir::arith::CmpFOp op) { return true; }
     bool visitOp(::mlir::affine::AffineStoreOp op)
     {
       std::string memref = _pytestemitter->lookupName(op.getMemref());

@@ -18,29 +18,29 @@
 // CHECK:     %c1_i32 = arith.constant 1 : i32
 // CHECK:     %c0_i32 = arith.constant 0 : i32
 // CHECK:     %alloca = memref.alloca() : memref<i32>
-// CHECK:     %0 = ADORA.BlockLoad %arg0 [0] : memref<100xi32> -> memref<100xi32>  {Id = "0", KernelName = ""}
-// CHECK:     %1 = ADORA.LocalMemAlloc memref<2xi32>  {Id = "1", KernelName = ""}
+// CHECK:     %result = ADORA.BlockLoad %arg0 [0] : memref<100xi32> -> memref<100xi32>  {Id = "0", KernelName = ""}
+// CHECK:     %0 = ADORA.LocalMemAlloc memref<2xi32>  {Id = "1", KernelName = ""}
 // CHECK:     ADORA.kernel {
-// CHECK:       %3 = affine.for %arg1 = 0 to 100 iter_args(%arg2 = %c0_i32) -> (i32) {
-// CHECK:         %4 = ADORA.isel %arg2 : i32 -> i32
-// CHECK:         %5 = affine.load %0[%arg1] : memref<100xi32>
-// CHECK:         %6 = arith.cmpi ult, %5, %c1_i32 : i32
-// CHECK:         %7 = arith.muli %5, %5 : i32
-// CHECK:         %8 = arith.addi %7, %c19_i32 : i32
-// CHECK:         %9 = arith.muli %8, %5 : i32
-// CHECK:         %10 = arith.muli %9, %5 : i32
-// CHECK:         %11 = arith.addi %10, %c3_i32 : i32
-// CHECK:         %12 = arith.muli %11, %5 : i32
-// CHECK:         %13 = arith.select %6, %12, %c1_i32 : i32
-// CHECK:         %14 = arith.addi %4, %13 : i32
-// CHECK:         affine.store %14, %1[0] : memref<2xi32>
-// CHECK:         affine.yield %14 : i32
+// CHECK:       %2 = affine.for %arg1 = 0 to 100 iter_args(%arg2 = %c0_i32) -> (i32) {
+// CHECK:         %3 = ADORA.isel %arg2 : i32 -> i32
+// CHECK:         %4 = affine.load %result[%arg1] : memref<100xi32>
+// CHECK:         %5 = arith.cmpi ult, %4, %c1_i32 : i32
+// CHECK:         %6 = arith.muli %4, %4 : i32
+// CHECK:         %7 = arith.addi %6, %c19_i32 : i32
+// CHECK:         %8 = arith.muli %7, %4 : i32
+// CHECK:         %9 = arith.muli %8, %4 : i32
+// CHECK:         %10 = arith.addi %9, %c3_i32 : i32
+// CHECK:         %11 = arith.muli %10, %4 : i32
+// CHECK:         %12 = arith.select %5, %11, %c1_i32 : i32
+// CHECK:         %13 = arith.addi %3, %12 : i32
+// CHECK:         affine.store %13, %0[0] : memref<2xi32>
+// CHECK:         affine.yield %13 : i32
 // CHECK:       }
 // CHECK:       ADORA.terminator
 // CHECK:     }
-// CHECK:     ADORA.BlockStore %1, %alloca [] : memref<2xi32> -> memref<i32>  {Id = "1", KernelName = ""}
-// CHECK:     %2 = affine.load %alloca[] : memref<i32>
-// CHECK:     return %2 : i32
+// CHECK:     ADORA.BlockStore %0, %alloca [] : memref<2xi32> -> memref<i32>  {Id = "1", KernelName = ""}
+// CHECK:     %1 = affine.load %alloca[] : memref<i32>
+// CHECK:     return %1 : i32
 // CHECK:   }
 // CHECK: }
 

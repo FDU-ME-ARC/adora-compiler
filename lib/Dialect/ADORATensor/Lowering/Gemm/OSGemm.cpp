@@ -588,14 +588,13 @@ namespace mlir
       assert(outTy && "Expected GemmOp to return memref as output in lowering.");
 
       opbuilder.setInsertionPointAfter(op.getOperation());
-      Value out = opbuilder.create<memref::AllocOp>(loc, outTy);
+      MemRefType tileTy = MemRefType::get({tilerow, tilecol}, outTy.getElementType());
+      Value out = opbuilder.create<memref::AllocOp>(loc, tileTy);
 
       //==========================================================
-      // Initialize out with C (copy if same shape, else broadcast init)
+      // Initialize out with C (copy first tilerow x tilecol block)
       //==========================================================
-      mlir::Operation *InitializationOp = initOutWithC2DLike(opbuilder, loc, out, op.getC(), ArrayRef<int64_t>({ShapeA[0], ShapeB[1]}));
-
-      op.getOperation()->getBlock()->dump();
+      mlir::Operation *InitializationOp = initOutWithC2DLike(opbuilder, loc, out, op.getC(), ArrayRef<int64_t>({tilerow, tilecol}));
       //////////////////////////////////////
       /// Generate systolic gemm
       //////////////////////////////////////
@@ -620,15 +619,12 @@ namespace mlir
       //     )
       //   );
       // }
-      loop.dump();
       SimplifyLoadStoreOpsInRegion(loop.getRegion());
 
       loop.walk([&](Operation *op)
                 { op->setAttr("ADORAGemm", UnitAttr::get(loop.getContext())); });
 
-      op.getO().replaceAllUsesWith(out);
-
-      loop.dump();
+      op.getO().replaceAllUsesWith(op.getC());
 
       return loop;
     }

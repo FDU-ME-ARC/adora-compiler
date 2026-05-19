@@ -55,7 +55,7 @@ public:
             // affine::AffineIfOp, 
             // affine::AffineParallelOp, affine::AffineApplyOp,
             // affine::AffineMaxOp, affine::AffineMinOp, 
-            // affine::AffineLoadOp, 
+            affine::AffineLoadOp, 
             affine::AffineStoreOp,
             // affine::AffineVectorLoadOp, affine::AffineVectorStoreOp, 
 
@@ -76,9 +76,8 @@ public:
             // arith::NegFOp,
 
             // // Float binary expressions.
-            // arith::CmpFOp, arith::AddFOp, arith::SubFOp, arith::MulFOp,
-            // arith::DivFOp, arith::RemFOp, arith::MaximumFOp, arith::MinimumFOp,
-            // math::PowFOp,
+            arith::CmpFOp, arith::AddFOp, arith::SubFOp, arith::MulFOp,
+            arith::DivFOp, arith::RemFOp,
 
             // Integer binary expressions.
             arith::AddIOp, arith::SubIOp, arith::MulIOp, arith::DivSIOp,
@@ -160,7 +159,7 @@ public:
   // HANDLE(affine::AffineApplyOp);
   // HANDLE(affine::AffineMaxOp);
   // HANDLE(affine::AffineMinOp);
-  // HANDLE(affine::AffineLoadOp);
+  HANDLE(affine::AffineLoadOp);
   // HANDLE(affine::AffineStoreOp);
   // HANDLE(affine::AffineVectorLoadOp);
   // HANDLE(affine::AffineVectorStoreOp);
@@ -196,12 +195,12 @@ public:
   // HANDLE(arith::NegFOp);
 
   // // Float binary expressions.
-  // HANDLE(arith::CmpFOp);
-  // HANDLE(arith::AddFOp);
-  // HANDLE(arith::SubFOp);
-  // HANDLE(arith::MulFOp);
-  // HANDLE(arith::DivFOp);
-  // HANDLE(arith::RemFOp);
+  HANDLE(arith::CmpFOp);
+  HANDLE(arith::AddFOp);
+  HANDLE(arith::SubFOp);
+  HANDLE(arith::MulFOp);
+  HANDLE(arith::DivFOp);
+  HANDLE(arith::RemFOp);
   // HANDLE(arith::MaximumFOp);
   // HANDLE(arith::MinimumFOp);
   // HANDLE(math::PowFOp);

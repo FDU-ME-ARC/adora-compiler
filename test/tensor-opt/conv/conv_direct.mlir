@@ -1,4 +1,4 @@
-// XFAIL: *
+
 // RUN: tensor-opt --adora-gen-tensor-op-cdfg %s | FileCheck %s
 
 // CHECK-LABEL: func.func @test_conv_direct

@@ -75,8 +75,7 @@ namespace mlir
           // Invoke the Direct Conv generator
           // LowerDirectConv reads config.loopOrder to decide whether
           // to generate OS (P,Q outer) or WS (R,S outer)
-          // newfor = LowerDirectConv(opbuilder, op, config);
-          newfor = LowerDirectConvPipeline(opbuilder, op, config);
+          newfor = LowerDirectConv(opbuilder, op, config);
           break;
 
         case ComputeAlgorithm::Conv_Im2Col:
