@@ -1,5 +1,5 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: adoracc.py %s --work-dir %t --enable-unroll --adg-path %S/../../../spec/cgra_adg_fp32.json  -o %t/result.mlir
+// RUN: adoracc.py %s --work-dir %t --enable-unroll --adg-path %S/../../../spec/cgra_fp32/cgra_adg_fp32.json  -o %t/result.mlir
 // RUN: FileCheck %s --input-file=%t/result.mlir
 // RUN: rm -rf %t && mkdir -p %t
 //

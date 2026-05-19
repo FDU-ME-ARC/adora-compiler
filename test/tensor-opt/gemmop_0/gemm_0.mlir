@@ -1,5 +1,5 @@
 // RUN: tensor-opt \
-// RUN:   --adora-tensor-op-strategy-decision="adg-fn=%S/../../spec/cgra_adg_bf16.json bus-bandwidth=16" \
+// RUN:   --adora-tensor-op-strategy-decision="adg-fn=%S/../../spec/cgra_bf16/vitra_cgra_adg.json bus-bandwidth=16" \
 // RUN:   %s | %FileCheck %s
 
 // CHECK: module {

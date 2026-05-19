@@ -1,6 +1,6 @@
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: adoracc.py %s --work-dir %t -o %t/opt.mlir
-// RUN: %cgra-mapper --adg=%S/../../../spec/cgra_adg_bf16.json --op-file=%S/../../spec/operations_fp32.json --output-type=pytest --obj-opt=false %t/opt.mlir --output=%t/gemm_funccall.py
+// RUN: %cgra-mapper --adg=%S/../../../spec/cgra_bf16/vitra_cgra_adg.json --op-file=%S/../../../spec/cgra_bf16/operations.json --output-type=pytest --obj-opt=false %t/opt.mlir --output=%t/gemm_funccall.py
 // RUN: test -s %t/gemm_funccall.py
 // RUN: %FileCheck %s --check-prefix=CHECK-PY --input-file=%t/gemm_funccall.py
 //
