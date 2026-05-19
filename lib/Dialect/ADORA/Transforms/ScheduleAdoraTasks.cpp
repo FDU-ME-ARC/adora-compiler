@@ -645,8 +645,14 @@ void RemoveRedundantBlockStoreLoadPair(TaskGraph* graph){
       // Wire producing kernel → consuming kernel so the scheduler sees
       // the inter-kernel dependency even after the load is removed.
       KernelNode* sourcekernel = storenode->getKernelNode();
-      for (auto sinkkernel : loadnode->getKernelNodes())
+      for (auto sinkkernel : loadnode->getKernelNodes()) {
         addConnectionBetweenTwoNode(sourcekernel, sinkkernel, depType::Depend);
+        // Also add a depEdge so threadTokensOnDMAs sees store → sinkkernel
+        // and threads a token. Without this the erased BlockLoad leaves a
+        // gap: preds/hasOut in threadTokensOnDMAs skip dead ops (block==null),
+        // so kernel_3mm_2 would get async{} with no deps and emit no gather.
+        graph->addDepEdge({storenode, sinkkernel, DataBlockDepKind::RAW, true});
+      }
 
       // The data already lives in the on-chip buffer (store.SourceMemref).
       // Schedule this BlockLoad for removal: replace its result with the

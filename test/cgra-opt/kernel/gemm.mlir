@@ -8,41 +8,41 @@
 // CHECK:   func.func @gemm_opt
 // CHECK:   %cst = arith.constant 1.200000e+00 : f32
 // CHECK:   %cst_0 = arith.constant 1.500000e+00 : f32
-// CHECK:   %0 = ADORA.BlockLoad %arg0 [0, 0] : memref<?x25xf32> -> memref<20x25xf32>  {Id = "0", KernelName = "gemm_opt_0"}
-// CHECK:   %1 = ADORA.LocalMemAlloc memref<20x25xf32>  {Id = "1", KernelName = "gemm_opt_0"}
+// CHECK:   %result = ADORA.BlockLoad %arg0 [0, 0] : memref<?x25xf32> -> memref<20x25xf32>  {Id = "0", KernelName = "gemm_opt_0"}
+// CHECK:   %0 = ADORA.LocalMemAlloc memref<20x25xf32>  {Id = "1", KernelName = "gemm_opt_0"}
 // CHECK:   ADORA.kernel {
 // CHECK:     affine.for %arg3 = 0 to 20 {
 // CHECK:       affine.for %arg4 = 0 to 25 {
-// CHECK:         %6 = affine.load %0[%arg3, %arg4] : memref<20x25xf32>
-// CHECK:         %7 = arith.mulf %6, %cst : f32
-// CHECK:         affine.store %7, %1[%arg3, %arg4] : memref<20x25xf32>
+// CHECK:         %2 = affine.load %result[%arg3, %arg4] : memref<20x25xf32>
+// CHECK:         %3 = arith.mulf %2, %cst : f32
+// CHECK:         affine.store %3, %0[%arg3, %arg4] : memref<20x25xf32>
 // CHECK:       }
 // CHECK:     }
 // CHECK:     ADORA.terminator
 // CHECK:   } {KernelName = "gemm_opt_0"}
-// CHECK:   ADORA.BlockStore %1, %arg0 [0, 0] : memref<20x25xf32> -> memref<?x25xf32>  {Id = "1", KernelName = "gemm_opt_0"}
-// CHECK:   %2 = ADORA.BlockLoad %arg0 [0, 0] : memref<?x25xf32> -> memref<20x25xf32>  {Id = "0", KernelName = "gemm_opt_1"}
-// CHECK:   %3 = ADORA.BlockLoad %arg1 [0, 0] : memref<?x30xf32> -> memref<20x30xf32>  {Id = "1", KernelName = "gemm_opt_1"}
-// CHECK:   %4 = ADORA.BlockLoad %arg2 [0, 0] : memref<?x25xf32> -> memref<30x25xf32>  {Id = "2", KernelName = "gemm_opt_1"}
-// CHECK:   %5 = ADORA.LocalMemAlloc memref<20x25xf32>  {Id = "3", KernelName = "gemm_opt_1"}
+// CHECK:   ADORA.BlockStore %0, %arg0 [0, 0] : memref<20x25xf32> -> memref<?x25xf32>  {Id = "1", KernelName = "gemm_opt_0"}
+// CHECK:   %result_1 = ADORA.BlockLoad %arg0 [0, 0] : memref<?x25xf32> -> memref<20x25xf32>  {Id = "0", KernelName = "gemm_opt_1"}
+// CHECK:   %result_2 = ADORA.BlockLoad %arg1 [0, 0] : memref<?x30xf32> -> memref<20x30xf32>  {Id = "1", KernelName = "gemm_opt_1"}
+// CHECK:   %result_3 = ADORA.BlockLoad %arg2 [0, 0] : memref<?x25xf32> -> memref<30x25xf32>  {Id = "2", KernelName = "gemm_opt_1"}
+// CHECK:   %1 = ADORA.LocalMemAlloc memref<20x25xf32>  {Id = "3", KernelName = "gemm_opt_1"}
 // CHECK:   ADORA.kernel {
 // CHECK:     affine.for %arg3 = 0 to 20 {
 // CHECK:       affine.for %arg4 = 0 to 25 {
-// CHECK:         %6 = affine.load %2[%arg3, %arg4] : memref<20x25xf32>
-// CHECK:         %7 = affine.for %arg5 = 0 to 30 iter_args(%arg6 = %6) -> (f32) {
-// CHECK:           %8 = affine.load %3[%arg3, %arg5] : memref<20x30xf32>
-// CHECK:           %9 = arith.mulf %8, %cst_0 : f32
-// CHECK:           %10 = affine.load %4[%arg5, %arg4] : memref<30x25xf32>
-// CHECK:           %11 = arith.mulf %9, %10 : f32
-// CHECK:           %12 = arith.addf %arg6, %11 : f32
-// CHECK:           affine.yield %12 : f32
+// CHECK:         %2 = affine.load %result_1[%arg3, %arg4] : memref<20x25xf32>
+// CHECK:         %3 = affine.for %arg5 = 0 to 30 iter_args(%arg6 = %2) -> (f32) {
+// CHECK:           %4 = affine.load %result_2[%arg3, %arg5] : memref<20x30xf32>
+// CHECK:           %5 = arith.mulf %4, %cst_0 : f32
+// CHECK:           %6 = affine.load %result_3[%arg5, %arg4] : memref<30x25xf32>
+// CHECK:           %7 = arith.mulf %5, %6 : f32
+// CHECK:           %8 = arith.addf %arg6, %7 : f32
+// CHECK:           affine.yield %8 : f32
 // CHECK:         }
-// CHECK:         affine.store %7, %5[%arg3, %arg4] : memref<20x25xf32>
+// CHECK:         affine.store %3, %1[%arg3, %arg4] : memref<20x25xf32>
 // CHECK:       }
 // CHECK:     }
 // CHECK:     ADORA.terminator
 // CHECK:   } {KernelName = "gemm_opt_1"}
-// CHECK:   ADORA.BlockStore %5, %arg0 [0, 0] : memref<20x25xf32> -> memref<?x25xf32>  {Id = "3", KernelName = "gemm_opt_1"}
+// CHECK:   ADORA.BlockStore %1, %arg0 [0, 0] : memref<20x25xf32> -> memref<?x25xf32>  {Id = "3", KernelName = "gemm_opt_1"}
 // CHECK:   return
 // CHECK: }
 module attributes {} {

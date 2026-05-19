@@ -184,7 +184,7 @@ protected:
   std::stringstream _CFGandEXE;
   std::map<KernelOp, std::map<int, dfgIoInfo>> _kernel_to_dfg_io_infos;
   // std::map<int, int> _dfgIoSpadAddrs;
-  ADG* _adg;
+  ADG* _adg = nullptr;
 
   int _totalTileNum = 1;
   std::map<KernelOp, BYTES_LIST> _kernel_to_iob_ens;

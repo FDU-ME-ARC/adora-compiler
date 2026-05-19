@@ -1,4 +1,3 @@
-// XFAIL: *
 // RUN: tensor-opt --adora-gen-tensor-op-cdfg %s | FileCheck %s
 
 // CHECK-LABEL: func.func @test_os_gemm_bug

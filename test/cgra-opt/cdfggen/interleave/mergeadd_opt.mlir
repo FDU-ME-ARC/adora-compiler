@@ -9,28 +9,28 @@
 
 // CHECK:module {
 // CHECK:  func.func @kernel_merge4(%arg0: memref<?xi16>, %arg1: memref<?xi16>, %arg2: memref<?xi16>, %arg3: memref<?xi16>, %arg4: memref<?xi16>) attributes {llvm.linkage = #llvm.linkage<external>} {
-// CHECK:    %0 = ADORA.BlockLoad %arg0 [0] : memref<?xi16> -> memref<4xi16>  {Id = "0", KernelName = "merge"}
-// CHECK:    %1 = ADORA.BlockLoad %arg1 [0] : memref<?xi16> -> memref<4xi16>  {Id = "1", KernelName = "merge"}
-// CHECK:    %2 = ADORA.BlockLoad %arg2 [0] : memref<?xi16> -> memref<4xi16>  {Id = "2", KernelName = "merge"}
-// CHECK:    %3 = ADORA.BlockLoad %arg3 [0] : memref<?xi16> -> memref<4xi16>  {Id = "3", KernelName = "merge"}
-// CHECK:    %4 = ADORA.BlockLoad %arg3 [0] : memref<?xi16> -> memref<4xi16>  {Id = "5", KernelName = "merge"}
-// CHECK:    %5 = ADORA.LocalMemAlloc memref<16xi16>  {Id = "4", KernelName = "merge"}
+// CHECK:    %result = ADORA.BlockLoad %arg0 [0] : memref<?xi16> -> memref<4xi16>  {Id = "0", KernelName = "merge"}
+// CHECK:    %result_0 = ADORA.BlockLoad %arg1 [0] : memref<?xi16> -> memref<4xi16>  {Id = "1", KernelName = "merge"}
+// CHECK:    %result_1 = ADORA.BlockLoad %arg2 [0] : memref<?xi16> -> memref<4xi16>  {Id = "2", KernelName = "merge"}
+// CHECK:    %result_2 = ADORA.BlockLoad %arg3 [0] : memref<?xi16> -> memref<4xi16>  {Id = "3", KernelName = "merge"}
+// CHECK:    %result_3 = ADORA.BlockLoad %arg3 [0] : memref<?xi16> -> memref<4xi16>  {Id = "5", KernelName = "merge"}
+// CHECK:    %0 = ADORA.LocalMemAlloc memref<16xi16>  {Id = "4", KernelName = "merge"}
 // CHECK:    ADORA.kernel {
 // CHECK:      affine.for %arg5 = 0 to 4 {
-// CHECK:        %6 = affine.load %0[%arg5] : memref<4xi16>
-// CHECK:        %7 = affine.load %1[%arg5] : memref<4xi16>
-// CHECK:        %8 = affine.load %2[%arg5] : memref<4xi16>
-// CHECK:        %9 = affine.load %3[%arg5] : memref<4xi16>
+// CHECK:        %1 = affine.load %result[%arg5] : memref<4xi16>
+// CHECK:        %2 = affine.load %result_0[%arg5] : memref<4xi16>
+// CHECK:        %3 = affine.load %result_1[%arg5] : memref<4xi16>
+// CHECK:        %4 = affine.load %result_2[%arg5] : memref<4xi16>
 // CHECK:        affine.for %arg6 = 0 to 4 {
 // CHECK:        }
-// CHECK:        %10 = ADORA.interleaver %6, %7, %8, %9 : i16, i16, i16, i16 -> vector<4xi16>
-// CHECK:        %11 = affine.vector_load %4[0] : memref<4xi16>, vector<4xi16>
-// CHECK:        %12 = arith.addi %10, %11 : vector<4xi16>
-// CHECK:        affine.vector_store %12, %5[%arg5 * 4] : memref<16xi16>, vector<4xi16>
+// CHECK:        %5 = ADORA.interleaver %1, %2, %3, %4 : i16, i16, i16, i16 -> vector<4xi16>
+// CHECK:        %6 = affine.vector_load %result_3[0] : memref<4xi16>, vector<4xi16>
+// CHECK:        %7 = arith.addi %5, %6 : vector<4xi16>
+// CHECK:        affine.vector_store %7, %0[%arg5 * 4] : memref<16xi16>, vector<4xi16>
 // CHECK:      }
 // CHECK:      ADORA.terminator
 // CHECK:    } {KernelName = "merge"}
-// CHECK:    ADORA.BlockStore %5, %arg4 [0] : memref<16xi16> -> memref<?xi16>  {Id = "4", KernelName = "merge"}
+// CHECK:    ADORA.BlockStore %0, %arg4 [0] : memref<16xi16> -> memref<?xi16>  {Id = "4", KernelName = "merge"}
 // CHECK:    return
 // CHECK:  }
 // CHECK:}
