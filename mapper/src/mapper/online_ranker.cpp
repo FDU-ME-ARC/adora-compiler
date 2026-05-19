@@ -1,4 +1,7 @@
 #include "mapper/online_ranker.h"
+#include "dfg/dfg.h"
+#include "dfg/dfg_node.h"
+#include "dfg/dfg_edge.h"
 #include "adg/adg.h"
 #include "adg/adg_node.h"
 
@@ -35,6 +38,212 @@ pid_t OnlineRanker::_daemonPid = -1;
 int OnlineRanker::_daemonStdin = -1;
 int OnlineRanker::_daemonStdout = -1;
 
+// P: pre-placement
+std::string OnlineRanker::_strategy;
+
+// R: reflection
+std::string OnlineRanker::_reflection;
+std::string OnlineRanker::_reflectionPath;
+
+std::string OnlineRanker::reflectionPath() {
+    if(!_reflectionPath.empty()) return _reflectionPath;
+    if(_logFile.empty()) return "";
+    // Derive <logdir>/reflection.json from the log file path
+    auto slash = _logFile.rfind('/');
+    _reflectionPath = (slash != std::string::npos ? _logFile.substr(0, slash + 1) : "./")
+                      + "reflection.json";
+    return _reflectionPath;
+}
+
+void OnlineRanker::loadReflection() {
+    _reflection.clear();
+    std::string path = reflectionPath();
+    if(path.empty()) return;
+    std::ifstream ifs(path);
+    if(!ifs.good()) return;
+    std::ostringstream buf;
+    buf << ifs.rdbuf();
+    std::string body = buf.str();
+    // Parse "lessons":"..." from the JSON
+    auto findKey = [&](const std::string& key) -> std::string::size_type {
+        return body.find("\"" + key + "\"");
+    };
+    auto lesPos = body.find(':', findKey("lessons"));
+    if(lesPos == std::string::npos) return;
+    while(lesPos < body.size() && (std::isspace((unsigned char)body[lesPos]) || body[lesPos] == ':')) ++lesPos;
+    if(lesPos >= body.size() || body[lesPos] != '"') return;
+    auto endQ = body.find('"', lesPos + 1);
+    while(endQ != std::string::npos && body[endQ - 1] == '\\')
+        endQ = body.find('"', endQ + 1);
+    if(endQ == std::string::npos) return;
+    _reflection = body.substr(lesPos + 1, endQ - lesPos - 1);
+}
+
+void OnlineRanker::reflect(const std::string& kernelName, int ii, int maxLat, bool succeeded) {
+    if(!_enabled) return;
+    std::string path = reflectionPath();
+
+    std::ostringstream req;
+    req << "{\"schema_version\":\"mapper-online-v0\","
+        << "\"phase\":\"post_placement_reflect\","
+        << "\"kernel\":\"" << onlineRankerJsonEscape(kernelName) << "\","
+        << "\"result\":{\"succeeded\":" << (succeeded ? "true" : "false")
+        << ",\"ii\":" << ii
+        << ",\"max_latency\":" << maxLat << "}";
+
+    // Inject prior reflection as context
+    if(!_reflection.empty())
+        req << ",\"prior_reflection\":\"" << onlineRankerJsonEscape(_reflection) << "\"";
+
+    // Inject history window
+    std::string hw = historyWindowJson();
+    if(!hw.empty()) req << "," << hw;
+
+    // Inject strategy if available
+    if(!_strategy.empty())
+        req << ",\"placement_strategy\":\"" << onlineRankerJsonEscape(_strategy) << "\"";
+
+    req << "}";
+
+    auto dec = rank(req.str(), 1);
+
+    // Extract lessons from rationale or scratchpad
+    std::string lessons;
+    if(!dec.scratchpad.empty()) lessons = dec.scratchpad;
+    else if(!dec.rationale.empty()) lessons = dec.rationale;
+    if(lessons.empty()) return;
+
+    _reflection = lessons;
+
+    // Write reflection.json
+    if(path.empty()) return;
+    std::ofstream ofs(path);
+    if(!ofs.good()) return;
+    // Timestamp
+    auto now = std::chrono::system_clock::now();
+    auto t   = std::chrono::system_clock::to_time_t(now);
+    char tsbuf[32];
+    std::strftime(tsbuf, sizeof(tsbuf), "%Y-%m-%dT%H:%M:%SZ", std::gmtime(&t));
+    ofs << "{\n"
+        << "  \"schema_version\": \"mapper-reflect-v0\",\n"
+        << "  \"updated_at\": \"" << tsbuf << "\",\n"
+        << "  \"kernel\": \"" << onlineRankerJsonEscape(kernelName) << "\",\n"
+        << "  \"lessons\": \"" << onlineRankerJsonEscape(lessons) << "\"\n"
+        << "}\n";
+}
+
+std::string OnlineRanker::reflectionContextJson() {
+    if(_reflection.empty()) return "";
+    return "\"prior_reflection\":\"" + onlineRankerJsonEscape(_reflection) + "\"";
+}
+
+void OnlineRanker::prePlace(DFG* dfg, ADG* adg, const std::string& kernelName) {
+    if(!_enabled || !dfg || !adg) return;
+    _strategy.clear();
+
+    // Serialize DFG nodes
+    std::ostringstream req;
+    req << "{\"schema_version\":\"mapper-online-v0\","
+        << "\"phase\":\"pre_placement_observe\","
+        << "\"kernel\":\"" << onlineRankerJsonEscape(kernelName) << "\","
+        << "\"dfg\":{\"nodes\":[";
+    bool first = true;
+    for(auto& kv : dfg->nodes()) {
+        auto* n = kv.second;
+        if(!first) req << ",";
+        req << "{\"id\":" << n->id()
+            << ",\"name\":\"" << onlineRankerJsonEscape(n->name()) << "\""
+            << ",\"op\":\"" << onlineRankerJsonEscape(n->operation()) << "\"}";
+        first = false;
+    }
+    req << "],\"edges\":[";
+    first = true;
+    for(auto& kv : dfg->edges()) {
+        auto* e = kv.second;
+        if(!first) req << ",";
+        req << "{\"src\":" << e->srcId()
+            << ",\"dst\":" << e->dstId()
+            << ",\"back\":" << (e->isBackEdge() ? "true" : "false") << "}";
+        first = false;
+    }
+    req << "]}";
+
+    // Serialize ADG heatmap (initial state, all free at prePlace time)
+    int maxRow = 0, maxCol = 0;
+    for(auto& kv : adg->nodes()) {
+        auto* n = kv.second;
+        if(n->x() > maxCol) maxCol = n->x();
+        if(n->y() > maxRow) maxRow = n->y();
+    }
+    std::vector<std::vector<char>> grid(maxRow+1, std::vector<char>(maxCol+1, '.'));
+    for(auto& kv : adg->nodes()) {
+        auto* n = kv.second;
+        if(n->x() >= 0 && n->y() >= 0 && n->y() <= maxRow && n->x() <= maxCol) {
+            char sym = dynamic_cast<IOBNode*>(n) ? 'I' : 'G';
+            grid[n->y()][n->x()] = sym;
+        }
+    }
+    req << ",\"hw_occupancy\":{\"mesh\":\"" << (maxRow+1) << "x" << (maxCol+1) << "\","
+        << "\"grid\":[";
+    for(int r = 0; r <= maxRow; r++) {
+        if(r) req << ",";
+        req << "\"";
+        for(int c = 0; c <= maxCol; c++) {
+            if(c) req << " ";
+            req << grid[r][c];
+        }
+        req << "\"";
+    }
+    req << "]}}";
+
+    // Send and parse placement_strategy
+    auto dec = rank(req.str(), 1);  // candidate_count=1, we just want a text response
+    if(!dec.rationale.empty())
+        _strategy = dec.rationale;
+    // Also check for explicit placement_strategy field (parsed as scratchpad by convention)
+    if(!dec.scratchpad.empty())
+        _strategy = dec.scratchpad;
+}
+
+std::string OnlineRanker::strategyJson() {
+    if(_strategy.empty()) return "";
+    return "\"placement_strategy\":\"" + onlineRankerJsonEscape(_strategy) + "\"";
+}
+
+// H: history window
+std::vector<OnlineRanker::HistoryEntry> OnlineRanker::_history;
+
+void OnlineRanker::appendHistory(const std::string& kernel,
+                                  const std::string& node, const std::string& op,
+                                  const std::string& pe_name, const std::string& pe_type,
+                                  int mapped_count) {
+    HistoryEntry e;
+    e.kernel = kernel; e.dfg_node_name = node; e.operation = op;
+    e.chosen_pe_name = pe_name; e.chosen_pe_type = pe_type;
+    e.mapped_count_then = mapped_count;
+    _history.push_back(e);
+    if((int)_history.size() > HISTORY_WINDOW_SIZE)
+        _history.erase(_history.begin());
+}
+
+std::string OnlineRanker::historyWindowJson() {
+    if(_history.empty()) return "";
+    std::ostringstream out;
+    out << "\"history_window\":[";
+    for(size_t i = 0; i < _history.size(); ++i) {
+        const auto& e = _history[i];
+        if(i) out << ",";
+        out << "{\"kernel\":\"" << onlineRankerJsonEscape(e.kernel) << "\""
+            << ",\"dfg_node\":\"" << onlineRankerJsonEscape(e.dfg_node_name) << "\""
+            << ",\"op\":\"" << onlineRankerJsonEscape(e.operation) << "\""
+            << ",\"chosen_pe\":\"" << onlineRankerJsonEscape(e.chosen_pe_name) << "\""
+            << ",\"pe_type\":\"" << onlineRankerJsonEscape(e.chosen_pe_type) << "\""
+            << ",\"mapped_then\":" << e.mapped_count_then << "}";
+    }
+    out << "]";
+    return out.str();
+}
+
 namespace {
 
 std::vector<std::string> shellSplit(const std::string& cmd) {
@@ -70,7 +279,7 @@ void appendLog(const std::string& path, const std::string& record) {
     ofs << record << "\n";
 }
 
-bool parseSelectedIndex(const std::string& body, int& outIndex, std::string& outRationale, bool& outFallback, std::string& outError) {
+bool parseSelectedIndex(const std::string& body, int& outIndex, std::string& outRationale, std::string& outScratchpad, bool& outFallback, std::string& outError) {
     // Tiny purpose-built JSON peek. We expect a flat object containing an
     // integer `selected_index`, plus optional `rationale`, `used_fallback`,
     // `client_error` strings/booleans. Parsing nested objects is unnecessary.
@@ -104,6 +313,15 @@ bool parseSelectedIndex(const std::string& body, int& outIndex, std::string& out
         if(endQuote != std::string::npos) {
             outRationale = body.substr(ratPos + 1, endQuote - ratPos - 1);
         }
+    }
+
+    auto scPos = valueStart(findKey("scratchpad"));
+    if(scPos != std::string::npos && body[scPos] == '"') {
+        auto endQuote = body.find('"', scPos + 1);
+        while(endQuote != std::string::npos && body[endQuote - 1] == '\\')
+            endQuote = body.find('"', endQuote + 1);
+        if(endQuote != std::string::npos)
+            outScratchpad = body.substr(scPos + 1, endQuote - scPos - 1);
     }
 
     auto fbPos = valueStart(findKey("used_fallback"));
@@ -331,7 +549,8 @@ OnlineRanker::Decision OnlineRanker::rankOnce(const std::string& requestJson, in
         std::string rationale;
         std::string clientError;
         bool fallback = false;
-        if(parseSelectedIndex(body, idx, rationale, fallback, clientError)) {
+        std::string scratchpad;
+        if(parseSelectedIndex(body, idx, rationale, scratchpad, fallback, clientError)) {
             if(idx < 0 || idx >= candidate_count) {
                 decision.error = "selected_index_out_of_range";
             } else {
@@ -339,6 +558,7 @@ OnlineRanker::Decision OnlineRanker::rankOnce(const std::string& requestJson, in
                 decision.selected_index = idx;
                 decision.used_fallback = fallback;
                 decision.rationale = rationale;
+                decision.scratchpad = scratchpad;
                 if(decision.error.empty() && !clientError.empty()) {
                     decision.error = clientError;
                 }
@@ -355,6 +575,7 @@ OnlineRanker::Decision OnlineRanker::rankOnce(const std::string& requestJson, in
         rec << "{"
             << "\"request\":" << requestJson << ","
             << "\"response_raw\":\"" << onlineRankerJsonEscape(body) << "\","
+            << "\"scratchpad\":\"" << onlineRankerJsonEscape(decision.scratchpad) << "\","
             << "\"succeeded\":" << (decision.succeeded ? "true" : "false") << ","
             << "\"selected_index\":" << decision.selected_index << ","
             << "\"used_fallback\":" << (decision.used_fallback ? "true" : "false") << ","
@@ -500,9 +721,10 @@ OnlineRanker::Decision OnlineRanker::rankDaemon(const std::string& requestJson, 
         std::string firstLine = (nl != std::string::npos) ? body.substr(0, nl) : body;
         int idx = 0;
         std::string rationale;
+        std::string scratchpad;
         std::string clientError;
         bool fallback = false;
-        if(parseSelectedIndex(firstLine, idx, rationale, fallback, clientError)){
+        if(parseSelectedIndex(firstLine, idx, rationale, scratchpad, fallback, clientError)){
             if(idx < 0 || idx >= candidate_count){
                 decision.error = "selected_index_out_of_range";
             } else {
@@ -510,6 +732,7 @@ OnlineRanker::Decision OnlineRanker::rankDaemon(const std::string& requestJson, 
                 decision.selected_index = idx;
                 decision.used_fallback = fallback;
                 decision.rationale = rationale;
+                decision.scratchpad = scratchpad;
                 if(decision.error.empty() && !clientError.empty()){
                     decision.error = clientError;
                 }
@@ -527,6 +750,7 @@ OnlineRanker::Decision OnlineRanker::rankDaemon(const std::string& requestJson, 
             << "\"mode\":\"daemon\","
             << "\"request\":" << requestJson << ","
             << "\"response_raw\":\"" << onlineRankerJsonEscape(body) << "\","
+            << "\"scratchpad\":\"" << onlineRankerJsonEscape(decision.scratchpad) << "\","
             << "\"succeeded\":" << (decision.succeeded ? "true" : "false") << ","
             << "\"selected_index\":" << decision.selected_index << ","
             << "\"used_fallback\":" << (decision.used_fallback ? "true" : "false") << ","

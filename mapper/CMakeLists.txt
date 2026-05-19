@@ -30,6 +30,8 @@ add_library(CGRAMapperLIB
   src/mapper/agent_trace.cpp
   src/mapper/online_ranker.cpp
   src/mapper/pipeline_scheduler.cpp
+  src/mapper/partition_budget_decision.cpp
+  src/mapper/schedule_order_decision.cpp
   src/mapper/mapper_sa.cpp
   src/mapper/mapper.cpp
   src/mapper/mapping.cpp

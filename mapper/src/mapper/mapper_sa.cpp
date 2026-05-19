@@ -29,6 +29,14 @@ bool MapperSA::mapper(){
             "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"obj_opt\":" + std::string(_objOpt ? "true" : "false") + "}"
         );
     }
+    // R: load prior reflection lessons before this run.
+    if(OnlineRanker::enabled())
+        OnlineRanker::loadReflection();
+
+    // P: let LLM observe the full DFG + hardware topology before per-node decisions.
+    if(OnlineRanker::enabled())
+        OnlineRanker::prePlace(_mapping->getDFG(), getADG(), agentTraceContext());
+
     bool succeed;
     if(_objOpt){ // objective optimization
         succeed = pnrSyncOpt();
@@ -42,6 +50,10 @@ bool MapperSA::mapper(){
             "{\"kernel\":\"" + agentTraceJsonEscape(agentTraceContext()) + "\",\"succeed\":" + std::string(succeed ? "true" : "false") + "}"
         );
     }
+    // R: reflect on this run and persist lessons for future kernels.
+    if(OnlineRanker::enabled())
+        OnlineRanker::reflect(agentTraceContext(), _mapping->II(), _mapping->maxLat(), succeed);
+
     return succeed;
 }
 
@@ -551,6 +563,18 @@ int MapperSA::tryCandidates(Mapping* mapping, DFGNode* dfgNode, const std::vecto
                 << "\"adg_hash\":\"" << agentTraceJsonEscape(adgCtx.adg_hash) << "\","
                 << "\"adg_summary_ref\":\"" << agentTraceJsonEscape(adgCtx.adg_summary_path) << "\"}";
         }
+        {
+            auto hw = OnlineRanker::historyWindowJson();
+            if(!hw.empty()) req << "," << hw;
+        }
+        {
+            auto ps = OnlineRanker::strategyJson();
+            if(!ps.empty()) req << "," << ps;
+        }
+        {
+            auto rc = OnlineRanker::reflectionContextJson();
+            if(!rc.empty()) req << "," << rc;
+        }
         req << "}";
 
         auto decision = OnlineRanker::rank(req.str(), static_cast<int>(candidates.size()));
@@ -566,10 +590,18 @@ int MapperSA::tryCandidates(Mapping* mapping, DFGNode* dfgNode, const std::vecto
         if(AgentTrace::enabled()){
             AgentTrace::emit("mapper_place_node", "online_decision", evt.str());
         }
-        if(decision.succeeded && decision.selected_index > 0){
-            auto chosen = orderedCandidates[decision.selected_index];
-            orderedCandidates.erase(orderedCandidates.begin() + decision.selected_index);
-            orderedCandidates.insert(orderedCandidates.begin(), chosen);
+        if(decision.succeeded){
+            auto& chosenPe = orderedCandidates[decision.selected_index];
+            OnlineRanker::appendHistory(
+                agentTraceContext(),
+                dfgNode->name(), dfgNode->operation(),
+                chosenPe->name(), chosenPe->type(),
+                dfgNode->id());
+            if(decision.selected_index > 0){
+                auto chosen = orderedCandidates[decision.selected_index];
+                orderedCandidates.erase(orderedCandidates.begin() + decision.selected_index);
+                orderedCandidates.insert(orderedCandidates.begin(), chosen);
+            }
         }
     }
 

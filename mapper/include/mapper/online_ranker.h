@@ -6,6 +6,9 @@
 #include <sys/types.h>
 #include <vector>
 
+class DFG;
+class ADG;
+
 // Online placement ranker bridge.
 //
 // Speaks the JSON contract documented in
@@ -35,6 +38,7 @@ public:
         int selected_index = 0;     // valid only if succeeded
         bool used_fallback = false; // ranker reported fallback path
         std::string rationale;
+        std::string scratchpad;   // S: chain-of-thought before selection
         std::string error;
     };
 
@@ -66,6 +70,33 @@ public:
     // caller must populate `candidate_count` so we can validate the response.
     static Decision rank(const std::string& requestJson, int candidate_count);
 
+    // P: pre-placement global observation.
+    static void prePlace(DFG* dfg, ADG* adg, const std::string& kernelName);
+    static std::string strategyJson();  // returns "placement_strategy":"..." fragment
+
+    // H: cross-kernel history window.
+    struct HistoryEntry {
+        std::string kernel;
+        std::string dfg_node_name;
+        std::string operation;
+        std::string chosen_pe_name;
+        std::string chosen_pe_type;
+        int mapped_count_then = 0;
+    };
+    static void appendHistory(const std::string& kernel,
+                               const std::string& node, const std::string& op,
+                               const std::string& pe_name, const std::string& pe_type,
+                               int mapped_count);
+    static std::string historyWindowJson();  // returns "history_window":[...] fragment
+
+    // R: post-mapping reflection.
+    // loadReflection() reads lessons from <logdir>/reflection.json into _reflection.
+    // reflect() asks the ranker to produce updated lessons and writes them back.
+    // reflectionContextJson() returns a "prior_reflection":"..." fragment for rank requests.
+    static void loadReflection();
+    static void reflect(const std::string& kernelName, int ii, int maxLat, bool succeeded);
+    static std::string reflectionContextJson();
+
     // Tear down the daemon child (if any). Safe to call multiple times. Also
     // invoked implicitly at exit in case the mapper forgets.
     static void shutdown();
@@ -90,6 +121,18 @@ private:
     static pid_t _daemonPid;
     static int _daemonStdin;
     static int _daemonStdout;
+
+    // P: pre-placement strategy
+    static std::string _strategy;
+
+    // H: history window state
+    static std::vector<HistoryEntry> _history;
+    static const int HISTORY_WINDOW_SIZE = 8;
+
+    // R: reflection state
+    static std::string _reflection;      // lessons loaded from / written to reflection.json
+    static std::string _reflectionPath;  // derived from _logFile on first use
+    static std::string reflectionPath(); // resolves and caches _reflectionPath
 };
 
 std::string onlineRankerJsonEscape(const std::string& value);

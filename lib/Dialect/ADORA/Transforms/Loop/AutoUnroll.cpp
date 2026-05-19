@@ -20,6 +20,7 @@
 #include "llvm/Support/FileSystem.h"
 #include <optional>
 #include <filesystem>
+#include <fstream>
 
 #include "ADORA/Dialect/ADORA/IR/ADORA.h"
 #include "ADORA/Dialect/ADORA/Utility/Utility.h"
@@ -214,6 +215,16 @@ chooseAndApplyUnrollStrategyWithDeps(ADORA::KernelOp kernel, mlir::ModuleOp& m){
   int max_ALU = 0, max_LSU = 0;
   std::string final_FilePath="__";
 
+  // Collect all legal candidates for LLM ranking.
+  struct UnrollCandidate {
+    std::string filePath;
+    std::string fileName;
+    int num_alu;
+    int num_lsu;
+  };
+  SmallVector<UnrollCandidate> legalCandidates;
+  int defaultIdx = -1; // index of greedy-best in legalCandidates
+
   ///////////////
   /// For store op, check whether exists port conflict 
   ///////////////
@@ -354,13 +365,17 @@ chooseAndApplyUnrollStrategyWithDeps(ADORA::KernelOp kernel, mlir::ModuleOp& m){
     ADORA::DFGInfo dfginfo = GetDFGinfo(CDFG);       
     if(dfginfo.Num_ALU <= NumGPE && dfginfo.Num_LSU <= NumIOB) 
     {
+      // Track greedy-best (max LSU, then max ALU) as the default fallback.
       if(dfginfo.Num_LSU > max_LSU || 
         (dfginfo.Num_ALU > max_ALU && dfginfo.Num_LSU == max_LSU))
       {
         final_FilePath = filePath;
         max_LSU = dfginfo.Num_LSU;
         max_ALU = dfginfo.Num_ALU;
+        defaultIdx = (int)legalCandidates.size(); // will be the next push index
       }
+      legalCandidates.push_back({filePath, fileName,
+                                  (int)dfginfo.Num_ALU, (int)dfginfo.Num_LSU});
     }
     else{
       /// If the resource occupied by current dfg oversizes adg,
@@ -370,7 +385,55 @@ chooseAndApplyUnrollStrategyWithDeps(ADORA::KernelOp kernel, mlir::ModuleOp& m){
 
     // topmodule.erase();
   }/// End of traversing on every design point
-  
+
+  // --- LLM unroll selection ---
+  // Write candidates.json so an external ranker can pick one.
+  // Read selected.json if present; fall back to greedy best otherwise.
+  if (!legalCandidates.empty()) {
+    std::string candidatesPath = DesignSpacefolderPath.string() + "/candidates.json";
+    std::string selectedPath   = DesignSpacefolderPath.string() + "/selected.json";
+
+    // Write candidates.json (minimal hand-rolled JSON, no external deps).
+    {
+      std::ofstream out(candidatesPath);
+      out << "{\n  \"candidates\": [\n";
+      for (size_t i = 0; i < legalCandidates.size(); ++i) {
+        const auto &c = legalCandidates[i];
+        out << "    {\"index\": " << i
+            << ", \"filePath\": \"" << c.filePath << "\""
+            << ", \"fileName\": \"" << c.fileName << "\""
+            << ", \"num_alu\": " << c.num_alu
+            << ", \"num_lsu\": " << c.num_lsu << "}";
+        if (i + 1 < legalCandidates.size()) out << ",";
+        out << "\n";
+      }
+      out << "  ],\n  \"default_index\": " << defaultIdx << "\n}\n";
+    }
+
+    // Try to read selected.json written by external ranker.
+    std::ifstream sel(selectedPath);
+    if (sel.is_open()) {
+      std::string line, content;
+      while (std::getline(sel, line)) content += line;
+      // Parse "selected_index": N — simple scan, no JSON lib needed.
+      auto pos = content.find("\"selected_index\"");
+      if (pos != std::string::npos) {
+        pos = content.find(':', pos);
+        if (pos != std::string::npos) {
+          int idx = std::stoi(content.substr(pos + 1));
+          if (idx >= 0 && idx < (int)legalCandidates.size()) {
+            final_FilePath = legalCandidates[idx].filePath;
+            llvm::errs() << "[AutoUnroll] LLM selected index " << idx
+                         << " (" << legalCandidates[idx].fileName << ")\n";
+          } else {
+            llvm::errs() << "[AutoUnroll] LLM index " << idx
+                         << " out of range, using greedy default\n";
+          }
+        }
+      }
+    }
+  }
+  // --- end LLM unroll selection ---
 
   /// try to unroll and jam parent for of kernel
   // kernel.walk([&](AffineStoreOp storeop){
