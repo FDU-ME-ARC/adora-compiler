@@ -1,6 +1,6 @@
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: adoracc.py %s --work-dir %t -o %t/opt.mlir
-// RUN: %cgra-mapper --adg=%S/../../spec/cgra_adg_fp32.json --op-file=%S/../../spec/operations_fp32.json --output-type=sdk --obj-opt=true --max-iters=1 %t/opt.mlir --output=%t/FPVecAdd_cgra.c
+// RUN: %cgra-mapper --adg=%S/../../spec/cgra_fp32/cgra_adg_fp32.json --op-file=%S/../../spec/cgra_fp32/operations_fp32.json --output-type=sdk --obj-opt=true --max-iters=1 %t/opt.mlir --output=%t/FPVecAdd_cgra.c
 // RUN: test -s %t/FPVecAdd_cgra.c
 // RUN: %FileCheck %s --check-prefix=CHECK-SDK --input-file=%t/FPVecAdd_cgra.c
 //

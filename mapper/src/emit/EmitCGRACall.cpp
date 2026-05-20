@@ -753,13 +753,20 @@ public:
       value = "0";
     }
     else{
-      std::string value = _cgracallemitter->lookupName(op.getValue());
-      // assert("Unsupported!\n");
+      value = _cgracallemitter->lookupName(op.getValue());
+      if (value == "")
+        value = ConstOpToValueStr[op.getValue()];
     }
 
-    assert(op.getMemref().getType().cast<MemRefType>().getShape().size() == 0);
     std::string memref = _cgracallemitter->lookupName(op.getMemref());
-    indent() << memref << " = " << value << ";\n";
+    if (op.getMemref().getType().cast<MemRefType>().getShape().size() == 0) {
+      indent() << memref << " = " << value << ";\n";
+    } else {
+      std::stringstream ss;
+      for (auto idx : op.getIndices())
+        ss << "[" << _cgracallemitter->lookupName(idx) << "]";
+      indent() << memref << ss.str() << " = " << value << ";\n";
+    }
     return true;
     // return emitter.emitAffineStore(op), true; 
   }
