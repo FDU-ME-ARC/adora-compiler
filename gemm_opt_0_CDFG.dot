@@ -1,0 +1,13 @@
+Digraph G {
+0[opcode = "undefined"]
+321[opcode = "32", color = black];
+2[opcode = "undefined"]
+3[opcode = "undefined"]
+4[opcode = "undefined"]
+5[opcode = "undefined"]
+6[opcode = "undefined"]
+7[opcode = "undefined"]
+0 -> 321[color = black, style = bold, operand = 0, label = "Op=0"];
+7 -> 321[color = black, style = bold, operand = 1, label = "Op=1"];
+321 -> 2[color = black, style = bold, operand = 0, label = "Op=0"];
+}

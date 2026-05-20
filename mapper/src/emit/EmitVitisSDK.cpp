@@ -631,12 +631,21 @@ public:
   
   bool visitOp(memref::AllocaOp op) { 
     mlir::MemRefType mt = op.getType();
-    assert(mt.getShape().size() == 0);
     mlir::Type t = mt.getElementType();
-
     std::string type = getEmitType(t);
-    indent() << type << " " << EmitNewValueAndGetName(op.getResult(), type) << ";\n";
+    std::string name = EmitNewValueAndGetName(op.getResult(), type);
 
+    auto shape = mt.getShape();
+    if (shape.size() == 0) {
+      // scalar alloca: e.g. int x;
+      indent() << type << " " << name << ";\n";
+    } else {
+      // array alloca: e.g. int score[8][8];
+      indent() << type << " " << name;
+      for (auto dim : shape)
+        _os << "[" << dim << "]";
+      _os << ";\n";
+    }
     return true; 
   }
   bool visitOp(func::ReturnOp op) { return true; }
@@ -977,6 +986,14 @@ public:
 
   bool visitOp(arith::DivSIOp op) {
     return EmitBinary(op, "/");
+  }
+
+  bool visitOp(arith::ShRSIOp op) {
+    return EmitBinary(op, ">>");
+  }
+
+  bool visitOp(arith::ShLIOp op) {
+    return EmitBinary(op, "<<");
   }
 
   bool visitOp(LLVM::UndefOp op) {
