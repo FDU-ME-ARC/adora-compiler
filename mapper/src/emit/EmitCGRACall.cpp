@@ -656,30 +656,59 @@ public:
   }
 
   /// Affine statements.
-  bool visitOp(affine::AffineForOp op) { 
+  bool visitOp(affine::AffineForOp op) {
+    // ── iter_args: emit accumulator variables before the loop ──
+    auto iterArgs = op.getRegionIterArgs();
+    auto initVals = op.getInits();
+    for (auto [initVal, iterArg] : llvm::zip(initVals, iterArgs)) {
+      std::string initName = _cgracallemitter->lookupName(initVal);
+      if (initName.empty()) {
+        if (auto cst = initVal.getDefiningOp<arith::ConstantOp>()) {
+          if (auto ia = cst.getValue().dyn_cast<mlir::IntegerAttr>())
+            initName = std::to_string(ia.getInt());
+          else if (auto fa = cst.getValue().dyn_cast<mlir::FloatAttr>())
+            initName = std::to_string(fa.getValueAsDouble());
+        }
+      }
+      mlir::Type t = iterArg.getType();
+      std::string type = getEmitType(t);
+      std::string argName = EmitNewValueAndGetName(iterArg, type);
+      indent() << type << " " << argName << " = " << initName << ";\n";
+    }
+    // Register for-loop results as aliases to iter_args (same C variable)
+    for (auto [result, iterArg] : llvm::zip(op.getResults(), iterArgs)) {
+      std::string argName = _cgracallemitter->lookupName(iterArg);
+      _cgracallemitter->appendValueNameList(result, {argName, 0});
+    }
+
+    // ── for loop header ──
     indent() << "for (";
     auto iterVar = op.getInductionVar();
-
-    // Emit lower bound.
     assert(op.getLowerBoundMap().getResults().size()==1);
     _os << "int " << EmitNewValueAndGetName(iterVar, "int") << " = ";
     _os << op.getLowerBoundMap().getResult(0) << "; ";
-
-    // Emit loop invariant(upper bound)
     assert(op.getUpperBoundMap().getResults().size()==1);
-    _os << _cgracallemitter->lookupName(iterVar) << " < " ;
+    _os << _cgracallemitter->lookupName(iterVar) << " < ";
     _os << op.getUpperBoundMap().getResult(0) << "; ";
-
-    // Emit loop step
-    _os << _cgracallemitter->lookupName(iterVar) << " = " ;
-    _os << _cgracallemitter->lookupName(iterVar) << " + "  << op.getStep().getSExtValue() << "){\n";
+    _os << _cgracallemitter->lookupName(iterVar) << " = ";
+    _os << _cgracallemitter->lookupName(iterVar) << " + " << op.getStep().getSExtValue() << ") {\n";
 
     _cgracallemitter->emitBlock(*(op.getBody()), _os);
-    // reduce
-    indent() << "}\n";
-    indent() << "\n";
-    indent() << "\n";
-    indent() << "\n";
+    indent() << "}\n\n";
+    return true;
+  }
+
+  bool visitOp(affine::AffineYieldOp op) {
+    // For affine.for with iter_args, yield updates the accumulator
+    if (auto forOp = dyn_cast<affine::AffineForOp>(op->getParentOp())) {
+      auto iterArgs = forOp.getRegionIterArgs();
+      for (auto [iterArg, yieldVal] : llvm::zip(iterArgs, op.getOperands())) {
+        std::string dst = _cgracallemitter->lookupName(iterArg);
+        std::string src = _cgracallemitter->lookupName(yieldVal);
+        if (!dst.empty() && !src.empty() && dst != src)
+          indent() << dst << " = " << src << ";\n";
+      }
+    }
     return true;
   }
 
@@ -781,7 +810,31 @@ public:
   }
   // bool visitOp(AffineVectorLoadOp op) { return false; }
   // bool visitOp(AffineVectorStoreOp op) { return false; }
-  bool visitOp(affine::AffineYieldOp op) { return true; }
+
+  // memref.load %arr[%i, %j] : memref<?x32xi32>  →  arr[i][j]
+  bool visitOp(memref::LoadOp op) {
+    mlir::Type t = op.getType();
+    std::string type = getEmitType(t);
+    std::string name = EmitNewValueAndGetName(op.getResult(), type);
+    std::string arr  = _cgracallemitter->lookupName(op.getMemRef());
+    std::stringstream ss;
+    for (auto idx : op.getIndices())
+      ss << "[" << _cgracallemitter->lookupName(idx) << "]";
+    indent() << type << " " << name << " = " << arr << ss.str() << ";\n";
+    return true;
+  }
+
+  // memref.store %val, %arr[%i, %j] : memref<?x32xi32>  →  arr[i][j] = val
+  bool visitOp(memref::StoreOp op) {
+    std::string value  = _cgracallemitter->lookupName(op.getValue());
+    if (value.empty()) value = ConstOpToValueStr[op.getValue()];
+    std::string arr = _cgracallemitter->lookupName(op.getMemRef());
+    std::stringstream ss;
+    for (auto idx : op.getIndices())
+      ss << "[" << _cgracallemitter->lookupName(idx) << "]";
+    indent() << arr << ss.str() << " = " << value << ";\n";
+    return true;
+  }
 
   /// Vector statements.
   // bool visitOp(vector::TransferReadOp op) {

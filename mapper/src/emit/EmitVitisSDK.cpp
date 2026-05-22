@@ -792,6 +792,29 @@ public:
   // bool visitOp(AffineVectorStoreOp op) { return false; }
   bool visitOp(affine::AffineYieldOp op) { return true; }
 
+  bool visitOp(memref::LoadOp op) {
+    mlir::Type t = op.getType();
+    std::string type = getEmitType(t);
+    std::string name = EmitNewValueAndGetName(op.getResult(), type);
+    std::string arr  = _cgracallemitter->lookupName(op.getMemRef());
+    std::stringstream ss;
+    for (auto idx : op.getIndices())
+      ss << "[" << _cgracallemitter->lookupName(idx) << "]";
+    indent() << type << " " << name << " = " << arr << ss.str() << ";\n";
+    return true;
+  }
+
+  bool visitOp(memref::StoreOp op) {
+    std::string value = _cgracallemitter->lookupName(op.getValue());
+    if (value.empty()) value = ConstOpToValueStr[op.getValue()];
+    std::string arr = _cgracallemitter->lookupName(op.getMemRef());
+    std::stringstream ss;
+    for (auto idx : op.getIndices())
+      ss << "[" << _cgracallemitter->lookupName(idx) << "]";
+    indent() << arr << ss.str() << " = " << value << ";\n";
+    return true;
+  }
+
   /// Vector statements.
   // bool visitOp(vector::TransferReadOp op) {
   //   return emitter.emitTransferRead(op), true;

@@ -65,8 +65,8 @@ public:
 
             // // Memref statements.
             ::mlir::memref::AllocOp, ::mlir::memref::CopyOp,
-            ::mlir::memref::AllocaOp, 
-            // memref::LoadOp, memref::StoreOp,
+            ::mlir::memref::AllocaOp,
+            ::mlir::memref::LoadOp, ::mlir::memref::StoreOp,
             // memref::DeallocOp, 
 
             // // Unary expressions.
@@ -84,8 +84,9 @@ public:
             arith::CmpIOp,
             arith::RemSIOp,
             arith::DivUIOp, arith::RemUIOp,
-            // arith::XOrIOp, arith::AndIOp, arith::OrIOp, arith::ShLIOp,
-            // arith::ShRSIOp, arith::ShRUIOp, arith::MaxSIOp, arith::MinSIOp,
+            arith::ShLIOp, arith::ShRSIOp,
+            // arith::XOrIOp, arith::AndIOp, arith::OrIOp,
+            // arith::ShRUIOp, arith::MaxSIOp, arith::MinSIOp,
             // arith::MaxUIOp, arith::MinUIOp,
 
             // // Special expressions. 
@@ -173,8 +174,8 @@ public:
   // // Memref statements.
   HANDLE(memref::AllocOp);
   HANDLE(memref::AllocaOp);
-  // HANDLE(memref::LoadOp);
-  // HANDLE(memref::StoreOp);
+  HANDLE(memref::LoadOp);
+  HANDLE(memref::StoreOp);
   // HANDLE(memref::DeallocOp);
   HANDLE(memref::CopyOp);
 

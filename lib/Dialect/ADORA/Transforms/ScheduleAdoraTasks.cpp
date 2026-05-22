@@ -642,15 +642,19 @@ void RemoveRedundantBlockStoreLoadPair(TaskGraph* graph){
 
       if (!AccessSameDataBlock(store, load)) continue;
 
-      // Wire producing kernel → consuming kernel so the scheduler sees
-      // the inter-kernel dependency even after the load is removed.
-      KernelNode* sourcekernel = storenode->getKernelNode();
+      // Wire ALL producing kernels → consuming kernels so the scheduler sees
+      // inter-kernel dependencies even after the redundant load is removed.
+      // Use getKernelNodes() (plural) because multi-tile benchmarks (e.g.
+      // correlation) can have >1 KernelNode predecessor for a single BlockStore,
+      // which would crash the old assert(kernels.size()==1) in getKernelNode().
+      for (auto sourcekernel : storenode->getKernelNodes()) {
+        for (auto sinkkernel : loadnode->getKernelNodes()) {
+          addConnectionBetweenTwoNode(sourcekernel, sinkkernel, depType::Depend);
+        }
+      }
       for (auto sinkkernel : loadnode->getKernelNodes()) {
-        addConnectionBetweenTwoNode(sourcekernel, sinkkernel, depType::Depend);
-        // Also add a depEdge so threadTokensOnDMAs sees store → sinkkernel
-        // and threads a token. Without this the erased BlockLoad leaves a
-        // gap: preds/hasOut in threadTokensOnDMAs skip dead ops (block==null),
-        // so kernel_3mm_2 would get async{} with no deps and emit no gather.
+        // Add a depEdge so threadTokensOnDMAs sees store → sinkkernel and
+        // threads a token. Without this the erased BlockLoad leaves a gap.
         graph->addDepEdge({storenode, sinkkernel, DataBlockDepKind::RAW, true});
       }
 
@@ -773,7 +777,12 @@ void ScheduleADORATasksPass::ScheduleADORATasksInFunction(func::FuncOp func){
 
     // Step C: simplify redundant transfers (must run BEFORE token threading:
     // RemoveRedundant* may erase ops; live asyncToken results would crash MLIR)
-    RemoveRedundantBlockStoreLoadPair(graph);
+    // TODO(correlation-crash): RemoveRedundantBlockStoreLoadPair triggers a
+    // SIGSEGV on benchmarks (e.g. correlation) that share the same DRAM buffer
+    // across >2 kernel groups.  Skip for now and re-enable once the root cause
+    // (likely a cycle in threadTokensOnDMAs or stale-ptr in rebuildAsync*) is
+    // diagnosed.  This is a performance loss (extra DMA) not a correctness bug.
+    // RemoveRedundantBlockStoreLoadPair(graph);
     RemoveRedundantBlockLoads(graph);
 
     // Step D: thread SSA !ADORA.token along dep edges

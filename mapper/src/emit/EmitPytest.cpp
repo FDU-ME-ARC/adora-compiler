@@ -1603,6 +1603,8 @@ namespace
     bool visitOp(arith::RemSIOp op) { return EmitBinary(op, "%"); }
 
     bool visitOp(arith::DivUIOp op) { return EmitBinary(op, "//"); }
+    bool visitOp(arith::ShRSIOp op) { return EmitBinary(op, ">>"); }
+    bool visitOp(arith::ShLIOp  op) { return EmitBinary(op, "<<"); }
     bool visitOp(arith::RemUIOp op) { return EmitBinary(op, "%"); }
 
     bool visitOp(arith::CmpIOp op)

@@ -24,84 +24,110 @@ module attributes {adora.scheduled} {
     ADORA.kernel {
       affine.for %arg7 = 0 to 16 {
         affine.for %arg8 = 0 to 18 {
-          %24 = affine.for %arg9 = 0 to 20 iter_args(%arg10 = %cst) -> (f32) {
-            %25 = affine.load %result[%arg7, %arg9] : memref<16x20xf32>
-            %26 = affine.load %result_0[%arg9, %arg8] : memref<20x18xf32>
-            %27 = arith.mulf %25, %26 : f32
-            %28 = arith.addf %arg10, %27 : f32
-            affine.yield %28 : f32
+          %36 = affine.for %arg9 = 0 to 20 iter_args(%arg10 = %cst) -> (f32) {
+            %37 = affine.load %result[%arg7, %arg9] : memref<16x20xf32>
+            %38 = affine.load %result_0[%arg9, %arg8] : memref<20x18xf32>
+            %39 = arith.mulf %37, %38 : f32
+            %40 = arith.addf %arg10, %39 : f32
+            affine.yield %40 : f32
           }
-          affine.store %24, %4[%arg7, %arg8] : memref<16x18xf32>
+          affine.store %36, %4[%arg7, %arg8] : memref<16x18xf32>
         }
       }
       ADORA.terminator
     } {KernelName = "kernel_3mm_0", stream = 0 : i32}
     %8 = llvm.mlir.constant(0 : i64) : i64
     llvm.call @adoraEventRecord(%5, %8) : (!llvm.ptr, i64) -> ()
-    %9 = llvm.mlir.constant(0 : i64) : i64
-    llvm.call @adoraEventWait(%5, %9) : (!llvm.ptr, i64) -> ()
+    %9 = llvm.call @adoraEventCreate() : () -> !llvm.ptr
+    %10 = llvm.mlir.constant(0 : i64) : i64
+    llvm.call @adoraEventWait(%5, %10) : (!llvm.ptr, i64) -> ()
     llvm.call @adoraEventDestroy(%5) : (!llvm.ptr) -> ()
     ADORA.BlockStore %4, %arg0 [0, 0] : memref<16x18xf32> -> memref<?x18xf32>  {Id = "2", KernelName = "kernel_3mm_0", stream = 0 : i32}
-    %10 = llvm.call @adoraEventCreate() : () -> !llvm.ptr
-    %result_1 = ADORA.BlockLoad %arg4 [0, 0] : memref<?x24xf32> -> memref<18x24xf32>  {Id = "0", KernelName = "kernel_3mm_1", stream = 2 : i32}
-    %11 = llvm.mlir.constant(2 : i64) : i64
-    llvm.call @adoraEventRecord(%10, %11) : (!llvm.ptr, i64) -> ()
+    %11 = llvm.mlir.constant(0 : i64) : i64
+    llvm.call @adoraEventRecord(%9, %11) : (!llvm.ptr, i64) -> ()
     %12 = llvm.call @adoraEventCreate() : () -> !llvm.ptr
-    %result_2 = ADORA.BlockLoad %arg5 [0, 0] : memref<?x22xf32> -> memref<24x22xf32>  {Id = "1", KernelName = "kernel_3mm_1", stream = 3 : i32}
-    %13 = llvm.mlir.constant(3 : i64) : i64
+    %result_1 = ADORA.BlockLoad %arg4 [0, 0] : memref<?x24xf32> -> memref<18x24xf32>  {Id = "0", KernelName = "kernel_3mm_1", stream = 2 : i32}
+    %13 = llvm.mlir.constant(2 : i64) : i64
     llvm.call @adoraEventRecord(%12, %13) : (!llvm.ptr, i64) -> ()
-    %14 = ADORA.LocalMemAlloc memref<18x22xf32>  {Id = "2", KernelName = "kernel_3mm_1"}
-    %15 = llvm.call @adoraEventCreate() : () -> !llvm.ptr
-    %16 = llvm.mlir.constant(2 : i64) : i64
-    llvm.call @adoraEventWait(%12, %16) : (!llvm.ptr, i64) -> ()
+    %14 = llvm.call @adoraEventCreate() : () -> !llvm.ptr
+    %result_2 = ADORA.BlockLoad %arg5 [0, 0] : memref<?x22xf32> -> memref<24x22xf32>  {Id = "1", KernelName = "kernel_3mm_1", stream = 3 : i32}
+    %15 = llvm.mlir.constant(3 : i64) : i64
+    llvm.call @adoraEventRecord(%14, %15) : (!llvm.ptr, i64) -> ()
+    %16 = ADORA.LocalMemAlloc memref<18x22xf32>  {Id = "2", KernelName = "kernel_3mm_1"}
+    %17 = llvm.call @adoraEventCreate() : () -> !llvm.ptr
+    %18 = llvm.mlir.constant(2 : i64) : i64
+    llvm.call @adoraEventWait(%14, %18) : (!llvm.ptr, i64) -> ()
+    llvm.call @adoraEventDestroy(%14) : (!llvm.ptr) -> ()
+    %19 = llvm.mlir.constant(2 : i64) : i64
+    llvm.call @adoraEventWait(%12, %19) : (!llvm.ptr, i64) -> ()
     llvm.call @adoraEventDestroy(%12) : (!llvm.ptr) -> ()
-    %17 = llvm.mlir.constant(2 : i64) : i64
-    llvm.call @adoraEventWait(%10, %17) : (!llvm.ptr, i64) -> ()
-    llvm.call @adoraEventDestroy(%10) : (!llvm.ptr) -> ()
     ADORA.kernel {
       affine.for %arg7 = 0 to 18 {
         affine.for %arg8 = 0 to 22 {
-          %24 = affine.for %arg9 = 0 to 24 iter_args(%arg10 = %cst) -> (f32) {
-            %25 = affine.load %result_1[%arg7, %arg9] : memref<18x24xf32>
-            %26 = affine.load %result_2[%arg9, %arg8] : memref<24x22xf32>
-            %27 = arith.mulf %25, %26 : f32
-            %28 = arith.addf %arg10, %27 : f32
-            affine.yield %28 : f32
+          %36 = affine.for %arg9 = 0 to 24 iter_args(%arg10 = %cst) -> (f32) {
+            %37 = affine.load %result_1[%arg7, %arg9] : memref<18x24xf32>
+            %38 = affine.load %result_2[%arg9, %arg8] : memref<24x22xf32>
+            %39 = arith.mulf %37, %38 : f32
+            %40 = arith.addf %arg10, %39 : f32
+            affine.yield %40 : f32
           }
-          affine.store %24, %14[%arg7, %arg8] : memref<18x22xf32>
+          affine.store %36, %16[%arg7, %arg8] : memref<18x22xf32>
         }
       }
       ADORA.terminator
     } {KernelName = "kernel_3mm_1", stream = 2 : i32}
-    %18 = llvm.mlir.constant(2 : i64) : i64
-    llvm.call @adoraEventRecord(%15, %18) : (!llvm.ptr, i64) -> ()
-    %19 = llvm.mlir.constant(2 : i64) : i64
-    llvm.call @adoraEventWait(%15, %19) : (!llvm.ptr, i64) -> ()
-    llvm.call @adoraEventDestroy(%15) : (!llvm.ptr) -> ()
-    ADORA.BlockStore %14, %arg3 [0, 0] : memref<18x22xf32> -> memref<?x22xf32>  {Id = "2", KernelName = "kernel_3mm_1", stream = 2 : i32}
-    %20 = ADORA.LocalMemAlloc memref<16x22xf32>  {Id = "2", KernelName = "kernel_3mm_2"}
+    %20 = llvm.mlir.constant(2 : i64) : i64
+    llvm.call @adoraEventRecord(%17, %20) : (!llvm.ptr, i64) -> ()
     %21 = llvm.call @adoraEventCreate() : () -> !llvm.ptr
+    %22 = llvm.mlir.constant(2 : i64) : i64
+    llvm.call @adoraEventWait(%17, %22) : (!llvm.ptr, i64) -> ()
+    llvm.call @adoraEventDestroy(%17) : (!llvm.ptr) -> ()
+    ADORA.BlockStore %16, %arg3 [0, 0] : memref<18x22xf32> -> memref<?x22xf32>  {Id = "2", KernelName = "kernel_3mm_1", stream = 2 : i32}
+    %23 = llvm.mlir.constant(2 : i64) : i64
+    llvm.call @adoraEventRecord(%21, %23) : (!llvm.ptr, i64) -> ()
+    %24 = llvm.call @adoraEventCreate() : () -> !llvm.ptr
+    %25 = llvm.mlir.constant(0 : i64) : i64
+    llvm.call @adoraEventWait(%9, %25) : (!llvm.ptr, i64) -> ()
+    llvm.call @adoraEventDestroy(%9) : (!llvm.ptr) -> ()
+    %result_3 = ADORA.BlockLoad %arg0 [0, 0] : memref<?x18xf32> -> memref<16x18xf32>  {Id = "0", KernelName = "kernel_3mm_2", stream = 0 : i32}
+    %26 = llvm.mlir.constant(0 : i64) : i64
+    llvm.call @adoraEventRecord(%24, %26) : (!llvm.ptr, i64) -> ()
+    %27 = llvm.call @adoraEventCreate() : () -> !llvm.ptr
+    %28 = llvm.mlir.constant(2 : i64) : i64
+    llvm.call @adoraEventWait(%21, %28) : (!llvm.ptr, i64) -> ()
+    llvm.call @adoraEventDestroy(%21) : (!llvm.ptr) -> ()
+    %result_4 = ADORA.BlockLoad %arg3 [0, 0] : memref<?x22xf32> -> memref<18x22xf32>  {Id = "1", KernelName = "kernel_3mm_2", stream = 2 : i32}
+    %29 = llvm.mlir.constant(2 : i64) : i64
+    llvm.call @adoraEventRecord(%27, %29) : (!llvm.ptr, i64) -> ()
+    %30 = ADORA.LocalMemAlloc memref<16x22xf32>  {Id = "2", KernelName = "kernel_3mm_2"}
+    %31 = llvm.call @adoraEventCreate() : () -> !llvm.ptr
+    %32 = llvm.mlir.constant(0 : i64) : i64
+    llvm.call @adoraEventWait(%24, %32) : (!llvm.ptr, i64) -> ()
+    llvm.call @adoraEventDestroy(%24) : (!llvm.ptr) -> ()
+    %33 = llvm.mlir.constant(0 : i64) : i64
+    llvm.call @adoraEventWait(%27, %33) : (!llvm.ptr, i64) -> ()
+    llvm.call @adoraEventDestroy(%27) : (!llvm.ptr) -> ()
     ADORA.kernel {
       affine.for %arg7 = 0 to 16 {
         affine.for %arg8 = 0 to 22 {
-          %24 = affine.for %arg9 = 0 to 18 iter_args(%arg10 = %cst) -> (f32) {
-            %25 = affine.load %4[%arg7, %arg9] : memref<16x18xf32>
-            %26 = affine.load %14[%arg9, %arg8] : memref<18x22xf32>
-            %27 = arith.mulf %25, %26 : f32
-            %28 = arith.addf %arg10, %27 : f32
-            affine.yield %28 : f32
+          %36 = affine.for %arg9 = 0 to 18 iter_args(%arg10 = %cst) -> (f32) {
+            %37 = affine.load %result_3[%arg7, %arg9] : memref<16x18xf32>
+            %38 = affine.load %result_4[%arg9, %arg8] : memref<18x22xf32>
+            %39 = arith.mulf %37, %38 : f32
+            %40 = arith.addf %arg10, %39 : f32
+            affine.yield %40 : f32
           }
-          affine.store %24, %20[%arg7, %arg8] : memref<16x22xf32>
+          affine.store %36, %30[%arg7, %arg8] : memref<16x22xf32>
         }
       }
       ADORA.terminator
     } {KernelName = "kernel_3mm_2", stream = 0 : i32}
-    %22 = llvm.mlir.constant(0 : i64) : i64
-    llvm.call @adoraEventRecord(%21, %22) : (!llvm.ptr, i64) -> ()
-    %23 = llvm.mlir.constant(0 : i64) : i64
-    llvm.call @adoraEventWait(%21, %23) : (!llvm.ptr, i64) -> ()
-    llvm.call @adoraEventDestroy(%21) : (!llvm.ptr) -> ()
-    ADORA.BlockStore %20, %arg6 [0, 0] : memref<16x22xf32> -> memref<?x22xf32>  {Id = "2", KernelName = "kernel_3mm_2", stream = 0 : i32}
+    %34 = llvm.mlir.constant(0 : i64) : i64
+    llvm.call @adoraEventRecord(%31, %34) : (!llvm.ptr, i64) -> ()
+    %35 = llvm.mlir.constant(0 : i64) : i64
+    llvm.call @adoraEventWait(%31, %35) : (!llvm.ptr, i64) -> ()
+    llvm.call @adoraEventDestroy(%31) : (!llvm.ptr) -> ()
+    ADORA.BlockStore %30, %arg6 [0, 0] : memref<16x22xf32> -> memref<?x22xf32>  {Id = "2", KernelName = "kernel_3mm_2", stream = 0 : i32}
     return
   }
 }

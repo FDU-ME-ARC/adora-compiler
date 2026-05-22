@@ -176,7 +176,12 @@ public:
   };
   ADORA::DataBlockStoreOp getDataBlockStoreOp(){ return _blockstoreop;}
 
+  /// Returns the single KernelNode predecessor, or nullptr if none.
+  /// Prefer getKernelNodes() when multiple predecessors are possible.
   KernelNode* getKernelNode(); 
+
+  /// Returns all KernelNode predecessors (may be >1 in multi-tile benchmarks).
+  std::vector<KernelNode*> getKernelNodes();
 
   static bool classof(const TaskNode * node);
 

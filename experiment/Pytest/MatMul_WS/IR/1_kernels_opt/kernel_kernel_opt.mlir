@@ -1,102 +1,102 @@
-module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<f64, dense<64> : vector<2xi32>>, #dlti.dl_entry<f16, dense<16> : vector<2xi32>>, #dlti.dl_entry<f128, dense<128> : vector<2xi32>>, #dlti.dl_entry<!llvm.ptr<270>, dense<32> : vector<4xi32>>, #dlti.dl_entry<!llvm.ptr<271>, dense<32> : vector<4xi32>>, #dlti.dl_entry<!llvm.ptr<272>, dense<64> : vector<4xi32>>, #dlti.dl_entry<i64, dense<64> : vector<2xi32>>, #dlti.dl_entry<f80, dense<128> : vector<2xi32>>, #dlti.dl_entry<!llvm.ptr, dense<64> : vector<4xi32>>, #dlti.dl_entry<i1, dense<8> : vector<2xi32>>, #dlti.dl_entry<i8, dense<8> : vector<2xi32>>, #dlti.dl_entry<i16, dense<16> : vector<2xi32>>, #dlti.dl_entry<i32, dense<32> : vector<2xi32>>, #dlti.dl_entry<"dlti.endianness", "little">, #dlti.dl_entry<"dlti.stack_alignment", 128 : i32>>, llvm.data_layout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", "polygeist.target-cpu" = "x86-64", "polygeist.target-features" = "+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87", "polygeist.tune-cpu" = "generic"} {
-  func.func @merge_MATMUL_4x4_IS(%arg0: memref<?x36xi32>, %arg1: memref<?x36xi32>, %arg2: memref<?x36xi32>) attributes {llvm.linkage = #llvm.linkage<external>} {
-    %0 = ADORA.BlockLoad %arg2 [0, 0] : memref<?x36xi32> -> memref<36x9xi32>  {Id = "0", KernelName = "merge_MATMUL_4x4_IS"}
-    %1 = ADORA.BlockLoad %arg2 [0, 2] : memref<?x36xi32> -> memref<36x9xi32>  {Id = "1", KernelName = "merge_MATMUL_4x4_IS"}
-    %2 = ADORA.BlockLoad %arg2 [0, 1] : memref<?x36xi32> -> memref<36x9xi32>  {Id = "2", KernelName = "merge_MATMUL_4x4_IS"}
-    %3 = ADORA.BlockLoad %arg2 [0, 3] : memref<?x36xi32> -> memref<36x9xi32>  {Id = "3", KernelName = "merge_MATMUL_4x4_IS"}
-    %4 = ADORA.BlockLoad %arg0 [0, 0] : memref<?x36xi32> -> memref<36x9xi32>  {Id = "4", KernelName = "merge_MATMUL_4x4_IS"}
-    %5 = ADORA.BlockLoad %arg1 [0, 0] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "5", KernelName = "merge_MATMUL_4x4_IS"}
-    %6 = ADORA.BlockLoad %arg0 [0, 1] : memref<?x36xi32> -> memref<36x9xi32>  {Id = "6", KernelName = "merge_MATMUL_4x4_IS"}
-    %7 = ADORA.BlockLoad %arg1 [1, 0] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "7", KernelName = "merge_MATMUL_4x4_IS"}
-    %8 = ADORA.BlockLoad %arg0 [0, 2] : memref<?x36xi32> -> memref<36x9xi32>  {Id = "8", KernelName = "merge_MATMUL_4x4_IS"}
-    %9 = ADORA.BlockLoad %arg1 [2, 0] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "9", KernelName = "merge_MATMUL_4x4_IS"}
-    %10 = ADORA.BlockLoad %arg0 [0, 3] : memref<?x36xi32> -> memref<36x9xi32>  {Id = "10", KernelName = "merge_MATMUL_4x4_IS"}
-    %11 = ADORA.BlockLoad %arg1 [3, 0] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "11", KernelName = "merge_MATMUL_4x4_IS"}
-    %12 = ADORA.BlockLoad %arg1 [0, 1] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "12", KernelName = "merge_MATMUL_4x4_IS"}
-    %13 = ADORA.BlockLoad %arg1 [1, 1] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "13", KernelName = "merge_MATMUL_4x4_IS"}
-    %14 = ADORA.BlockLoad %arg1 [2, 1] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "14", KernelName = "merge_MATMUL_4x4_IS"}
-    %15 = ADORA.BlockLoad %arg1 [3, 1] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "15", KernelName = "merge_MATMUL_4x4_IS"}
-    %16 = ADORA.BlockLoad %arg1 [0, 2] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "16", KernelName = "merge_MATMUL_4x4_IS"}
-    %17 = ADORA.BlockLoad %arg1 [1, 2] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "17", KernelName = "merge_MATMUL_4x4_IS"}
-    %18 = ADORA.BlockLoad %arg1 [2, 2] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "18", KernelName = "merge_MATMUL_4x4_IS"}
-    %19 = ADORA.BlockLoad %arg1 [3, 2] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "19", KernelName = "merge_MATMUL_4x4_IS"}
-    %20 = ADORA.BlockLoad %arg1 [0, 3] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "20", KernelName = "merge_MATMUL_4x4_IS"}
-    %21 = ADORA.BlockLoad %arg1 [1, 3] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "21", KernelName = "merge_MATMUL_4x4_IS"}
-    %22 = ADORA.BlockLoad %arg1 [2, 3] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "22", KernelName = "merge_MATMUL_4x4_IS"}
-    %23 = ADORA.BlockLoad %arg1 [3, 3] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "23", KernelName = "merge_MATMUL_4x4_IS"}
-    ADORA.kernel {
+module attributes {adora.scheduled} {
+  func.func @merge_MATMUL_4x4_IS(%arg0: memref<?x36xi32>, %arg1: memref<?x36xi32>, %arg2: memref<?x36xi32>) attributes {adora.dep_summary = [{block_idx = 0 : i64, edges = [{dst = 24 : i64, kind = "RAW", overlap = true, src = 22 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 21 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 20 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 19 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 23 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 14 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 18 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 13 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 0 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 1 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 2 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 3 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 4 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 5 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 6 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 7 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 8 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 9 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 15 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 10 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 16 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 11 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 17 : i64}, {dst = 24 : i64, kind = "RAW", overlap = true, src = 12 : i64}, {dst = 25 : i64, kind = "RAW", overlap = true, src = 24 : i64}, {dst = 25 : i64, kind = "RAW", overlap = true, src = 3 : i64}, {dst = 26 : i64, kind = "RAW", overlap = true, src = 24 : i64}, {dst = 26 : i64, kind = "RAW", overlap = true, src = 2 : i64}, {dst = 27 : i64, kind = "RAW", overlap = true, src = 24 : i64}, {dst = 27 : i64, kind = "RAW", overlap = true, src = 1 : i64}, {dst = 28 : i64, kind = "RAW", overlap = true, src = 24 : i64}, {dst = 28 : i64, kind = "RAW", overlap = true, src = 0 : i64}, {dst = 27 : i64, kind = "WAW", overlap = false, src = 25 : i64}, {dst = 26 : i64, kind = "WAW", overlap = false, src = 25 : i64}, {dst = 28 : i64, kind = "WAW", overlap = false, src = 25 : i64}, {dst = 23 : i64, kind = "RAR", overlap = false, src = 22 : i64}, {dst = 22 : i64, kind = "RAR", overlap = false, src = 21 : i64}, {dst = 23 : i64, kind = "RAR", overlap = false, src = 21 : i64}, {dst = 28 : i64, kind = "WAW", overlap = false, src = 27 : i64}, {dst = 22 : i64, kind = "RAR", overlap = false, src = 20 : i64}, {dst = 21 : i64, kind = "RAR", overlap = false, src = 20 : i64}, {dst = 23 : i64, kind = "RAR", overlap = false, src = 20 : i64}, {dst = 22 : i64, kind = "RAR", overlap = false, src = 19 : i64}, {dst = 21 : i64, kind = "RAR", overlap = false, src = 19 : i64}, {dst = 20 : i64, kind = "RAR", overlap = false, src = 19 : i64}, {dst = 23 : i64, kind = "RAR", overlap = false, src = 19 : i64}, {dst = 22 : i64, kind = "RAR", overlap = false, src = 14 : i64}, {dst = 21 : i64, kind = "RAR", overlap = false, src = 14 : i64}, {dst = 20 : i64, kind = "RAR", overlap = false, src = 14 : i64}, {dst = 19 : i64, kind = "RAR", overlap = false, src = 14 : i64}, {dst = 23 : i64, kind = "RAR", overlap = false, src = 14 : i64}, {dst = 18 : i64, kind = "RAR", overlap = false, src = 14 : i64}, {dst = 15 : i64, kind = "RAR", overlap = false, src = 14 : i64}, {dst = 16 : i64, kind = "RAR", overlap = false, src = 14 : i64}, {dst = 17 : i64, kind = "RAR", overlap = false, src = 14 : i64}, {dst = 22 : i64, kind = "RAR", overlap = false, src = 18 : i64}, {dst = 21 : i64, kind = "RAR", overlap = false, src = 18 : i64}, {dst = 20 : i64, kind = "RAR", overlap = false, src = 18 : i64}, {dst = 19 : i64, kind = "RAR", overlap = false, src = 18 : i64}, {dst = 23 : i64, kind = "RAR", overlap = false, src = 18 : i64}, {dst = 22 : i64, kind = "RAR", overlap = false, src = 13 : i64}, {dst = 21 : i64, kind = "RAR", overlap = false, src = 13 : i64}, {dst = 20 : i64, kind = "RAR", overlap = false, src = 13 : i64}, {dst = 19 : i64, kind = "RAR", overlap = false, src = 13 : i64}, {dst = 23 : i64, kind = "RAR", overlap = false, src = 13 : i64}, {dst = 14 : i64, kind = "RAR", overlap = false, src = 13 : i64}, {dst = 18 : i64, kind = "RAR", overlap = false, src = 13 : i64}, {dst = 15 : i64, kind = "RAR", overlap = false, src = 13 : i64}, {dst = 16 : i64, kind = "RAR", overlap = false, src = 13 : i64}, {dst = 17 : i64, kind = "RAR", overlap = false, src = 13 : i64}, {dst = 25 : i64, kind = "WAR", overlap = false, src = 0 : i64}, {dst = 27 : i64, kind = "WAR", overlap = false, src = 0 : i64}, {dst = 1 : i64, kind = "RAR", overlap = false, src = 0 : i64}, {dst = 26 : i64, kind = "WAR", overlap = false, src = 0 : i64}, {dst = 2 : i64, kind = "RAR", overlap = false, src = 0 : i64}, {dst = 3 : i64, kind = "RAR", overlap = false, src = 0 : i64}, {dst = 28 : i64, kind = "WAR", overlap = true, src = 0 : i64}, {dst = 25 : i64, kind = "WAR", overlap = false, src = 1 : i64}, {dst = 27 : i64, kind = "WAR", overlap = true, src = 1 : i64}, {dst = 26 : i64, kind = "WAR", overlap = false, src = 1 : i64}, {dst = 2 : i64, kind = "RAR", overlap = false, src = 1 : i64}, {dst = 3 : i64, kind = "RAR", overlap = false, src = 1 : i64}, {dst = 28 : i64, kind = "WAR", overlap = false, src = 1 : i64}, {dst = 27 : i64, kind = "WAW", overlap = false, src = 26 : i64}, {dst = 28 : i64, kind = "WAW", overlap = false, src = 26 : i64}, {dst = 25 : i64, kind = "WAR", overlap = false, src = 2 : i64}, {dst = 27 : i64, kind = "WAR", overlap = false, src = 2 : i64}, {dst = 26 : i64, kind = "WAR", overlap = true, src = 2 : i64}, {dst = 3 : i64, kind = "RAR", overlap = false, src = 2 : i64}, {dst = 28 : i64, kind = "WAR", overlap = false, src = 2 : i64}, {dst = 25 : i64, kind = "WAR", overlap = true, src = 3 : i64}, {dst = 27 : i64, kind = "WAR", overlap = false, src = 3 : i64}, {dst = 26 : i64, kind = "WAR", overlap = false, src = 3 : i64}, {dst = 28 : i64, kind = "WAR", overlap = false, src = 3 : i64}, {dst = 6 : i64, kind = "RAR", overlap = false, src = 4 : i64}, {dst = 8 : i64, kind = "RAR", overlap = false, src = 4 : i64}, {dst = 10 : i64, kind = "RAR", overlap = false, src = 4 : i64}, {dst = 22 : i64, kind = "RAR", overlap = false, src = 5 : i64}, {dst = 21 : i64, kind = "RAR", overlap = false, src = 5 : i64}, {dst = 20 : i64, kind = "RAR", overlap = false, src = 5 : i64}, {dst = 19 : i64, kind = "RAR", overlap = false, src = 5 : i64}, {dst = 23 : i64, kind = "RAR", overlap = false, src = 5 : i64}, {dst = 14 : i64, kind = "RAR", overlap = false, src = 5 : i64}, {dst = 18 : i64, kind = "RAR", overlap = false, src = 5 : i64}, {dst = 13 : i64, kind = "RAR", overlap = false, src = 5 : i64}, {dst = 7 : i64, kind = "RAR", overlap = false, src = 5 : i64}, {dst = 9 : i64, kind = "RAR", overlap = false, src = 5 : i64}, {dst = 15 : i64, kind = "RAR", overlap = false, src = 5 : i64}, {dst = 16 : i64, kind = "RAR", overlap = false, src = 5 : i64}, {dst = 11 : i64, kind = "RAR", overlap = false, src = 5 : i64}, {dst = 17 : i64, kind = "RAR", overlap = false, src = 5 : i64}, {dst = 12 : i64, kind = "RAR", overlap = false, src = 5 : i64}, {dst = 8 : i64, kind = "RAR", overlap = false, src = 6 : i64}, {dst = 10 : i64, kind = "RAR", overlap = false, src = 6 : i64}, {dst = 22 : i64, kind = "RAR", overlap = false, src = 7 : i64}, {dst = 21 : i64, kind = "RAR", overlap = false, src = 7 : i64}, {dst = 20 : i64, kind = "RAR", overlap = false, src = 7 : i64}, {dst = 19 : i64, kind = "RAR", overlap = false, src = 7 : i64}, {dst = 23 : i64, kind = "RAR", overlap = false, src = 7 : i64}, {dst = 14 : i64, kind = "RAR", overlap = false, src = 7 : i64}, {dst = 18 : i64, kind = "RAR", overlap = false, src = 7 : i64}, {dst = 13 : i64, kind = "RAR", overlap = false, src = 7 : i64}, {dst = 9 : i64, kind = "RAR", overlap = false, src = 7 : i64}, {dst = 15 : i64, kind = "RAR", overlap = false, src = 7 : i64}, {dst = 16 : i64, kind = "RAR", overlap = false, src = 7 : i64}, {dst = 11 : i64, kind = "RAR", overlap = false, src = 7 : i64}, {dst = 17 : i64, kind = "RAR", overlap = false, src = 7 : i64}, {dst = 12 : i64, kind = "RAR", overlap = false, src = 7 : i64}, {dst = 10 : i64, kind = "RAR", overlap = false, src = 8 : i64}, {dst = 22 : i64, kind = "RAR", overlap = false, src = 9 : i64}, {dst = 21 : i64, kind = "RAR", overlap = false, src = 9 : i64}, {dst = 20 : i64, kind = "RAR", overlap = false, src = 9 : i64}, {dst = 19 : i64, kind = "RAR", overlap = false, src = 9 : i64}, {dst = 23 : i64, kind = "RAR", overlap = false, src = 9 : i64}, {dst = 14 : i64, kind = "RAR", overlap = false, src = 9 : i64}, {dst = 18 : i64, kind = "RAR", overlap = false, src = 9 : i64}, {dst = 13 : i64, kind = "RAR", overlap = false, src = 9 : i64}, {dst = 15 : i64, kind = "RAR", overlap = false, src = 9 : i64}, {dst = 16 : i64, kind = "RAR", overlap = false, src = 9 : i64}, {dst = 11 : i64, kind = "RAR", overlap = false, src = 9 : i64}, {dst = 17 : i64, kind = "RAR", overlap = false, src = 9 : i64}, {dst = 12 : i64, kind = "RAR", overlap = false, src = 9 : i64}, {dst = 22 : i64, kind = "RAR", overlap = false, src = 15 : i64}, {dst = 21 : i64, kind = "RAR", overlap = false, src = 15 : i64}, {dst = 20 : i64, kind = "RAR", overlap = false, src = 15 : i64}, {dst = 19 : i64, kind = "RAR", overlap = false, src = 15 : i64}, {dst = 23 : i64, kind = "RAR", overlap = false, src = 15 : i64}, {dst = 18 : i64, kind = "RAR", overlap = false, src = 15 : i64}, {dst = 16 : i64, kind = "RAR", overlap = false, src = 15 : i64}, {dst = 17 : i64, kind = "RAR", overlap = false, src = 15 : i64}, {dst = 22 : i64, kind = "RAR", overlap = false, src = 16 : i64}, {dst = 21 : i64, kind = "RAR", overlap = false, src = 16 : i64}, {dst = 20 : i64, kind = "RAR", overlap = false, src = 16 : i64}, {dst = 19 : i64, kind = "RAR", overlap = false, src = 16 : i64}, {dst = 23 : i64, kind = "RAR", overlap = false, src = 16 : i64}, {dst = 18 : i64, kind = "RAR", overlap = false, src = 16 : i64}, {dst = 17 : i64, kind = "RAR", overlap = false, src = 16 : i64}, {dst = 22 : i64, kind = "RAR", overlap = false, src = 11 : i64}, {dst = 21 : i64, kind = "RAR", overlap = false, src = 11 : i64}, {dst = 20 : i64, kind = "RAR", overlap = false, src = 11 : i64}, {dst = 19 : i64, kind = "RAR", overlap = false, src = 11 : i64}, {dst = 23 : i64, kind = "RAR", overlap = false, src = 11 : i64}, {dst = 14 : i64, kind = "RAR", overlap = false, src = 11 : i64}, {dst = 18 : i64, kind = "RAR", overlap = false, src = 11 : i64}, {dst = 13 : i64, kind = "RAR", overlap = false, src = 11 : i64}, {dst = 15 : i64, kind = "RAR", overlap = false, src = 11 : i64}, {dst = 16 : i64, kind = "RAR", overlap = false, src = 11 : i64}, {dst = 17 : i64, kind = "RAR", overlap = false, src = 11 : i64}, {dst = 12 : i64, kind = "RAR", overlap = false, src = 11 : i64}, {dst = 22 : i64, kind = "RAR", overlap = false, src = 17 : i64}, {dst = 21 : i64, kind = "RAR", overlap = false, src = 17 : i64}, {dst = 20 : i64, kind = "RAR", overlap = false, src = 17 : i64}, {dst = 19 : i64, kind = "RAR", overlap = false, src = 17 : i64}, {dst = 23 : i64, kind = "RAR", overlap = false, src = 17 : i64}, {dst = 18 : i64, kind = "RAR", overlap = false, src = 17 : i64}, {dst = 22 : i64, kind = "RAR", overlap = false, src = 12 : i64}, {dst = 21 : i64, kind = "RAR", overlap = false, src = 12 : i64}, {dst = 20 : i64, kind = "RAR", overlap = false, src = 12 : i64}, {dst = 19 : i64, kind = "RAR", overlap = false, src = 12 : i64}, {dst = 23 : i64, kind = "RAR", overlap = false, src = 12 : i64}, {dst = 14 : i64, kind = "RAR", overlap = false, src = 12 : i64}, {dst = 18 : i64, kind = "RAR", overlap = false, src = 12 : i64}, {dst = 13 : i64, kind = "RAR", overlap = false, src = 12 : i64}, {dst = 15 : i64, kind = "RAR", overlap = false, src = 12 : i64}, {dst = 16 : i64, kind = "RAR", overlap = false, src = 12 : i64}, {dst = 17 : i64, kind = "RAR", overlap = false, src = 12 : i64}]}], llvm.linkage = #llvm.linkage<external>} {
+    %result, %asyncToken = ADORA.BlockLoad %arg2 [0, 0] : memref<?x36xi32> -> memref<36x9xi32>  {Id = "0", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_0, %asyncToken_1 = ADORA.BlockLoad async [%asyncToken] %arg2 [0, 2] : memref<?x36xi32> -> memref<36x9xi32>  {Id = "1", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_2, %asyncToken_3 = ADORA.BlockLoad async [%asyncToken, %asyncToken_1] %arg2 [0, 1] : memref<?x36xi32> -> memref<36x9xi32>  {Id = "2", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_4, %asyncToken_5 = ADORA.BlockLoad async [%asyncToken, %asyncToken_1, %asyncToken_3] %arg2 [0, 3] : memref<?x36xi32> -> memref<36x9xi32>  {Id = "3", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_6, %asyncToken_7 = ADORA.BlockLoad %arg0 [0, 0] : memref<?x36xi32> -> memref<36x9xi32>  {Id = "4", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_8, %asyncToken_9 = ADORA.BlockLoad %arg1 [0, 0] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "5", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_10, %asyncToken_11 = ADORA.BlockLoad async [%asyncToken_7] %arg0 [0, 1] : memref<?x36xi32> -> memref<36x9xi32>  {Id = "6", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_12, %asyncToken_13 = ADORA.BlockLoad async [%asyncToken_9] %arg1 [1, 0] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "7", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_14, %asyncToken_15 = ADORA.BlockLoad async [%asyncToken_7, %asyncToken_11] %arg0 [0, 2] : memref<?x36xi32> -> memref<36x9xi32>  {Id = "8", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_16, %asyncToken_17 = ADORA.BlockLoad async [%asyncToken_9, %asyncToken_13] %arg1 [2, 0] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "9", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_18, %asyncToken_19 = ADORA.BlockLoad async [%asyncToken_7, %asyncToken_11, %asyncToken_15] %arg0 [0, 3] : memref<?x36xi32> -> memref<36x9xi32>  {Id = "10", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_20, %asyncToken_21 = ADORA.BlockLoad async [%asyncToken_9, %asyncToken_13, %asyncToken_17] %arg1 [3, 0] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "11", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_22, %asyncToken_23 = ADORA.BlockLoad async [%asyncToken_9, %asyncToken_13, %asyncToken_17, %asyncToken_21] %arg1 [0, 1] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "12", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_24, %asyncToken_25 = ADORA.BlockLoad async [%asyncToken_9, %asyncToken_13, %asyncToken_17, %asyncToken_21, %asyncToken_23] %arg1 [1, 1] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "13", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_26, %asyncToken_27 = ADORA.BlockLoad async [%asyncToken_25, %asyncToken_9, %asyncToken_13, %asyncToken_17, %asyncToken_21, %asyncToken_23] %arg1 [2, 1] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "14", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_28, %asyncToken_29 = ADORA.BlockLoad async [%asyncToken_27, %asyncToken_25, %asyncToken_9, %asyncToken_13, %asyncToken_17, %asyncToken_21, %asyncToken_23] %arg1 [3, 1] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "15", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_30, %asyncToken_31 = ADORA.BlockLoad async [%asyncToken_27, %asyncToken_25, %asyncToken_9, %asyncToken_13, %asyncToken_17, %asyncToken_29, %asyncToken_21, %asyncToken_23] %arg1 [0, 2] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "16", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_32, %asyncToken_33 = ADORA.BlockLoad async [%asyncToken_27, %asyncToken_25, %asyncToken_9, %asyncToken_13, %asyncToken_17, %asyncToken_29, %asyncToken_31, %asyncToken_21, %asyncToken_23] %arg1 [1, 2] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "17", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_34, %asyncToken_35 = ADORA.BlockLoad async [%asyncToken_27, %asyncToken_25, %asyncToken_9, %asyncToken_13, %asyncToken_17, %asyncToken_29, %asyncToken_31, %asyncToken_21, %asyncToken_33, %asyncToken_23] %arg1 [2, 2] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "18", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_36, %asyncToken_37 = ADORA.BlockLoad async [%asyncToken_27, %asyncToken_35, %asyncToken_25, %asyncToken_9, %asyncToken_13, %asyncToken_17, %asyncToken_29, %asyncToken_31, %asyncToken_21, %asyncToken_33, %asyncToken_23] %arg1 [3, 2] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "19", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_38, %asyncToken_39 = ADORA.BlockLoad async [%asyncToken_37, %asyncToken_27, %asyncToken_35, %asyncToken_25, %asyncToken_9, %asyncToken_13, %asyncToken_17, %asyncToken_29, %asyncToken_31, %asyncToken_21, %asyncToken_33, %asyncToken_23] %arg1 [0, 3] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "20", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_40, %asyncToken_41 = ADORA.BlockLoad async [%asyncToken_39, %asyncToken_37, %asyncToken_27, %asyncToken_35, %asyncToken_25, %asyncToken_9, %asyncToken_13, %asyncToken_17, %asyncToken_29, %asyncToken_31, %asyncToken_21, %asyncToken_33, %asyncToken_23] %arg1 [1, 3] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "21", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_42, %asyncToken_43 = ADORA.BlockLoad async [%asyncToken_41, %asyncToken_39, %asyncToken_37, %asyncToken_27, %asyncToken_35, %asyncToken_25, %asyncToken_9, %asyncToken_13, %asyncToken_17, %asyncToken_29, %asyncToken_31, %asyncToken_21, %asyncToken_33, %asyncToken_23] %arg1 [2, 3] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "22", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %result_44, %asyncToken_45 = ADORA.BlockLoad async [%asyncToken_43, %asyncToken_41, %asyncToken_39, %asyncToken_37, %asyncToken_27, %asyncToken_35, %asyncToken_25, %asyncToken_9, %asyncToken_13, %asyncToken_17, %asyncToken_29, %asyncToken_31, %asyncToken_21, %asyncToken_33, %asyncToken_23] %arg1 [3, 3] : memref<?x36xi32> -> memref<9x9xi32>  {Id = "23", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %0 = ADORA.kernel async [%asyncToken_43, %asyncToken_41, %asyncToken_39, %asyncToken_37, %asyncToken_45, %asyncToken_27, %asyncToken_35, %asyncToken_25, %asyncToken, %asyncToken_1, %asyncToken_3, %asyncToken_5, %asyncToken_7, %asyncToken_9, %asyncToken_11, %asyncToken_13, %asyncToken_15, %asyncToken_17, %asyncToken_29, %asyncToken_19, %asyncToken_31, %asyncToken_21, %asyncToken_33, %asyncToken_23] {
       affine.for %arg3 = 0 to 9 {
         affine.for %arg4 = 0 to 9 {
           affine.for %arg5 = 0 to 36 {
-            %24 = affine.load %4[%arg5, %arg4] : memref<36x9xi32>
-            %25 = affine.load %5[%arg4, %arg3] : memref<9x9xi32>
-            %26 = arith.muli %24, %25 : i32
-            %27 = affine.load %0[%arg5, %arg3] : memref<36x9xi32>
-            %28 = arith.addi %27, %26 : i32
-            %29 = affine.load %6[%arg5, %arg4] : memref<36x9xi32>
-            %30 = affine.load %7[%arg4, %arg3] : memref<9x9xi32>
-            %31 = arith.muli %29, %30 : i32
-            %32 = arith.addi %28, %31 : i32
-            %33 = affine.load %8[%arg5, %arg4] : memref<36x9xi32>
-            %34 = affine.load %9[%arg4, %arg3] : memref<9x9xi32>
-            %35 = arith.muli %33, %34 : i32
-            %36 = arith.addi %32, %35 : i32
-            %37 = affine.load %10[%arg5, %arg4] : memref<36x9xi32>
-            %38 = affine.load %11[%arg4, %arg3] : memref<9x9xi32>
-            %39 = arith.muli %37, %38 : i32
-            %40 = arith.addi %36, %39 : i32
-            affine.store %40, %0[%arg5, %arg3] : memref<36x9xi32>
-            %41 = affine.load %12[%arg4, %arg3] : memref<9x9xi32>
-            %42 = arith.muli %24, %41 : i32
-            %43 = affine.load %2[%arg5, %arg3] : memref<36x9xi32>
-            %44 = arith.addi %43, %42 : i32
-            %45 = affine.load %13[%arg4, %arg3] : memref<9x9xi32>
-            %46 = arith.muli %29, %45 : i32
-            %47 = arith.addi %44, %46 : i32
-            %48 = affine.load %14[%arg4, %arg3] : memref<9x9xi32>
-            %49 = arith.muli %33, %48 : i32
-            %50 = arith.addi %47, %49 : i32
-            %51 = affine.load %15[%arg4, %arg3] : memref<9x9xi32>
-            %52 = arith.muli %37, %51 : i32
+            %4 = affine.load %result_6[%arg5, %arg4] : memref<36x9xi32>
+            %5 = affine.load %result_8[%arg4, %arg3] : memref<9x9xi32>
+            %6 = arith.muli %4, %5 : i32
+            %7 = affine.load %result[%arg5, %arg3] : memref<36x9xi32>
+            %8 = arith.addi %7, %6 : i32
+            %9 = affine.load %result_10[%arg5, %arg4] : memref<36x9xi32>
+            %10 = affine.load %result_12[%arg4, %arg3] : memref<9x9xi32>
+            %11 = arith.muli %9, %10 : i32
+            %12 = arith.addi %8, %11 : i32
+            %13 = affine.load %result_14[%arg5, %arg4] : memref<36x9xi32>
+            %14 = affine.load %result_16[%arg4, %arg3] : memref<9x9xi32>
+            %15 = arith.muli %13, %14 : i32
+            %16 = arith.addi %12, %15 : i32
+            %17 = affine.load %result_18[%arg5, %arg4] : memref<36x9xi32>
+            %18 = affine.load %result_20[%arg4, %arg3] : memref<9x9xi32>
+            %19 = arith.muli %17, %18 : i32
+            %20 = arith.addi %16, %19 : i32
+            affine.store %20, %result[%arg5, %arg3] : memref<36x9xi32>
+            %21 = affine.load %result_22[%arg4, %arg3] : memref<9x9xi32>
+            %22 = arith.muli %4, %21 : i32
+            %23 = affine.load %result_2[%arg5, %arg3] : memref<36x9xi32>
+            %24 = arith.addi %23, %22 : i32
+            %25 = affine.load %result_24[%arg4, %arg3] : memref<9x9xi32>
+            %26 = arith.muli %9, %25 : i32
+            %27 = arith.addi %24, %26 : i32
+            %28 = affine.load %result_26[%arg4, %arg3] : memref<9x9xi32>
+            %29 = arith.muli %13, %28 : i32
+            %30 = arith.addi %27, %29 : i32
+            %31 = affine.load %result_28[%arg4, %arg3] : memref<9x9xi32>
+            %32 = arith.muli %17, %31 : i32
+            %33 = arith.addi %30, %32 : i32
+            affine.store %33, %result_2[%arg5, %arg3] : memref<36x9xi32>
+            %34 = affine.load %result_30[%arg4, %arg3] : memref<9x9xi32>
+            %35 = arith.muli %4, %34 : i32
+            %36 = affine.load %result_0[%arg5, %arg3] : memref<36x9xi32>
+            %37 = arith.addi %36, %35 : i32
+            %38 = affine.load %result_32[%arg4, %arg3] : memref<9x9xi32>
+            %39 = arith.muli %9, %38 : i32
+            %40 = arith.addi %37, %39 : i32
+            %41 = affine.load %result_34[%arg4, %arg3] : memref<9x9xi32>
+            %42 = arith.muli %13, %41 : i32
+            %43 = arith.addi %40, %42 : i32
+            %44 = affine.load %result_36[%arg4, %arg3] : memref<9x9xi32>
+            %45 = arith.muli %17, %44 : i32
+            %46 = arith.addi %43, %45 : i32
+            affine.store %46, %result_0[%arg5, %arg3] : memref<36x9xi32>
+            %47 = affine.load %result_38[%arg4, %arg3] : memref<9x9xi32>
+            %48 = arith.muli %4, %47 : i32
+            %49 = affine.load %result_4[%arg5, %arg3] : memref<36x9xi32>
+            %50 = arith.addi %49, %48 : i32
+            %51 = affine.load %result_40[%arg4, %arg3] : memref<9x9xi32>
+            %52 = arith.muli %9, %51 : i32
             %53 = arith.addi %50, %52 : i32
-            affine.store %53, %2[%arg5, %arg3] : memref<36x9xi32>
-            %54 = affine.load %16[%arg4, %arg3] : memref<9x9xi32>
-            %55 = arith.muli %24, %54 : i32
-            %56 = affine.load %1[%arg5, %arg3] : memref<36x9xi32>
-            %57 = arith.addi %56, %55 : i32
-            %58 = affine.load %17[%arg4, %arg3] : memref<9x9xi32>
-            %59 = arith.muli %29, %58 : i32
-            %60 = arith.addi %57, %59 : i32
-            %61 = affine.load %18[%arg4, %arg3] : memref<9x9xi32>
-            %62 = arith.muli %33, %61 : i32
-            %63 = arith.addi %60, %62 : i32
-            %64 = affine.load %19[%arg4, %arg3] : memref<9x9xi32>
-            %65 = arith.muli %37, %64 : i32
-            %66 = arith.addi %63, %65 : i32
-            affine.store %66, %1[%arg5, %arg3] : memref<36x9xi32>
-            %67 = affine.load %20[%arg4, %arg3] : memref<9x9xi32>
-            %68 = arith.muli %24, %67 : i32
-            %69 = affine.load %3[%arg5, %arg3] : memref<36x9xi32>
-            %70 = arith.addi %69, %68 : i32
-            %71 = affine.load %21[%arg4, %arg3] : memref<9x9xi32>
-            %72 = arith.muli %29, %71 : i32
-            %73 = arith.addi %70, %72 : i32
-            %74 = affine.load %22[%arg4, %arg3] : memref<9x9xi32>
-            %75 = arith.muli %33, %74 : i32
-            %76 = arith.addi %73, %75 : i32
-            %77 = affine.load %23[%arg4, %arg3] : memref<9x9xi32>
-            %78 = arith.muli %37, %77 : i32
-            %79 = arith.addi %76, %78 : i32
-            affine.store %79, %3[%arg5, %arg3] : memref<36x9xi32>
+            %54 = affine.load %result_42[%arg4, %arg3] : memref<9x9xi32>
+            %55 = arith.muli %13, %54 : i32
+            %56 = arith.addi %53, %55 : i32
+            %57 = affine.load %result_44[%arg4, %arg3] : memref<9x9xi32>
+            %58 = arith.muli %17, %57 : i32
+            %59 = arith.addi %56, %58 : i32
+            affine.store %59, %result_4[%arg5, %arg3] : memref<36x9xi32>
           }
         }
       }
       ADORA.terminator
     } {KernelName = "merge_MATMUL_4x4_IS"}
-    ADORA.BlockStore %3, %arg2 [0, 3] : memref<36x9xi32> -> memref<?x36xi32>  {Id = "3", KernelName = "merge_MATMUL_4x4_IS"}
-    ADORA.BlockStore %2, %arg2 [0, 1] : memref<36x9xi32> -> memref<?x36xi32>  {Id = "2", KernelName = "merge_MATMUL_4x4_IS"}
-    ADORA.BlockStore %1, %arg2 [0, 2] : memref<36x9xi32> -> memref<?x36xi32>  {Id = "1", KernelName = "merge_MATMUL_4x4_IS"}
-    ADORA.BlockStore %0, %arg2 [0, 0] : memref<36x9xi32> -> memref<?x36xi32>  {Id = "0", KernelName = "merge_MATMUL_4x4_IS"}
+    %1 = ADORA.BlockStore async [%0, %asyncToken_5, %asyncToken, %asyncToken_1, %asyncToken_3] %result_4, %arg2 [0, 3] : memref<36x9xi32> -> memref<?x36xi32>  {Id = "3", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %2 = ADORA.BlockStore async [%0, %asyncToken_3, %1, %asyncToken, %asyncToken_1, %asyncToken_5] %result_2, %arg2 [0, 1] : memref<36x9xi32> -> memref<?x36xi32>  {Id = "2", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    %3 = ADORA.BlockStore async [%0, %asyncToken_1, %1, %asyncToken, %2, %asyncToken_3, %asyncToken_5] %result_0, %arg2 [0, 2] : memref<36x9xi32> -> memref<?x36xi32>  {Id = "1", KernelName = "merge_MATMUL_4x4_IS"} -> !ADORA.token
+    ADORA.BlockStore async [%0, %asyncToken, %1, %3, %asyncToken_1, %2, %asyncToken_3, %asyncToken_5] %result, %arg2 [0, 0] : memref<36x9xi32> -> memref<?x36xi32>  {Id = "0", KernelName = "merge_MATMUL_4x4_IS"}
     return
   }
 }

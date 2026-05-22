@@ -44,18 +44,27 @@ for d in "${DIR}"/*/; do
         continue
     fi
 
-    # Count runtime calls
-    n_create=$(grep -c "adoraEventCreate" "${d}/e2e_output.mlir" 2>/dev/null | head -1 || echo 0)
-    n_record=$(grep -c "adoraEventRecord" "${d}/e2e_output.mlir" 2>/dev/null | head -1 || echo 0)
-    n_wait=$(grep -c "adoraEventWait"   "${d}/e2e_output.mlir" 2>/dev/null | head -1 || echo 0)
-    n_destroy=$(grep -c "adoraEventDestroy" "${d}/e2e_output.mlir" 2>/dev/null | head -1 || echo 0)
-    n_token=$(grep -c "ADORA.token" "${d}/e2e_output.mlir" 2>/dev/null | head -1 || echo 0)
-
-    if [[ "${n_token:-0}" != "0" ]]; then
+    # Check no unlowered tokens remain.
+    # Use grep -q (produces no stdout) to avoid the double-print bug where
+    # "grep -c" prints "0" before exiting 1, and "|| echo 0" adds another "0",
+    # making $() capture "0\n0" which is != "0" and triggers a false FAIL.
+    if grep -q "ADORA\.token" "${d}/e2e_output.mlir" 2>/dev/null; then
         echo "FAIL (unlowered !ADORA.token in output)"
         fail=$((fail + 1))
         continue
     fi
+
+    # Count runtime ABI calls for informational display.
+    # Write counts to temp files to avoid the set -euo pipefail + grep-c exit-1 issue.
+    _tmp="${d}/.cnt"
+    grep -c "adoraEventCreate"  "${d}/e2e_output.mlir" 2>/dev/null > "${_tmp}_create"  || echo 0 > "${_tmp}_create"
+    grep -c "adoraEventRecord"  "${d}/e2e_output.mlir" 2>/dev/null > "${_tmp}_record"  || echo 0 > "${_tmp}_record"
+    grep -c "adoraEventWait"    "${d}/e2e_output.mlir" 2>/dev/null > "${_tmp}_wait"    || echo 0 > "${_tmp}_wait"
+    grep -c "adoraEventDestroy" "${d}/e2e_output.mlir" 2>/dev/null > "${_tmp}_destroy" || echo 0 > "${_tmp}_destroy"
+    n_create=$(cat "${_tmp}_create")
+    n_record=$(cat "${_tmp}_record")
+    n_wait=$(cat "${_tmp}_wait")
+    n_destroy=$(cat "${_tmp}_destroy")
 
     echo "PASS  (create=${n_create} record=${n_record} wait=${n_wait} destroy=${n_destroy})"
     ok=$((ok + 1))

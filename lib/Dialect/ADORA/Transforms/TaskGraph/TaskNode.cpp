@@ -211,20 +211,24 @@ bool BlockStoreNode::classof(const TaskNode* node){
   }
 }
 
-KernelNode* BlockStoreNode::getKernelNode(){
+std::vector<KernelNode*> BlockStoreNode::getKernelNodes(){
   std::vector<KernelNode*> kernels;
   for(auto innode : getInNodes()){
     if(isa<KernelNode>(innode)){
       kernels.push_back(dyn_cast<KernelNode>(innode));
     }
   }
-  if(kernels.size() == 0){
+  return kernels;
+}
+
+KernelNode* BlockStoreNode::getKernelNode(){
+  auto kernels = getKernelNodes();
+  if(kernels.empty())
     return nullptr;
-  }
-  else{
-    assert(kernels.size() == 1);
-    return kernels[0];
-  }
+  // In multi-tile benchmarks (e.g. correlation) a store may have more than one
+  // KernelNode predecessor. Return the first; callers that need all predecessors
+  // should use getKernelNodes() instead.
+  return kernels[0];
 }
 
 } // namespace ADORA

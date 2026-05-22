@@ -1727,7 +1727,7 @@
         "id" : 5,
         "type" : "Muxn"
       } ],
-      "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "SEL", "FMUL32", "FDIV32", "FSUB32", "FADD32", "FACC32", "FEQ32", "FOLT32", "FOLE32", "FUNO32", "ISEL" ],
+      "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "SEL", "FMUL32", "FDIV32", "FSUB32", "FADD32", "FACC32", "FEQ32", "FOLT32", "FOLE32", "FUNO32", "ISEL" , "SLT" ],
       "affine_ctrl_reg_cfg_id" : {
         "Cycles" : 11,
         "WI" : 9,
