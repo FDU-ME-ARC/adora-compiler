@@ -175,6 +175,7 @@ def build_pipeline(
             [
                 tools["cgeist"],
                 "-O2",
+                "--raise-scf-to-affine",  # Bug1 fix: lift scf.for→affine.for, elim index_cast
                 str(input_path),
                 "-S",
                 "-o",
