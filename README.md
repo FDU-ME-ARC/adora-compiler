@@ -161,27 +161,29 @@ $ADORACC experiment/example/ffn/ffn.mlir \
   --work-dir /tmp/ffn_out -o /tmp/ffn_out/result.mlir
 ```
 
-After a successful run, the `--work-dir` will contain:
+After a successful run (using `mvt` as example), the `--work-dir` will contain:
 
 ```
-<work-dir>/
-├── result.mlir                        ← final scheduled MLIR
+/tmp/mvt_out/
+├── result.mlir                          ← final scheduled MLIR
 └── adora-cc-ir/
-    ├── 1_frontend/                    ← cgeist output (populated for .c input only)
+    ├── 1_frontend/                      ← cgeist output (.c input only; empty for .mlir)
     ├── 2_normalize/
-    │   ├── <name>_normalized.mlir
-    │   └── <name>_*_CDFG.dot         ← per-kernel DFG (intermediate)
+    │   ├── mvt_normalized.mlir
+    │   ├── kernel_mvt_0_CDFG.dot        ← per-kernel DFG (intermediate)
+    │   └── kernel_mvt_1_CDFG.dot
     ├── 3_kernel-extract/
-    │   └── <name>_kernel.mlir
+    │   └── mvt_kernel.mlir
     ├── 4_kernel-opt/
-    │   └── <name>_opt.mlir
+    │   └── mvt_opt.mlir
     ├── 5_task-schedule/
-    │   ├── <name>.pre.mlir            ← input to scheduler
-    │   ├── <name>.post.mlir           ← scheduler output
-    │   └── <name>.token_graph.dot     ← task dependency graph
+    │   ├── mvt.pre.mlir                 ← input snapshot to scheduler
+    │   ├── mvt.post.mlir                ← scheduler output
+    │   └── mvt.token_graph.dot          ← task dependency graph
     ├── 6_dfg/
-    │   └── <name>_*_CDFG.dot         ← final DFG (copied from 2_normalize)
-    └── pipeline.log                   ← full command log
+    │   ├── kernel_mvt_0_CDFG.dot        ← final DFG (copied from 2_normalize)
+    │   └── kernel_mvt_1_CDFG.dot
+    └── pipeline.log
 ```
 
 ---
