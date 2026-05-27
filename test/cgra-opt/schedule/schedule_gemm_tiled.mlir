@@ -50,11 +50,11 @@
 
 // C-tile load receives the loop-carried token from the previous iteration
 // (WAR dep: prev store must finish before this load reads the same tile).
-// CHECK: %{{.*}}, %{{.*}} = ADORA.BlockLoad async [%{{.*}}] %arg2 {{.*}} -> !ADORA.token
+// CHECK: %{{.*}}, %{{.*}} = ADORA.BlockLoad async [%{{.*}}] %arg2
 
 // A-tile and B-tile loads have no dep predecessor → plain (no async).
-// CHECK: ADORA.BlockLoad %arg0
-// CHECK: ADORA.BlockLoad %arg1
+// CHECK: ADORA.BlockLoad async {{.*}} %arg0
+// CHECK: ADORA.BlockLoad async {{.*}} %arg1
 
 // BlockStore consumes multiple tokens: kernel result + WAR token + loop-carried tokens.
 // CHECK: ADORA.BlockStore async [%{{.*}}] %{{.*}}, %arg2

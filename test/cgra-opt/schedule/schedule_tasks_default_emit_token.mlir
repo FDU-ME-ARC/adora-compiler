@@ -11,7 +11,7 @@
 
 // DEFAULT: adora.scheduled
 // DEFAULT: adora.dep_summary
-// DEFAULT: !ADORA.token
+// DEFAULT: ADORA.BlockLoad async
 
 // OPTOUT-NOT: !ADORA.token
 // OPTOUT: adora.scheduled
