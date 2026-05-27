@@ -65,3 +65,14 @@ newexperiments/*
 mapper/src_backup/*
 
 build_tools/gitpush.sh
+
+# lit test artifacts
+test/.lit_test_times.txt
+test/**/Output/*.tmp/
+test/**/Output/**/*.tmp/
+
+# generated dot files emitted during cgra-opt / adoracc test runs
+test/**/*.dot
+*_map_result/
+adora-cc-ir*/
+adora-cc-ir-backup*/
