@@ -172,7 +172,7 @@ After a successful run (using `mvt` as example), the `--work-dir` will contain:
     │   └── mvt_opt.mlir
     ├── 3_task-schedule/
     │   ├── mvt.pre.mlir                 ← input snapshot to scheduler
-    │   ├── mvt.post.mlir                ← scheduler output
+    │   ├── mvt.final.mlir               ← scheduler output
     │   └── mvt.token_graph.dot          ← task dependency graph
     ├── temp/
     │   ├── normalize/

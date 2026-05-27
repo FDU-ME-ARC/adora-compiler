@@ -274,9 +274,9 @@ def build_pipeline(
     # --- adora-schedule-tasks (default enabled) ---
     kernel_sched = kernel_opt  # fallback if scheduling skipped or fails
     if schedule_tasks:
-        pre_mlir  = dirs["schedule"] / f"{base_name}.pre.mlir"
-        post_mlir = dirs["schedule"] / f"{base_name}.post.mlir"
-        sched_dot = dirs["schedule"] / f"{base_name}.token_graph.dot"
+        pre_mlir   = dirs["schedule"] / f"{base_name}.pre.mlir"
+        final_mlir = dirs["schedule"] / f"{base_name}.final.mlir"
+        sched_dot  = dirs["schedule"] / f"{base_name}.token_graph.dot"
 
         # copy kernel-opt output as the pre-schedule snapshot
         shutil.copy(kernel_opt, pre_mlir)
@@ -286,13 +286,13 @@ def build_pipeline(
             f"--adora-schedule-tasks=dump-token-graph={sched_dot}",
             str(pre_mlir),
             "-o",
-            str(post_mlir),
+            str(final_mlir),
         ]
         print("+", " ".join(sched_cmd))
         result = subprocess.run(sched_cmd, capture_output=True, text=True)
         _append_to_log(dirs["ir"] / PIPELINE_LOG_NAME, sched_cmd, result)
         if result.returncode != 0:
-            failed_mlir = dirs["schedule"] / f"{base_name}.post.failed.mlir"
+            failed_mlir = dirs["schedule"] / f"{base_name}.final.failed.mlir"
             shutil.copy(pre_mlir, failed_mlir)
             print(
                 f"[adoracc] Warning: adora-schedule-tasks failed on "
@@ -303,7 +303,7 @@ def build_pipeline(
                 file=sys.stderr,
             )
         else:
-            kernel_sched = post_mlir
+            kernel_sched = final_mlir
 
     # --- export final kernel IR ---
     with open(kernel_sched, "r", encoding="utf-8") as f:

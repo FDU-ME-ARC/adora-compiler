@@ -631,34 +631,65 @@ void RemoveRedundantBlockStoreLoadPair(TaskGraph* graph){
   // invalidation and ensures replaceAllUsesWith happens before erase).
   llvm::SmallVector<std::pair<BlockLoadNode*, mlir::Value>> toReplace;
 
+  // Guard against the same loadnode being queued more than once.
+  // This can happen when multiple storenodes write to the same data block
+  // (e.g. a store chain A→buf, B→buf, load←buf): generateTaskGraphFromBlock
+  // adds RAW edges from *all* prior dirty stores to the load, so the inner
+  // loop below would push the loadnode once per matching store.  Erasing the
+  // same Op twice causes a null-TypeStorage crash in the second pass.
+  llvm::SmallPtrSet<BlockLoadNode*, 8> processed;
+
   for (TaskNode* node : nodes) {
     if (!isa<BlockLoadNode>(node)) continue;
+    BlockLoadNode* loadnode = dyn_cast<BlockLoadNode>(node);
+    if (processed.contains(loadnode)) continue;
+
+    ADORA::DataBlockLoadOp load = loadnode->getDataBlockLoadOp();
+
+    // Among all incoming store-nodes that access the same data block, pick
+    // the one that is LATEST in program order (i.e. the most recent write).
+    // Using an earlier store's source buffer would be semantically incorrect.
+    BlockStoreNode* bestStoreNode = nullptr;
     for (auto innode : node->getInNodes()) {
       if (!isa<BlockStoreNode>(innode)) continue;
       BlockStoreNode* storenode = dyn_cast<BlockStoreNode>(innode);
-      BlockLoadNode*  loadnode  = dyn_cast<BlockLoadNode>(node);
       ADORA::DataBlockStoreOp store = storenode->getDataBlockStoreOp();
-      ADORA::DataBlockLoadOp  load  = loadnode->getDataBlockLoadOp();
-
       if (!AccessSameDataBlock(store, load)) continue;
 
-      // Wire producing kernel → consuming kernel so the scheduler sees
-      // the inter-kernel dependency even after the load is removed.
-      KernelNode* sourcekernel = storenode->getKernelNode();
-      for (auto sinkkernel : loadnode->getKernelNodes()) {
-        addConnectionBetweenTwoNode(sourcekernel, sinkkernel, depType::Depend);
-        // Also add a depEdge so threadTokensOnDMAs sees store → sinkkernel
-        // and threads a token. Without this the erased BlockLoad leaves a
-        // gap: preds/hasOut in threadTokensOnDMAs skip dead ops (block==null),
-        // so kernel_3mm_2 would get async{} with no deps and emit no gather.
-        graph->addDepEdge({storenode, sinkkernel, DataBlockDepKind::RAW, true});
+      if (!bestStoreNode) {
+        bestStoreNode = storenode;
+      } else {
+        // Keep the store that appears LATER in the block (closer to the load).
+        mlir::Operation* bestOp  = bestStoreNode->getDataBlockStoreOp().getOperation();
+        mlir::Operation* candOp  = storenode->getDataBlockStoreOp().getOperation();
+        if (bestOp->getBlock() == candOp->getBlock() &&
+            bestOp->isBeforeInBlock(candOp)) {
+          bestStoreNode = storenode;
+        }
       }
-
-      // The data already lives in the on-chip buffer (store.SourceMemref).
-      // Schedule this BlockLoad for removal: replace its result with the
-      // on-chip buffer BEFORE erasing, so downstream users stay valid.
-      toReplace.push_back({loadnode, store.getSourceMemref()});
     }
+
+    if (!bestStoreNode) continue;
+    processed.insert(loadnode);
+
+    ADORA::DataBlockStoreOp bestStore = bestStoreNode->getDataBlockStoreOp();
+
+    // Wire producing kernel → consuming kernel so the scheduler sees
+    // the inter-kernel dependency even after the load is removed.
+    KernelNode* sourcekernel = bestStoreNode->getKernelNode();
+    for (auto sinkkernel : loadnode->getKernelNodes()) {
+      addConnectionBetweenTwoNode(sourcekernel, sinkkernel, depType::Depend);
+      // Also add a depEdge so threadTokensOnDMAs sees store → sinkkernel
+      // and threads a token. Without this the erased BlockLoad leaves a
+      // gap: preds/hasOut in threadTokensOnDMAs skip dead ops (block==null),
+      // so kernel_3mm_2 would get async{} with no deps and emit no gather.
+      graph->addDepEdge({bestStoreNode, sinkkernel, DataBlockDepKind::RAW, true});
+    }
+
+    // The data already lives in the on-chip buffer (bestStore.SourceMemref).
+    // Schedule this BlockLoad for removal: replace its result with the
+    // on-chip buffer BEFORE erasing, so downstream users stay valid.
+    toReplace.push_back({loadnode, bestStore.getSourceMemref()});
   }
 
   // Second pass: replaceAllUsesWith then erase (order matters!).
