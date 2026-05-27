@@ -133,6 +133,47 @@ You can find the Polygeist repository here:
 
 # Run an Example
 
+## Quick Start — three built-in examples
+
+Three ready-to-run MLIR kernels live in [`experiment/example/`](experiment/example/):
+
+| Kernel | Description |
+|--------|-------------|
+| `mvt/mvt.mlir`   | Matrix-Vector Transpose (PolyBench) |
+| `attn/attn.mlir` | Scaled dot-product attention (Transformer) |
+| `ffn/ffn.mlir`   | Feed-forward network: FC1 + ReLU + FC2 (Transformer) |
+
+Run any of them directly with `adoracc`:
+
+```bash
+# MVT
+adoracc.py experiment/example/mvt/mvt.mlir \
+  --work-dir /tmp/mvt_out -o /tmp/mvt_out/result.mlir
+
+# Attention
+adoracc.py experiment/example/attn/attn.mlir \
+  --work-dir /tmp/attn_out -o /tmp/attn_out/result.mlir
+
+# FFN
+adoracc.py experiment/example/ffn/ffn.mlir \
+  --work-dir /tmp/ffn_out -o /tmp/ffn_out/result.mlir
+```
+
+Each `--work-dir` will contain a numbered output directory tree:
+
+```
+<work-dir>/adora-cc-ir/
+  1_frontend/        2_normalize/        3_kernel-extract/
+  4_kernel-opt/      5_task-schedule/    6_dfg/
+  pipeline.log
+```
+
+See [`experiment/example/README.md`](experiment/example/README.md) for more details.
+
+---
+
+## Full C-to-Executable Flow
+
 You can run the full C compilation flow (C → adoracc → cgra-mapper) by following **[build_tools/C_Compiler_instruction.md](build_tools/C_Compiler_instruction.md)**.
 
 The `experiment` directory contains pre-transformed MLIR files ready to use.
