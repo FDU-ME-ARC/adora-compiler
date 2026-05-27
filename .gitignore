@@ -68,8 +68,7 @@ build_tools/gitpush.sh
 
 # lit test artifacts
 test/.lit_test_times.txt
-test/**/Output/*.tmp/
-test/**/Output/**/*.tmp/
+test/**/Output/
 
 # generated dot files emitted during cgra-opt / adoracc test runs
 test/**/*.dot
