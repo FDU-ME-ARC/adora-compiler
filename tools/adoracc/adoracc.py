@@ -266,9 +266,10 @@ def build_pipeline(
         sched_pre  = dirs["schedule"] / f"{base_name}.pre.mlir"
         sched_post = dirs["schedule"] / f"{base_name}.post.mlir"
         shutil.copy(kernel_opt, sched_pre)
+        sched_dot = dirs["schedule"] / f"{base_name}.token_graph.dot"
         sched_cmd = [
             tools["cgra-opt"],
-            "--adora-schedule-tasks",
+            f"--adora-schedule-tasks=dump-token-graph={sched_dot}",
             str(sched_pre),
             "-o",
             str(sched_post),
