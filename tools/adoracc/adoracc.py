@@ -74,19 +74,16 @@ def prepare_ir_dirs(root: Path) -> dict[str, Path]:
         backup_dir = root / f"adora-cc-ir-backup-{timestamp}"
         ir_dir.rename(backup_dir)
 
-    temp_dir         = ir_dir / "temp"
-    frontend_dir     = ir_dir / "1_frontend"
-    kernels_opt_dir  = ir_dir / "2_kernel-opt"
-    schedule_dir     = ir_dir / "3_task-schedule"   # created on demand
-    normalize_dir    = temp_dir / "normalize"
-    kernels_dir      = temp_dir / "kernel-extract"
-    dfgs_dir         = temp_dir / "dfg"
-    token_graph_dir  = temp_dir / "token-graph"
+    frontend_dir    = ir_dir / "1_frontend"
+    normalize_dir   = ir_dir / "2_normalize"
+    kernels_dir     = ir_dir / "3_kernel-extract"
+    kernels_opt_dir = ir_dir / "4_kernel-opt"
+    schedule_dir    = ir_dir / "5_task-schedule"
+    dfgs_dir        = ir_dir / "6_dfg"
 
-    for directory in (frontend_dir, kernels_opt_dir,
-                      normalize_dir, kernels_dir, dfgs_dir, token_graph_dir):
+    for directory in (frontend_dir, normalize_dir, kernels_dir,
+                      kernels_opt_dir, schedule_dir, dfgs_dir):
         directory.mkdir(parents=True, exist_ok=True)
-    # schedule_dir is created lazily in build_pipeline when schedule_tasks=True
 
     return {
         "ir": ir_dir,
@@ -96,7 +93,6 @@ def prepare_ir_dirs(root: Path) -> dict[str, Path]:
         "kernels_opt": kernels_opt_dir,
         "schedule": schedule_dir,
         "dfgs": dfgs_dir,
-        "token_graph": token_graph_dir,
     }
 
 def strip_module_attrs(text: str) -> str:
@@ -151,11 +147,21 @@ def has_adora_kernel(text: str) -> bool:
     return "ADORA.kernel" in text
 
 
-def _append_to_log(log_dir: Path, label: str, content: str) -> None:
-    """Append a labelled block to pipeline.log."""
-    log_file = log_dir / PIPELINE_LOG_NAME
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(f"\n=== {label} ===\n{content}\n")
+def _append_to_log(
+    log_path: Path,
+    cmd: list[str],
+    result: subprocess.CompletedProcess,
+) -> None:
+    """Append a schedule-tasks execution record to pipeline.log."""
+    with open(log_path, "a", encoding="utf-8") as logf:
+        logf.write("\n" + "=" * 72 + "\n")
+        logf.write(datetime.now().isoformat(timespec="seconds") + "\n")
+        logf.write("+ " + " ".join(cmd) + "\n")
+        logf.write("-" * 72 + "\n")
+        if result.stdout:
+            logf.write(result.stdout)
+        if result.stderr:
+            logf.write(result.stderr)
 
 
 def build_pipeline(
@@ -267,31 +273,36 @@ def build_pipeline(
     # --- adora-schedule-tasks (default enabled) ---
     kernel_sched = kernel_opt  # fallback if scheduling skipped or fails
     if schedule_tasks:
-        dirs["schedule"].mkdir(parents=True, exist_ok=True)
-        sched_post = dirs["schedule"] / f"{base_name}.final.mlir"
-        sched_dot  = dirs["token_graph"] / f"{base_name}.token_graph.dot"
+        pre_mlir  = dirs["schedule"] / f"{base_name}.pre.mlir"
+        post_mlir = dirs["schedule"] / f"{base_name}.post.mlir"
+        sched_dot = dirs["schedule"] / f"{base_name}.token_graph.dot"
+
+        # copy kernel-opt output as the pre-schedule snapshot
+        shutil.copy(kernel_opt, pre_mlir)
+
         sched_cmd = [
             tools["cgra-opt"],
             f"--adora-schedule-tasks=dump-token-graph={sched_dot}",
-            str(kernel_opt),
+            str(pre_mlir),
             "-o",
-            str(sched_post),
+            str(post_mlir),
         ]
         print("+", " ".join(sched_cmd))
         result = subprocess.run(sched_cmd, capture_output=True, text=True)
+        _append_to_log(dirs["ir"] / PIPELINE_LOG_NAME, sched_cmd, result)
         if result.returncode != 0:
-            sched_failed = dirs["schedule"] / f"{base_name}.final.failed.mlir"
-            sched_post.rename(sched_failed) if sched_post.exists() else None
-            _append_to_log(log_dir, "schedule-tasks FAILED", result.stderr)
+            failed_mlir = dirs["schedule"] / f"{base_name}.post.failed.mlir"
+            shutil.copy(pre_mlir, failed_mlir)
             print(
                 f"[adoracc] Warning: adora-schedule-tasks failed on "
                 f"{kernel_opt.name}; proceeding without task scheduling.\n"
+                f"  failed IR saved to: {failed_mlir}\n"
+                f"  See log: {dirs['ir'] / PIPELINE_LOG_NAME}\n"
                 + result.stderr,
                 file=sys.stderr,
             )
         else:
-            _append_to_log(log_dir, "schedule-tasks OK", result.stdout)
-            kernel_sched = sched_post
+            kernel_sched = post_mlir
 
     # --- export final kernel IR ---
     with open(kernel_sched, "r", encoding="utf-8") as f:
@@ -416,17 +427,21 @@ def main() -> int:
     except subprocess.CalledProcessError as exc:
         print(f"Command failed with exit code {exc.returncode}", file=sys.stderr)
         print(
-            f"See subprocess log: {dirs['ir'] / PIPELINE_LOG_NAME}",
+            f"See pipeline log:   {dirs['ir'] / PIPELINE_LOG_NAME}",
             file=sys.stderr,
         )
         return exc.returncode
 
-    print(f"[adoracc] Pipeline complete:", file=sys.stderr)
-    print(f"  1_frontend     : {dirs['frontend']}", file=sys.stderr)
-    print(f"  2_kernel-opt   : {dirs['kernels_opt']}", file=sys.stderr)
-    if dirs["schedule"].exists():
-        print(f"  3_task-schedule: {dirs['schedule']}", file=sys.stderr)
-    print(f"  pipeline.log   : {dirs['ir'] / PIPELINE_LOG_NAME}", file=sys.stderr)
+    sched_status = "enabled" if args.schedule_tasks else "disabled"
+    print("", file=sys.stderr)
+    print("[adoracc] Pipeline completed successfully.", file=sys.stderr)
+    print(f"  frontend IR    : {dirs['frontend']}", file=sys.stderr)
+    print(f"  normalize      : {dirs['normalize']}", file=sys.stderr)
+    print(f"  kernel-extract : {dirs['kernels']}", file=sys.stderr)
+    print(f"  kernel-opt     : {dirs['kernels_opt']}", file=sys.stderr)
+    print(f"  task-schedule  : {dirs['schedule']}  [{sched_status}]", file=sys.stderr)
+    print(f"  dfg            : {dirs['dfgs']}", file=sys.stderr)
+    print(f"  pipeline log   : {dirs['ir'] / PIPELINE_LOG_NAME}", file=sys.stderr)
 
     return 0
 
