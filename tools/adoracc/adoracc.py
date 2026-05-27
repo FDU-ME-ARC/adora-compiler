@@ -302,17 +302,22 @@ def build_pipeline(
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(kernel_final_text)
 
-    # DFG-gen looks for lib/DFG/Documents/GeneralOpName.txt relative to CWD.
-    # The file lives in the adora-compiler source root, which is two levels
-    # above the build/bin/ directory containing cgra-opt.
+    # DFG-gen writes *_CDFG.dot files into CWD; run from dirs["normalize"] so
+    # the files land there and can be found by the glob below.
+    # Ensure GeneralOpNameFile is an absolute path so it resolves correctly
+    # regardless of CWD.
     adora_compiler_root = Path(tools["cgra-opt"]).parent.parent.parent
+    if "GeneralOpNameFile" not in os.environ:
+        op_name_file = adora_compiler_root / "lib" / "DFG" / "Documents" / "GeneralOpName.txt"
+        os.environ["GeneralOpNameFile"] = str(op_name_file)
+
     run_command(
         [
             tools["cgra-opt"],
             "--adora-kernel-dfg-gen",
             str(kernel_sched),
         ],
-        cwd=adora_compiler_root,
+        cwd=dirs["normalize"],
         log_dir=log_dir,
     )
 
