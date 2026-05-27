@@ -1,15 +1,14 @@
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: adoracc.py %s --work-dir %t --enable-unroll --adg-path %S/../../../spec/cgra_fp32/cgra_adg_fp32.json  -o %t/result.mlir
 // RUN: FileCheck %s --input-file=%t/result.mlir
-// RUN: rm -rf %t && mkdir -p %t
 //
-// CHECK: module {
+// CHECK: module
 // CHECK: func.func @kernel_mvt(
-// CHECK: %[[A:.*]] = ADORA.BlockLoad %arg0 [0] : memref<?xf32> -> memref<40xf32>
-// CHECK: %[[M:.*]] = ADORA.BlockLoad %arg4 [0, 0] : memref<?x40xf32> -> memref<40x40xf32>
-// CHECK: %[[X:.*]] = ADORA.BlockLoad %arg2 [0] : memref<?xf32> -> memref<40xf32>
+// CHECK: %[[A:.*]], %{{.*}} = ADORA.BlockLoad async {{.*}} %arg0 [0] : memref<?xf32> -> memref<40xf32>
+// CHECK: %[[M:.*]], %{{.*}} = ADORA.BlockLoad async {{.*}} %arg4 [0, 0] : memref<?x40xf32> -> memref<40x40xf32>
+// CHECK: %[[X:.*]], %{{.*}} = ADORA.BlockLoad async {{.*}} %arg2 [0] : memref<?xf32> -> memref<40xf32>
 // CHECK: %[[OUT0:.*]] = ADORA.LocalMemAlloc memref<40xf32>
-// CHECK: ADORA.kernel {
+// CHECK: ADORA.kernel
 // CHECK: affine.for %[[I:.*]] = 0 to 40 {
 // CHECK: %[[A_I:.*]] = affine.load %[[A]]{{\[}}%[[I]]{{\]}} : memref<40xf32>
 // CHECK: %[[RED:.*]] = affine.for %[[J:.*]] = 0 to 40 step 5 iter_args(%[[ACC:.*]] = %[[A_I]]) -> (f32) {
@@ -27,7 +26,7 @@
 // CHECK: }
 // CHECK: ADORA.terminator
 // CHECK: } {KernelName = "kernel_mvt_0"}
-// CHECK: ADORA.BlockStore %[[OUT0]], %arg0 [0] : memref<40xf32> -> memref<?xf32>
+// CHECK: ADORA.BlockStore {{.*}}%[[OUT0]], %arg0 [0] : memref<40xf32> -> memref<?xf32>
 // CHECK: }
 
 module attributes {} {

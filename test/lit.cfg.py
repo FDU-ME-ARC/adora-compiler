@@ -29,6 +29,8 @@ if os.path.isfile(_op_name_file):
 if adora_tools_dir:
   config.substitutions.append(("%cgra-opt", os.path.join(adora_tools_dir, "cgra-opt")))
   config.substitutions.append(("%cgra-mapper", os.path.join(adora_tools_dir, "cgra-mapper")))
+  config.substitutions.append(("%adoracc", os.path.join(adora_tools_dir, "adoracc.py")))
+  config.substitutions.append(("%tensor-opt", os.path.join(adora_tools_dir, "tensor-opt")))
 
 if llvm_tools_dir:
   config.substitutions.append(("%FileCheck", os.path.join(llvm_tools_dir, "FileCheck")))

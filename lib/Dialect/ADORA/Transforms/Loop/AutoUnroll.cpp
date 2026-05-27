@@ -341,9 +341,9 @@ chooseAndApplyUnrollStrategyWithDeps(ADORA::KernelOp kernel, mlir::ModuleOp& m){
     /// Generating DFG
     std::string GeneralOpNameFile_str;
     if (GeneralOpNameFile == nullptr) {
-      std::cerr << "Environment variable \" GENERAL_OP_NAME_ENV \" is not set." << std::endl;
-      GeneralOpNameFile_str = "/home/jhlou/CGRVOPT/cgra-opt/lib/DFG/Documents/GeneralOpName.txt";
-      std::cerr << "Using \" GENERAL_OP_NAME_ENV \" = \"/home/jhlou/CGRVOPT/cgra-opt/lib/DFG/Documents/GeneralOpName.txt\"" << std::endl;
+      std::cerr << "Environment variable \"GeneralOpNameFile\" is not set." << std::endl;
+      GeneralOpNameFile_str = "lib/DFG/Documents/GeneralOpName.txt";
+      std::cerr << "Using fallback: \"" << GeneralOpNameFile_str << "\"" << std::endl;
     }
     else
       GeneralOpNameFile_str = GeneralOpNameFile;
