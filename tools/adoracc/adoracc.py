@@ -74,22 +74,25 @@ def prepare_ir_dirs(root: Path) -> dict[str, Path]:
         backup_dir = root / f"adora-cc-ir-backup-{timestamp}"
         ir_dir.rename(backup_dir)
 
-    kernels_dir = ir_dir / "0_kernels"
-    kernels_opt_dir = ir_dir / "1_kernels_opt"
-    dfgs_dir = ir_dir / "2_dfgs"
-    tempfiles_dir = ir_dir / "tempfiles"
-    temp_dfg_dir = tempfiles_dir / "DFGs"
+    frontend_dir    = ir_dir / "1_frontend"
+    normalize_dir   = ir_dir / "2_normalize"
+    kernels_dir     = ir_dir / "3_kernel-extract"
+    kernels_opt_dir = ir_dir / "4_kernel-opt"
+    schedule_dir    = ir_dir / "5_task-schedule"
+    dfgs_dir        = ir_dir / "6_dfg"
 
-    for directory in (kernels_dir, kernels_opt_dir, dfgs_dir, temp_dfg_dir):
+    for directory in (frontend_dir, normalize_dir, kernels_dir,
+                      kernels_opt_dir, schedule_dir, dfgs_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
     return {
         "ir": ir_dir,
+        "frontend": frontend_dir,
+        "normalize": normalize_dir,
         "kernels": kernels_dir,
         "kernels_opt": kernels_opt_dir,
+        "schedule": schedule_dir,
         "dfgs": dfgs_dir,
-        "tempfiles": tempfiles_dir,
-        "temp_dfg": temp_dfg_dir,
     }
 
 def strip_module_attrs(text: str) -> str:
@@ -144,21 +147,29 @@ def has_adora_kernel(text: str) -> bool:
     return "ADORA.kernel" in text
 
 
+def _append_to_log(log_dir: Path, label: str, content: str) -> None:
+    """Append a labelled block to pipeline.log."""
+    log_file = log_dir / PIPELINE_LOG_NAME
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"\n=== {label} ===\n{content}\n")
+
+
 def build_pipeline(
     input_path: Path,
     tools: dict[str, str],
     dirs: dict[str, Path],
     enable_unroll: bool,
     adg_path: Path | None,
-    output_path: Path | None,   # NEW
+    output_path: Path | None,
+    schedule_tasks: bool = True,   # NEW: run --adora-schedule-tasks after kernel_opt
 ) -> None:
     base_name = input_path.stem
     mlir_input = input_path
 
-    log_dir = dirs["tempfiles"]
+    log_dir = dirs["ir"]
 
     if input_path.suffix.upper() == ".C":
-        cgeist_output = dirs["ir"] / f"{base_name}.mlir"
+        cgeist_output = dirs["frontend"] / f"{base_name}.mlir"
         run_command(
             [
                 tools["cgeist"],
@@ -183,7 +194,7 @@ def build_pipeline(
     with open(mlir_input, "w", encoding="utf-8") as f:
         f.write(cleaned)
 
-    normalized = dirs["temp_dfg"] / f"{base_name}_normalized.mlir"
+    normalized = dirs["normalize"] / f"{base_name}_normalized.mlir"
     run_command(
         [
             tools["cgra-opt"],
@@ -241,39 +252,71 @@ def build_pipeline(
             raise ValueError("Unroll enabled but no ADG path provided.")
         kernel_opt_cmd.append(f"--adora-auto-unroll=cgra-adg={adg_path}")
     kernel_opt_cmd.extend([str(kernel_mlir), "-o", str(kernel_opt)])
-    # Run with cwd=dirs["tempfiles"] when unroll is enabled so AutoUnroll creates
-    # DesignSpace under adora-cc-ir/tempfiles/DesignSpace
+    # Run with cwd=dirs["ir"] when unroll is enabled so AutoUnroll creates
+    # DesignSpace under adora-cc-ir/DesignSpace
     run_command(
         kernel_opt_cmd,
-        cwd=dirs["tempfiles"] if enable_unroll else None,
+        cwd=dirs["ir"] if enable_unroll else None,
         log_dir=log_dir,
     )
 
-    # NEW: export kernel_opt result
-    with open(kernel_opt, "r", encoding="utf-8") as f:
-        kernel_opt_text = f.read()
+    # --- adora-schedule-tasks (default enabled) ---
+    kernel_sched = kernel_opt  # fallback if scheduling skipped or fails
+    if schedule_tasks:
+        sched_pre  = dirs["schedule"] / f"{base_name}.pre.mlir"
+        sched_post = dirs["schedule"] / f"{base_name}.post.mlir"
+        shutil.copy(kernel_opt, sched_pre)
+        sched_cmd = [
+            tools["cgra-opt"],
+            "--adora-schedule-tasks",
+            str(sched_pre),
+            "-o",
+            str(sched_post),
+        ]
+        print("+", " ".join(sched_cmd))
+        result = subprocess.run(sched_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            sched_failed = dirs["schedule"] / f"{base_name}.post.failed.mlir"
+            sched_post.rename(sched_failed) if sched_post.exists() else None
+            _append_to_log(log_dir, "schedule-tasks FAILED", result.stderr)
+            print(
+                f"[adoracc] Warning: adora-schedule-tasks failed on "
+                f"{kernel_opt.name}; proceeding without task scheduling.\n"
+                + result.stderr,
+                file=sys.stderr,
+            )
+        else:
+            _append_to_log(log_dir, "schedule-tasks OK", result.stdout)
+            kernel_sched = sched_post
+
+    # --- export final kernel IR ---
+    with open(kernel_sched, "r", encoding="utf-8") as f:
+        kernel_final_text = f.read()
 
     if output_path is None:
-        # no -o: print to stdout
-        sys.stdout.write(kernel_opt_text)
-        if not kernel_opt_text.endswith("\n"):
+        sys.stdout.write(kernel_final_text)
+        if not kernel_final_text.endswith("\n"):
             sys.stdout.write("\n")
     else:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
-            f.write(kernel_opt_text)
+            f.write(kernel_final_text)
 
+    # DFG-gen looks for lib/DFG/Documents/GeneralOpName.txt relative to CWD.
+    # The file lives in the adora-compiler source root, which is two levels
+    # above the build/bin/ directory containing cgra-opt.
+    adora_compiler_root = Path(tools["cgra-opt"]).parent.parent.parent
     run_command(
         [
             tools["cgra-opt"],
             "--adora-kernel-dfg-gen",
-            str(kernel_opt),
+            str(kernel_sched),
         ],
-        cwd=dirs["temp_dfg"],
+        cwd=adora_compiler_root,
         log_dir=log_dir,
     )
 
-    for dot_file in dirs["temp_dfg"].glob("*_CDFG.dot"):
+    for dot_file in dirs["normalize"].glob("*_CDFG.dot"):
         shutil.copy(dot_file, dirs["dfgs"] / dot_file.name)
 
 
@@ -307,6 +350,13 @@ def parse_args() -> argparse.Namespace:
         help="Write the optimized kernel MLIR (after kernel optimization) to this file. "
              "If not provided, print to stdout.",
     )
+    parser.add_argument(
+        "--disable-schedule-tasks",
+        dest="schedule_tasks",
+        action="store_false",
+        help="Disable the adora-schedule-tasks pass (default: enabled).",
+    )
+    parser.set_defaults(schedule_tasks=True)
     return parser.parse_args()
 
 
@@ -346,7 +396,8 @@ def main() -> int:
     dirs = prepare_ir_dirs(args.work_dir.resolve())
 
     try:
-        build_pipeline(input_path, tools, dirs, args.enable_unroll, adg_path, output_path)
+        build_pipeline(input_path, tools, dirs, args.enable_unroll, adg_path, output_path,
+                       args.schedule_tasks)
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -356,13 +407,19 @@ def main() -> int:
     except subprocess.CalledProcessError as exc:
         print(f"Command failed with exit code {exc.returncode}", file=sys.stderr)
         print(
-            f"See subprocess log: {dirs['tempfiles'] / PIPELINE_LOG_NAME}",
+            f"See subprocess log: {dirs['ir'] / PIPELINE_LOG_NAME}",
             file=sys.stderr,
         )
         return exc.returncode
 
-    print(f"Final optimal mlir file: {dirs['kernels_opt']}", file=sys.stderr)
-    print(f"CDFG output directory: {dirs['dfgs']}", file=sys.stderr)
+    print(f"[adoracc] Pipeline complete. Output directories:", file=sys.stderr)
+    print(f"  1_frontend    : {dirs['frontend']}", file=sys.stderr)
+    print(f"  2_normalize   : {dirs['normalize']}", file=sys.stderr)
+    print(f"  3_kernel-extract: {dirs['kernels']}", file=sys.stderr)
+    print(f"  4_kernel-opt  : {dirs['kernels_opt']}", file=sys.stderr)
+    print(f"  5_task-schedule: {dirs['schedule']}", file=sys.stderr)
+    print(f"  6_dfg         : {dirs['dfgs']}", file=sys.stderr)
+    print(f"  pipeline.log  : {dirs['ir'] / PIPELINE_LOG_NAME}", file=sys.stderr)
 
     return 0
 
