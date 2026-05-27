@@ -143,32 +143,46 @@ Three ready-to-run MLIR kernels live in [`experiment/example/`](experiment/examp
 | `attn/attn.mlir` | Scaled dot-product attention (Transformer) |
 | `ffn/ffn.mlir`   | Feed-forward network: FC1 + ReLU + FC2 (Transformer) |
 
-Run any of them directly with `adoracc`:
+Run any of them with `adoracc` (replace `/path/to/adora-compiler` with the actual root):
 
 ```bash
+ADORACC=/path/to/adora-compiler/build/bin/adoracc.py
+
 # MVT
-adoracc.py experiment/example/mvt/mvt.mlir \
+$ADORACC experiment/example/mvt/mvt.mlir \
   --work-dir /tmp/mvt_out -o /tmp/mvt_out/result.mlir
 
 # Attention
-adoracc.py experiment/example/attn/attn.mlir \
+$ADORACC experiment/example/attn/attn.mlir \
   --work-dir /tmp/attn_out -o /tmp/attn_out/result.mlir
 
 # FFN
-adoracc.py experiment/example/ffn/ffn.mlir \
+$ADORACC experiment/example/ffn/ffn.mlir \
   --work-dir /tmp/ffn_out -o /tmp/ffn_out/result.mlir
 ```
 
-Each `--work-dir` will contain a numbered output directory tree:
+After a successful run, the `--work-dir` will contain:
 
 ```
-<work-dir>/adora-cc-ir/
-  1_frontend/        2_normalize/        3_kernel-extract/
-  4_kernel-opt/      5_task-schedule/    6_dfg/
-  pipeline.log
+<work-dir>/
+├── result.mlir                        ← final scheduled MLIR
+└── adora-cc-ir/
+    ├── 1_frontend/                    ← cgeist output (populated for .c input only)
+    ├── 2_normalize/
+    │   ├── <name>_normalized.mlir
+    │   └── <name>_*_CDFG.dot         ← per-kernel DFG (intermediate)
+    ├── 3_kernel-extract/
+    │   └── <name>_kernel.mlir
+    ├── 4_kernel-opt/
+    │   └── <name>_opt.mlir
+    ├── 5_task-schedule/
+    │   ├── <name>.pre.mlir            ← input to scheduler
+    │   ├── <name>.post.mlir           ← scheduler output
+    │   └── <name>.token_graph.dot     ← task dependency graph
+    ├── 6_dfg/
+    │   └── <name>_*_CDFG.dot         ← final DFG (copied from 2_normalize)
+    └── pipeline.log                   ← full command log
 ```
-
-See [`experiment/example/README.md`](experiment/example/README.md) for more details.
 
 ---
 
