@@ -149,23 +149,20 @@ Run any of them with `adoracc` (replace `/path/to/adora-compiler` with the actua
 ADORACC=/path/to/adora-compiler/build/bin/adoracc.py
 
 # MVT
-$ADORACC experiment/example/mvt/mvt.mlir \
-  --work-dir out/mvt -o out/mvt/result.mlir
+$ADORACC experiment/example/mvt/mvt.mlir --work-dir . -o ./mvt_result.mlir
 
 # Attention
-$ADORACC experiment/example/attn/attn.mlir \
-  --work-dir out/attn -o out/attn/result.mlir
+$ADORACC experiment/example/attn/attn.mlir --work-dir . -o ./attn_result.mlir
 
 # FFN
-$ADORACC experiment/example/ffn/ffn.mlir \
-  --work-dir out/ffn -o out/ffn/result.mlir
+$ADORACC experiment/example/ffn/ffn.mlir --work-dir . -o ./ffn_result.mlir
 ```
 
-After a successful run (using `mvt` as example), the `--work-dir` will contain:
+After a successful run (using `mvt` as example), the current directory will contain:
 
 ```
-out/mvt/
-├── result.mlir                          ← final scheduled MLIR
+./
+├── mvt_result.mlir                      ← final scheduled MLIR
 └── adora-cc-ir/
     ├── 1_frontend/                      ← cgeist output (.c input only; empty for .mlir)
     ├── 2_kernel-opt/
