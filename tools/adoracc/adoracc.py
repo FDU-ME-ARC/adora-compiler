@@ -74,15 +74,16 @@ def prepare_ir_dirs(root: Path) -> dict[str, Path]:
         backup_dir = root / f"adora-cc-ir-backup-{timestamp}"
         ir_dir.rename(backup_dir)
 
+    temp_dir        = ir_dir / "temp"
     frontend_dir    = ir_dir / "1_frontend"
-    normalize_dir   = ir_dir / "2_normalize"
-    kernels_dir     = ir_dir / "3_kernel-extract"
-    kernels_opt_dir = ir_dir / "4_kernel-opt"
-    schedule_dir    = ir_dir / "5_task-schedule"
-    dfgs_dir        = ir_dir / "6_dfg"
+    kernels_opt_dir = ir_dir / "2_kernel-opt"
+    schedule_dir    = ir_dir / "3_task-schedule"
+    normalize_dir   = temp_dir / "normalize"
+    kernels_dir     = temp_dir / "kernel-extract"
+    dfgs_dir        = temp_dir / "dfg"
 
-    for directory in (frontend_dir, normalize_dir, kernels_dir,
-                      kernels_opt_dir, schedule_dir, dfgs_dir):
+    for directory in (frontend_dir, kernels_opt_dir, schedule_dir,
+                      normalize_dir, kernels_dir, dfgs_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
     return {
@@ -435,12 +436,12 @@ def main() -> int:
     sched_status = "enabled" if args.schedule_tasks else "disabled"
     print("", file=sys.stderr)
     print("[adoracc] Pipeline completed successfully.", file=sys.stderr)
-    print(f"  frontend IR    : {dirs['frontend']}", file=sys.stderr)
-    print(f"  normalize      : {dirs['normalize']}", file=sys.stderr)
-    print(f"  kernel-extract : {dirs['kernels']}", file=sys.stderr)
-    print(f"  kernel-opt     : {dirs['kernels_opt']}", file=sys.stderr)
-    print(f"  task-schedule  : {dirs['schedule']}  [{sched_status}]", file=sys.stderr)
-    print(f"  dfg            : {dirs['dfgs']}", file=sys.stderr)
+    print(f"  1_frontend     : {dirs['frontend']}", file=sys.stderr)
+    print(f"  2_kernel-opt   : {dirs['kernels_opt']}", file=sys.stderr)
+    print(f"  3_task-schedule: {dirs['schedule']}  [{sched_status}]", file=sys.stderr)
+    print(f"  temp/normalize : {dirs['normalize']}", file=sys.stderr)
+    print(f"  temp/kernel-extract: {dirs['kernels']}", file=sys.stderr)
+    print(f"  temp/dfg       : {dirs['dfgs']}", file=sys.stderr)
     print(f"  pipeline log   : {dirs['ir'] / PIPELINE_LOG_NAME}", file=sys.stderr)
 
     return 0

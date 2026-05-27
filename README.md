@@ -168,21 +168,22 @@ After a successful run (using `mvt` as example), the `--work-dir` will contain:
 ├── result.mlir                          ← final scheduled MLIR
 └── adora-cc-ir/
     ├── 1_frontend/                      ← cgeist output (.c input only; empty for .mlir)
-    ├── 2_normalize/
-    │   ├── mvt_normalized.mlir
-    │   ├── kernel_mvt_0_CDFG.dot        ← per-kernel DFG (intermediate)
-    │   └── kernel_mvt_1_CDFG.dot
-    ├── 3_kernel-extract/
-    │   └── mvt_kernel.mlir
-    ├── 4_kernel-opt/
+    ├── 2_kernel-opt/
     │   └── mvt_opt.mlir
-    ├── 5_task-schedule/
+    ├── 3_task-schedule/
     │   ├── mvt.pre.mlir                 ← input snapshot to scheduler
     │   ├── mvt.post.mlir                ← scheduler output
     │   └── mvt.token_graph.dot          ← task dependency graph
-    ├── 6_dfg/
-    │   ├── kernel_mvt_0_CDFG.dot        ← final DFG (copied from 2_normalize)
-    │   └── kernel_mvt_1_CDFG.dot
+    ├── temp/
+    │   ├── normalize/
+    │   │   ├── mvt_normalized.mlir
+    │   │   ├── kernel_mvt_0_CDFG.dot
+    │   │   └── kernel_mvt_1_CDFG.dot
+    │   ├── kernel-extract/
+    │   │   └── mvt_kernel.mlir
+    │   └── dfg/
+    │       ├── kernel_mvt_0_CDFG.dot    ← final DFG (copied from temp/normalize)
+    │       └── kernel_mvt_1_CDFG.dot
     └── pipeline.log
 ```
 
