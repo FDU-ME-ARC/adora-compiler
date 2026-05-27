@@ -6,3 +6,7 @@
 	path = frontend/adora-onnx-mlir
 	url = https://github.com/MIONkb/adora-onnx-mlir
 	branch = adora
+[submodule "frontend/Polygeist"]
+	path = frontend/Polygeist
+	url = https://github.com/MIONkb/Polygeist.git
+	branch = main

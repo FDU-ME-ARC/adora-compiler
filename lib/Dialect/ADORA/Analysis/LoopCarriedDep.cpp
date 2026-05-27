@@ -69,10 +69,16 @@ LoopCarriedDepResult mlir::ADORA::analysis::analyzeLoopCarriedDeps(
   int64_t step = getLoopStep(loopOp);
 
   // Collect all DMA ops in body (depth-1; nested loops aren't this loop's job).
+  // Skip rank-0 (scalar) accesses — they are scalar scratch temporaries, not
+  // block transfers, and should not generate loop-carried dep edges.
   SmallVector<Operation*> dmaOps;
   for (Operation &op : body->getOperations()) {
-    if (AccessRegion::isLoad(&op) || AccessRegion::isStore(&op))
-      dmaOps.push_back(&op);
+    if (!AccessRegion::isLoad(&op) && !AccessRegion::isStore(&op))
+      continue;
+    auto region = AccessRegion::fromOp(&op);
+    if (failed(region) || region->startExprs.empty())
+      continue; // failed parse or rank-0 destination → skip
+    dmaOps.push_back(&op);
   }
   if (dmaOps.size() < 1) return r;
 

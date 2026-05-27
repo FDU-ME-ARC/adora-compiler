@@ -46,6 +46,7 @@ def run_command(
     cwd: Path | None = None,
     log_dir: Path | None = None,
 ) -> float:
+    """Run a subprocess and return elapsed time in milliseconds."""
     print("+", " ".join(args))
     start = time.perf_counter()
     if log_dir is None:
@@ -79,22 +80,26 @@ def prepare_ir_dirs(root: Path) -> dict[str, Path]:
         backup_dir = root / f"adora-cc-ir-backup-{timestamp}"
         ir_dir.rename(backup_dir)
 
-    kernels_dir = ir_dir / "0_kernels"
-    kernels_opt_dir = ir_dir / "1_kernels_opt"
-    dfgs_dir = ir_dir / "2_dfgs"
-    tempfiles_dir = ir_dir / "tempfiles"
-    temp_dfg_dir = tempfiles_dir / "DFGs"
+    temp_dir        = ir_dir / "temp"
+    frontend_dir    = ir_dir / "1_frontend"
+    kernels_opt_dir = ir_dir / "2_kernel-opt"
+    schedule_dir    = ir_dir / "3_task-schedule"
+    normalize_dir   = temp_dir / "normalize"
+    kernels_dir     = temp_dir / "kernel-extract"
+    dfgs_dir        = temp_dir / "dfg"
 
-    for directory in (kernels_dir, kernels_opt_dir, dfgs_dir, temp_dfg_dir):
+    for directory in (frontend_dir, kernels_opt_dir, schedule_dir,
+                      normalize_dir, kernels_dir, dfgs_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
     return {
         "ir": ir_dir,
+        "frontend": frontend_dir,
+        "normalize": normalize_dir,
         "kernels": kernels_dir,
         "kernels_opt": kernels_opt_dir,
+        "schedule": schedule_dir,
         "dfgs": dfgs_dir,
-        "tempfiles": tempfiles_dir,
-        "temp_dfg": temp_dfg_dir,
     }
 
 def strip_module_attrs(text: str) -> str:
@@ -149,33 +154,45 @@ def has_adora_kernel(text: str) -> bool:
     return "ADORA.kernel" in text
 
 
+def _append_to_log(
+    log_path: Path,
+    cmd: list[str],
+    result: subprocess.CompletedProcess,
+) -> None:
+    """Append a schedule-tasks execution record to pipeline.log."""
+    with open(log_path, "a", encoding="utf-8") as logf:
+        logf.write("\n" + "=" * 72 + "\n")
+        logf.write(datetime.now().isoformat(timespec="seconds") + "\n")
+        logf.write("+ " + " ".join(cmd) + "\n")
+        logf.write("-" * 72 + "\n")
+        if result.stdout:
+            logf.write(result.stdout)
+        if result.stderr:
+            logf.write(result.stderr)
+
+
 def build_pipeline(
     input_path: Path,
     tools: dict[str, str],
     dirs: dict[str, Path],
     enable_unroll: bool,
     adg_path: Path | None,
-    output_path: Path | None,   # NEW
+    output_path: Path | None,
+    schedule_tasks: bool = True,
 ) -> dict[str, object]:
     base_name = input_path.stem
     mlir_input = input_path
+    stage_metrics_ms: dict[str, float] = {}
 
-    log_dir = dirs["tempfiles"]
-    stage_metrics_ms: dict[str, float] = {
-        "cgeist_ms": 0.0,
-        "normalize_ms": 0.0,
-        "kernel_extract_ms": 0.0,
-        "kernel_opt_ms": 0.0,
-        "dfg_gen_ms": 0.0,
-    }
+    log_dir = dirs["ir"]
 
     if input_path.suffix.upper() == ".C":
-        cgeist_output = dirs["ir"] / f"{base_name}.mlir"
+        cgeist_output = dirs["frontend"] / f"{base_name}.mlir"
         stage_metrics_ms["cgeist_ms"] = run_command(
             [
                 tools["cgeist"],
                 "-O2",
-                "--raise-scf-to-affine",  # Bug1 fix: lift scf.for→affine.for, elim index_cast
+                "--raise-scf-to-affine",
                 str(input_path),
                 "-S",
                 "-o",
@@ -196,7 +213,7 @@ def build_pipeline(
     with open(mlir_input, "w", encoding="utf-8") as f:
         f.write(cleaned)
 
-    normalized = dirs["temp_dfg"] / f"{base_name}_normalized.mlir"
+    normalized = dirs["normalize"] / f"{base_name}_normalized.mlir"
     stage_metrics_ms["normalize_ms"] = run_command(
         [
             tools["cgra-opt"],
@@ -204,8 +221,6 @@ def build_pipeline(
             "--affine-loop-normalize",
             "--affine-simplify-structures",
             "--normalize-memrefs",
-            # "--force-specialization",
-            # "--bufferization-bufferize",
             str(mlir_input),
             "-o",
             str(normalized),
@@ -234,7 +249,9 @@ def build_pipeline(
             str(kernel_mlir),
         ]
     )
-    stage_metrics_ms["kernel_extract_ms"] = run_command([tools["cgra-opt"]] + kernel_passes, log_dir=log_dir)
+    stage_metrics_ms["kernel_extract_ms"] = run_command(
+        [tools["cgra-opt"]] + kernel_passes, log_dir=log_dir
+    )
 
     kernel_opt = dirs["kernels_opt"] / f"{base_name}_opt.mlir"
     kernel_opt_cmd = [
@@ -254,50 +271,79 @@ def build_pipeline(
             raise ValueError("Unroll enabled but no ADG path provided.")
         kernel_opt_cmd.append(f"--adora-auto-unroll=cgra-adg={adg_path}")
     kernel_opt_cmd.extend([str(kernel_mlir), "-o", str(kernel_opt)])
-    # Run with cwd=dirs["tempfiles"] when unroll is enabled so AutoUnroll creates
-    # DesignSpace under adora-cc-ir/tempfiles/DesignSpace
     stage_metrics_ms["kernel_opt_ms"] = run_command(
         kernel_opt_cmd,
-        cwd=dirs["tempfiles"] if enable_unroll else None,
+        cwd=dirs["ir"] if enable_unroll else None,
         log_dir=log_dir,
     )
 
-    # NEW: export kernel_opt result
-    with open(kernel_opt, "r", encoding="utf-8") as f:
-        kernel_opt_text = f.read()
+    # --- adora-schedule-tasks (default enabled) ---
+    kernel_sched = kernel_opt  # fallback if scheduling skipped or fails
+    if schedule_tasks:
+        final_mlir = dirs["schedule"] / f"{base_name}.final.mlir"
+        sched_dot  = dirs["schedule"] / f"{base_name}.token_graph.dot"
+
+        sched_cmd = [
+            tools["cgra-opt"],
+            f"--adora-schedule-tasks=dump-token-graph={sched_dot}",
+            str(kernel_opt),
+            "-o",
+            str(final_mlir),
+        ]
+        print("+", " ".join(sched_cmd))
+        result = subprocess.run(sched_cmd, capture_output=True, text=True)
+        _append_to_log(dirs["ir"] / PIPELINE_LOG_NAME, sched_cmd, result)
+        if result.returncode != 0:
+            print(
+                f"[adoracc] Warning: adora-schedule-tasks failed on "
+                f"{kernel_opt.name}; proceeding without task scheduling.\n"
+                f"  See log: {dirs['ir'] / PIPELINE_LOG_NAME}\n"
+                + result.stderr,
+                file=sys.stderr,
+            )
+        else:
+            kernel_sched = final_mlir
+
+    # --- export final kernel IR ---
+    with open(kernel_sched, "r", encoding="utf-8") as f:
+        kernel_final_text = f.read()
 
     if output_path is None:
-        # no -o: print to stdout
-        sys.stdout.write(kernel_opt_text)
-        if not kernel_opt_text.endswith("\n"):
+        sys.stdout.write(kernel_final_text)
+        if not kernel_final_text.endswith("\n"):
             sys.stdout.write("\n")
     else:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
-            f.write(kernel_opt_text)
+            f.write(kernel_final_text)
+
+    # DFG-gen writes *_CDFG.dot files into CWD; run from dirs["normalize"] so
+    # the files land there and can be found by the glob below.
+    # Ensure GeneralOpNameFile is an absolute path so it resolves correctly
+    # regardless of CWD.
+    adora_compiler_root = Path(tools["cgra-opt"]).parent.parent.parent
+    if "GeneralOpNameFile" not in os.environ:
+        op_name_file = adora_compiler_root / "lib" / "DFG" / "Documents" / "GeneralOpName.txt"
+        os.environ["GeneralOpNameFile"] = str(op_name_file)
 
     stage_metrics_ms["dfg_gen_ms"] = run_command(
         [
             tools["cgra-opt"],
             "--adora-kernel-dfg-gen",
-            str(kernel_opt),
+            str(kernel_sched),
         ],
-        cwd=dirs["temp_dfg"],
+        cwd=dirs["normalize"],
         log_dir=log_dir,
     )
 
-    copied_dfgs: list[str] = []
-    for dot_file in dirs["temp_dfg"].glob("*_CDFG.dot"):
+    for dot_file in dirs["normalize"].glob("*_CDFG.dot"):
         shutil.copy(dot_file, dirs["dfgs"] / dot_file.name)
-        copied_dfgs.append(str((dirs["dfgs"] / dot_file.name).resolve()))
 
     total_ms = sum(stage_metrics_ms.values())
     return {
-        "mlir_input": str(Path(mlir_input).resolve()),
-        "normalized": str(normalized.resolve()),
-        "kernel_mlir": str(kernel_mlir.resolve()),
-        "kernel_opt": str(kernel_opt.resolve()),
-        "dfg_files": copied_dfgs,
+        "input_path": str(input_path),
+        "output_path": str(output_path) if output_path else None,
+        "ir_dir": str(dirs["ir"]),
         "total_ms": total_ms,
         **stage_metrics_ms,
     }
@@ -334,21 +380,28 @@ def parse_args() -> argparse.Namespace:
              "If not provided, print to stdout.",
     )
     parser.add_argument(
+        "--disable-schedule-tasks",
+        dest="schedule_tasks",
+        action="store_false",
+        help="Disable the adora-schedule-tasks pass (default: enabled).",
+    )
+    parser.set_defaults(schedule_tasks=True)
+    parser.add_argument(
         "--emit-trajectory",
         action="store_true",
-        help="Emit one schema-shaped trajectory episode for this compile invocation.",
+        help="Emit a trajectory JSON summary after the pipeline completes.",
     )
     parser.add_argument(
         "--trajectory-root",
         type=Path,
         default=None,
-        help="Root directory where data/episodes, data/observations, and data/metrics are written. Defaults to --work-dir.",
+        help="Root directory for trajectory output (default: --work-dir).",
     )
     parser.add_argument(
         "--trajectory-policy-id",
         type=str,
-        default="compiler_logged",
-        help="Policy identifier recorded in the emitted episode summary.",
+        default=None,
+        help="Policy ID tag written into the trajectory JSON.",
     )
     return parser.parse_args()
 
@@ -389,7 +442,9 @@ def main() -> int:
     dirs = prepare_ir_dirs(args.work_dir.resolve())
 
     try:
-        pipeline_metadata = build_pipeline(input_path, tools, dirs, args.enable_unroll, adg_path, output_path)
+        pipeline_metadata = build_pipeline(
+            input_path, tools, dirs, args.enable_unroll, adg_path, output_path,
+            args.schedule_tasks)
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -399,25 +454,34 @@ def main() -> int:
     except subprocess.CalledProcessError as exc:
         print(f"Command failed with exit code {exc.returncode}", file=sys.stderr)
         print(
-            f"See subprocess log: {dirs['tempfiles'] / PIPELINE_LOG_NAME}",
+            f"See pipeline log:   {dirs['ir'] / PIPELINE_LOG_NAME}",
             file=sys.stderr,
         )
         return exc.returncode
 
+    sched_status = "enabled" if args.schedule_tasks else "disabled"
+    print("", file=sys.stderr)
+    print("[adoracc] Pipeline completed successfully.", file=sys.stderr)
+    print(f"  1_frontend     : {dirs['frontend']}", file=sys.stderr)
+    print(f"  2_kernel-opt   : {dirs['kernels_opt']}", file=sys.stderr)
+    print(f"  3_task-schedule: {dirs['schedule']}  [{sched_status}]", file=sys.stderr)
+    print(f"  temp/normalize : {dirs['normalize']}", file=sys.stderr)
+    print(f"  temp/kernel-extract: {dirs['kernels']}", file=sys.stderr)
+    print(f"  temp/dfg       : {dirs['dfgs']}", file=sys.stderr)
+    print(f"  pipeline log   : {dirs['ir'] / PIPELINE_LOG_NAME}", file=sys.stderr)
+    print(f"  total time     : {pipeline_metadata.get('total_ms', 0):.1f} ms", file=sys.stderr)
+
     if args.emit_trajectory:
-        trajectory_root = args.trajectory_root.resolve() if args.trajectory_root else args.work_dir.resolve()
+        trajectory_root = (
+            args.trajectory_root.resolve() if args.trajectory_root
+            else args.work_dir.resolve()
+        )
         summary_path = emit_trajectory(
-            trajectory_root=trajectory_root,
-            input_path=input_path,
-            dirs=dirs,
-            adg_path=adg_path,
             pipeline_metadata=pipeline_metadata,
+            trajectory_root=trajectory_root,
             policy_id=args.trajectory_policy_id,
         )
-        print(f"Trajectory summary: {summary_path}", file=sys.stderr)
-
-    print(f"Final optimal mlir file: {dirs['kernels_opt']}", file=sys.stderr)
-    print(f"CDFG output directory: {dirs['dfgs']}", file=sys.stderr)
+        print(f"  trajectory     : {summary_path}", file=sys.stderr)
 
     return 0
 

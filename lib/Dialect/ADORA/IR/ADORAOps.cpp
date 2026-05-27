@@ -157,7 +157,9 @@ ParseResult DataBlockLoadOp::parse(OpAsmParser &parser, OperationState &result) 
   SmallVector<OpAsmParser::UnresolvedOperand, 1> mapOperands;
 
   SmallVector<OpAsmParser::UnresolvedOperand, 4> asyncDeps;
+  bool isAsync = false;
   if (succeeded(parser.parseOptionalKeyword("async"))) {
+    isAsync = true;
     if (parser.parseOperandList(asyncDeps, OpAsmParser::Delimiter::Square))
       return failure();
   }
@@ -183,14 +185,6 @@ ParseResult DataBlockLoadOp::parse(OpAsmParser &parser, OperationState &result) 
     result.addAttribute("strides", DenseI64ArrayAttr::get(builder.getContext(), ArrayRef<int64_t>(strides_vec)));
   }
 
-  Type asyncTokenType;
-  bool hasTok = false;
-  if (succeeded(parser.parseOptionalArrow())) {
-    if (parser.parseType(asyncTokenType) || !asyncTokenType.isa<ADORA::TokenType>())
-      return failure();
-    hasTok = true;
-  }
-
   if (parser.parseOptionalAttrDict(result.attributes) ||
       parser.resolveOperand(memrefInfo, memrefType, result.operands) ||
       parser.resolveOperands(mapOperands, indexTy, result.operands) ||
@@ -202,12 +196,16 @@ ParseResult DataBlockLoadOp::parse(OpAsmParser &parser, OperationState &result) 
   result.addAttribute("operandSegmentSizes",
       builder.getDenseI32ArrayAttr(
           {1, (int32_t)mapOperands.size(), (int32_t)asyncDeps.size()}));
-  if (hasTok) result.addTypes(asyncTokenType);
+  // async keyword presence implies a token result (GPU-dialect style: no explicit "-> !ADORA.token")
+  if (isAsync)
+    result.addTypes(ADORA::TokenType::get(parser.getContext()));
   return success();
 }
 
 void DataBlockLoadOp::print(OpAsmPrinter &p) {
-  if (!getAsyncDependencies().empty()) {
+  // Always print "async [...]" when a token result exists so the parser
+  // can reconstruct the correct number of results (GPU-dialect style).
+  if (getAsyncToken()) {
     p << " async [";
     llvm::interleaveComma(getAsyncDependencies(), p);
     p << "]";
@@ -230,9 +228,7 @@ void DataBlockLoadOp::print(OpAsmPrinter &p) {
   // p << "{\""  << getKernelName() << "\"}";
   p.printOptionalAttrDict((*this)->getAttrs(),
                           /*elidedAttrs=*/{getMapAttrStr(), getStridesAttrStr(), "operandSegmentSizes"});
-
-  if (getAsyncToken())
-    p << " -> " << getAsyncToken().getType();
+  // async token type is implicit from the "async" keyword (GPU-dialect style)
 }
 
 // Returns true if 'value' is a valid index to an affine operation (e.g.
@@ -490,7 +486,9 @@ ParseResult DataBlockStoreOp::parse(OpAsmParser &parser, OperationState &result)
   SmallVector<OpAsmParser::UnresolvedOperand, 1> mapOperands;
 
   SmallVector<OpAsmParser::UnresolvedOperand, 4> asyncDeps;
+  bool isAsync = false;
   if (succeeded(parser.parseOptionalKeyword("async"))) {
+    isAsync = true;
     if (parser.parseOperandList(asyncDeps, OpAsmParser::Delimiter::Square))
       return failure();
   }
@@ -520,14 +518,6 @@ ParseResult DataBlockStoreOp::parse(OpAsmParser &parser, OperationState &result)
     result.addAttribute("strides", DenseI64ArrayAttr::get(builder.getContext(), ArrayRef<int64_t>(strides_vec)));
   }
 
-  Type asyncTokenType;
-  bool hasTok = false;
-  if (succeeded(parser.parseOptionalArrow())) {
-    if (parser.parseType(asyncTokenType) || !asyncTokenType.isa<ADORA::TokenType>())
-      return failure();
-    hasTok = true;
-  }
-
   if (parser.parseOptionalAttrDict(result.attributes) ||
       parser.resolveOperand(sourceInfo, sourceType, result.operands) ||
       parser.resolveOperand(targetInfo, targetType, result.operands) ||
@@ -539,13 +529,16 @@ ParseResult DataBlockStoreOp::parse(OpAsmParser &parser, OperationState &result)
   result.addAttribute("operandSegmentSizes",
       builder.getDenseI32ArrayAttr(
           {1, 1, (int32_t)mapOperands.size(), (int32_t)asyncDeps.size()}));
-  if (hasTok) result.addTypes(asyncTokenType);
+  // async keyword presence implies a token result (GPU-dialect style)
+  if (isAsync)
+    result.addTypes(ADORA::TokenType::get(parser.getContext()));
   return success();
 }
 
 
 void DataBlockStoreOp::print(OpAsmPrinter &p) {
-  if (!getAsyncDependencies().empty()) {
+  // Always print "async [...]" when a token result exists (GPU-dialect style).
+  if (getAsyncToken()) {
     p << " async [";
     llvm::interleaveComma(getAsyncDependencies(), p);
     p << "]";
@@ -571,9 +564,7 @@ void DataBlockStoreOp::print(OpAsmPrinter &p) {
   // p << "{\""  << getKernelName() << "\"}";
   p.printOptionalAttrDict((*this)->getAttrs(),
                           /*elidedAttrs=*/{getMapAttrStr(), getStridesAttrStr(), "operandSegmentSizes"});
-
-  if (getAsyncToken())
-    p << " -> " << getAsyncToken().getType();
+  // async token type is implicit from the "async" keyword (GPU-dialect style)
 }
 
 

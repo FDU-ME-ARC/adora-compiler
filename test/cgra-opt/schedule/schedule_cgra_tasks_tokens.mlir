@@ -11,7 +11,7 @@
 
 // TOKEN: adora.scheduled
 // TOKEN: adora.dep_summary
-// TOKEN: !ADORA.token
+// TOKEN: ADORA.BlockLoad async
 
 // NOTOKEN-NOT: !ADORA.token
 // NOTOKEN: adora.scheduled

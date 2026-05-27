@@ -6,6 +6,8 @@
 
 #include "ADORA/Dialect/ADORA/Analysis/AccessRegion.h"
 #include "ADORA/Dialect/ADORA/IR/ADORA.h"
+#include "mlir/Analysis/FlatLinearValueConstraints.h"
+#include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/DenseMap.h"
@@ -132,25 +134,66 @@ static bool tryGetConstantBox(ArrayRef<AffineExpr> startExprs,
 }
 
 // ---------------------------------------------------------------------------
-// overlapsWith — Conservative box overlap on same memref
+// overlapsWith — Exact overlap check via Presburger arithmetic
 // ---------------------------------------------------------------------------
 bool AccessRegion::overlapsWith(const AccessRegion &other) const {
   if (memref != other.memref) return false;
-  if (startExprs.size() != other.startExprs.size()) return true; // rank mismatch → assume overlap
-  
+  if (startExprs.size() != other.startExprs.size()) return true;
+
   SmallVector<Interval> boxA, boxB;
   bool okA = tryGetConstantBox(startExprs, sizes, boxA);
   bool okB = tryGetConstantBox(other.startExprs, other.sizes, boxB);
-  
-  // If either side can't fold to constant boxes, assume overlap (conservative).
-  if (!okA || !okB) return true;
-  
-  // Both are constant boxes — check per-dimension overlap.
-  for (size_t d = 0; d < boxA.size(); ++d) {
-    if (!intervalsOverlap(boxA[d], boxB[d]))
-      return false; // Disjoint in this dimension → no overlap
+
+  if (okA && okB) {
+    // Both sides are constant boxes — exact per-dimension check.
+    for (size_t d = 0; d < boxA.size(); ++d)
+      if (!intervalsOverlap(boxA[d], boxB[d]))
+        return false;
+    return true;
   }
-  return true; // Overlaps in all dimensions
+
+  // Symbolic case: build a Presburger constraint system to check whether any
+  // integer element index can simultaneously lie in region A and region B.
+  //
+  // Both regions must share the same operands (guaranteed by shiftedByIV).
+  if (operands != other.operands)
+    return true; // mismatched operand sets → conservative
+
+  unsigned N = operands.size(); // number of IV/symbol dim variables
+  unsigned R = startExprs.size(); // memref rank
+  if (R == 0) return true;
+
+  // Variable layout: [op_0 .. op_{N-1},  i_0 .. i_{R-1}]
+  // (N dims for operands, R dims for element indices, 0 symbols)
+  FlatLinearConstraints cs(/*numDims=*/N + R, /*numSymbols=*/0);
+
+  MLIRContext *ctx = startExprs[0].getContext();
+
+  for (unsigned d = 0; d < R; ++d) {
+    if (d >= sizes.size() || sizes[d] == ShapedType::kDynamic ||
+        d >= other.sizes.size() || other.sizes[d] == ShapedType::kDynamic)
+      return true; // unknown tile size → conservative
+
+    int64_t sA = sizes[d], sB = other.sizes[d];
+    AffineExpr aS = startExprs[d], bS = other.startExprs[d];
+
+    // Region A:  aS <= i[d] <= aS + sA - 1
+    // Region B:  bS <= i[d] <= bS + sB - 1
+    // Use addBound(LB/UB, pos=N+d, AffineMap with N+R dims).
+    if (failed(cs.addBound(presburger::BoundType::LB, N + d,
+                           AffineMap::get(N + R, 0, {aS}, ctx), true)) ||
+        failed(cs.addBound(presburger::BoundType::UB, N + d,
+                           AffineMap::get(N + R, 0, {aS + (sA - 1)}, ctx), true)) ||
+        failed(cs.addBound(presburger::BoundType::LB, N + d,
+                           AffineMap::get(N + R, 0, {bS}, ctx), true)) ||
+        failed(cs.addBound(presburger::BoundType::UB, N + d,
+                           AffineMap::get(N + R, 0, {bS + (sB - 1)}, ctx), true)))
+      return true; // addBound failed → conservative
+
+  }
+
+  // If the integer polyhedron is empty, no element can be in both regions.
+  return !cs.isIntegerEmpty();
 }
 
 bool AccessRegion::sameAs(const AccessRegion &other) const {

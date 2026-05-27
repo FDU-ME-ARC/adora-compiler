@@ -19,14 +19,14 @@
 // RUN:   | FileCheck %s
 
 // kernel_3mm_0: root loads produce tokens, kernel waits, store waits kernel.
-// CHECK: ADORA.BlockLoad %arg1 {{.*}} -> !ADORA.token
-// CHECK: ADORA.BlockLoad %arg2 {{.*}} -> !ADORA.token
+// CHECK: ADORA.BlockLoad async {{.*}} %arg1
+// CHECK: ADORA.BlockLoad async {{.*}} %arg2
 // CHECK: ADORA.kernel async [%{{.*}}, %{{.*}}]
 // CHECK: ADORA.BlockStore async [%{{.*}}] {{.*}}, %arg0
 
 // kernel_3mm_1: same structure, independent.
-// CHECK: ADORA.BlockLoad %arg4 {{.*}} -> !ADORA.token
-// CHECK: ADORA.BlockLoad %arg5 {{.*}} -> !ADORA.token
+// CHECK: ADORA.BlockLoad async {{.*}} %arg4
+// CHECK: ADORA.BlockLoad async {{.*}} %arg5
 // CHECK: ADORA.kernel async [%{{.*}}, %{{.*}}]
 // CHECK: ADORA.BlockStore async [%{{.*}}] {{.*}}, %arg3
 
@@ -36,7 +36,7 @@
 // CHECK-NOT: ADORA.BlockLoad %arg3
 // kernel_3mm_2's kernel still executes (with on-chip buffers as inputs).
 // CHECK: ADORA.kernel async
-// CHECK: ADORA.BlockStore async [%{{.*}}] {{.*}}, %arg6
+// CHECK: ADORA.BlockStore {{.*}}, %arg6
 
 module {
   func.func @kernel_3mm(%arg0: memref<?x18xf32>, %arg1: memref<?x20xf32>,

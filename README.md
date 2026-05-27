@@ -133,6 +133,61 @@ You can find the Polygeist repository here:
 
 # Run an Example
 
+## Quick Start — three built-in examples
+
+Three ready-to-run MLIR kernels live in [`experiment/example/`](experiment/example/):
+
+| Kernel | Description |
+|--------|-------------|
+| `mvt/mvt.mlir`   | Matrix-Vector Transpose (PolyBench) |
+| `attn/attn.mlir` | Scaled dot-product attention (Transformer) |
+| `ffn/ffn.mlir`   | Feed-forward network: FC1 + ReLU + FC2 (Transformer) |
+
+Run any of them with `adoracc` (replace `/path/to/adora-compiler` with the actual root):
+
+```bash
+ADORACC=/path/to/adora-compiler/build/bin/adoracc.py
+
+# MVT
+$ADORACC experiment/example/mvt/mvt.mlir --work-dir . -o ./mvt_result.mlir
+
+# Attention
+$ADORACC experiment/example/attn/attn.mlir --work-dir . -o ./attn_result.mlir
+
+# FFN
+$ADORACC experiment/example/ffn/ffn.mlir --work-dir . -o ./ffn_result.mlir
+```
+
+After a successful run (using `mvt` as example), the current directory will contain:
+
+```
+./
+├── mvt_result.mlir                      ← final scheduled MLIR
+└── adora-cc-ir/
+    ├── 1_frontend/                      ← cgeist output (.c input only; empty for .mlir)
+    ├── 2_kernel-opt/
+    │   └── mvt_opt.mlir
+    ├── 3_task-schedule/
+    │   ├── mvt.pre.mlir                 ← input snapshot to scheduler
+    │   ├── mvt.final.mlir               ← scheduler output
+    │   └── mvt.token_graph.dot          ← task dependency graph
+    ├── temp/
+    │   ├── normalize/
+    │   │   ├── mvt_normalized.mlir
+    │   │   ├── kernel_mvt_0_CDFG.dot
+    │   │   └── kernel_mvt_1_CDFG.dot
+    │   ├── kernel-extract/
+    │   │   └── mvt_kernel.mlir
+    │   └── dfg/
+    │       ├── kernel_mvt_0_CDFG.dot    ← final DFG (copied from temp/normalize)
+    │       └── kernel_mvt_1_CDFG.dot
+    └── pipeline.log
+```
+
+---
+
+## Full C-to-Executable Flow
+
 You can run the full C compilation flow (C → adoracc → cgra-mapper) by following **[build_tools/C_Compiler_instruction.md](build_tools/C_Compiler_instruction.md)**.
 
 The `experiment` directory contains pre-transformed MLIR files ready to use.

@@ -13,4 +13,5 @@ add_mlir_dialect_library(MLIRADORAAnalysis
   MLIRAffineDialect
   MLIRSCFDialect
   MLIRADORAOps
+  MLIRAnalysis
   )
