@@ -74,12 +74,13 @@ def prepare_ir_dirs(root: Path) -> dict[str, Path]:
         backup_dir = root / f"adora-cc-ir-backup-{timestamp}"
         ir_dir.rename(backup_dir)
 
+    temp_dir        = ir_dir / "temp"
     frontend_dir    = ir_dir / "1_frontend"
-    normalize_dir   = ir_dir / "2_normalize"
-    kernels_dir     = ir_dir / "3_kernel-extract"
+    normalize_dir   = temp_dir / "2_normalize"
+    kernels_dir     = temp_dir / "3_kernel-extract"
     kernels_opt_dir = ir_dir / "4_kernel-opt"
     schedule_dir    = ir_dir / "5_task-schedule"
-    dfgs_dir        = ir_dir / "6_dfg"
+    dfgs_dir        = temp_dir / "6_dfg"
 
     for directory in (frontend_dir, normalize_dir, kernels_dir,
                       kernels_opt_dir, schedule_dir, dfgs_dir):
