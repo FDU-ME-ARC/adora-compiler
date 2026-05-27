@@ -74,17 +74,19 @@ def prepare_ir_dirs(root: Path) -> dict[str, Path]:
         backup_dir = root / f"adora-cc-ir-backup-{timestamp}"
         ir_dir.rename(backup_dir)
 
-    temp_dir        = ir_dir / "temp"
-    frontend_dir    = ir_dir / "1_frontend"
-    normalize_dir   = temp_dir / "2_normalize"
-    kernels_dir     = temp_dir / "3_kernel-extract"
-    kernels_opt_dir = ir_dir / "4_kernel-opt"
-    schedule_dir    = ir_dir / "5_task-schedule"
-    dfgs_dir        = temp_dir / "6_dfg"
+    temp_dir         = ir_dir / "temp"
+    frontend_dir     = ir_dir / "1_frontend"
+    kernels_opt_dir  = ir_dir / "2_kernel-opt"
+    schedule_dir     = ir_dir / "3_task-schedule"   # created on demand
+    normalize_dir    = temp_dir / "normalize"
+    kernels_dir      = temp_dir / "kernel-extract"
+    dfgs_dir         = temp_dir / "dfg"
+    token_graph_dir  = temp_dir / "token-graph"
 
-    for directory in (frontend_dir, normalize_dir, kernels_dir,
-                      kernels_opt_dir, schedule_dir, dfgs_dir):
+    for directory in (frontend_dir, kernels_opt_dir,
+                      normalize_dir, kernels_dir, dfgs_dir, token_graph_dir):
         directory.mkdir(parents=True, exist_ok=True)
+    # schedule_dir is created lazily in build_pipeline when schedule_tasks=True
 
     return {
         "ir": ir_dir,
@@ -94,6 +96,7 @@ def prepare_ir_dirs(root: Path) -> dict[str, Path]:
         "kernels_opt": kernels_opt_dir,
         "schedule": schedule_dir,
         "dfgs": dfgs_dir,
+        "token_graph": token_graph_dir,
     }
 
 def strip_module_attrs(text: str) -> str:
@@ -264,21 +267,20 @@ def build_pipeline(
     # --- adora-schedule-tasks (default enabled) ---
     kernel_sched = kernel_opt  # fallback if scheduling skipped or fails
     if schedule_tasks:
-        sched_pre  = dirs["schedule"] / f"{base_name}.pre.mlir"
-        sched_post = dirs["schedule"] / f"{base_name}.post.mlir"
-        shutil.copy(kernel_opt, sched_pre)
-        sched_dot = dirs["schedule"] / f"{base_name}.token_graph.dot"
+        dirs["schedule"].mkdir(parents=True, exist_ok=True)
+        sched_post = dirs["schedule"] / f"{base_name}.final.mlir"
+        sched_dot  = dirs["token_graph"] / f"{base_name}.token_graph.dot"
         sched_cmd = [
             tools["cgra-opt"],
             f"--adora-schedule-tasks=dump-token-graph={sched_dot}",
-            str(sched_pre),
+            str(kernel_opt),
             "-o",
             str(sched_post),
         ]
         print("+", " ".join(sched_cmd))
         result = subprocess.run(sched_cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            sched_failed = dirs["schedule"] / f"{base_name}.post.failed.mlir"
+            sched_failed = dirs["schedule"] / f"{base_name}.final.failed.mlir"
             sched_post.rename(sched_failed) if sched_post.exists() else None
             _append_to_log(log_dir, "schedule-tasks FAILED", result.stderr)
             print(
@@ -419,14 +421,12 @@ def main() -> int:
         )
         return exc.returncode
 
-    print(f"[adoracc] Pipeline complete. Output directories:", file=sys.stderr)
-    print(f"  1_frontend    : {dirs['frontend']}", file=sys.stderr)
-    print(f"  2_normalize   : {dirs['normalize']}", file=sys.stderr)
-    print(f"  3_kernel-extract: {dirs['kernels']}", file=sys.stderr)
-    print(f"  4_kernel-opt  : {dirs['kernels_opt']}", file=sys.stderr)
-    print(f"  5_task-schedule: {dirs['schedule']}", file=sys.stderr)
-    print(f"  6_dfg         : {dirs['dfgs']}", file=sys.stderr)
-    print(f"  pipeline.log  : {dirs['ir'] / PIPELINE_LOG_NAME}", file=sys.stderr)
+    print(f"[adoracc] Pipeline complete:", file=sys.stderr)
+    print(f"  1_frontend     : {dirs['frontend']}", file=sys.stderr)
+    print(f"  2_kernel-opt   : {dirs['kernels_opt']}", file=sys.stderr)
+    if dirs["schedule"].exists():
+        print(f"  3_task-schedule: {dirs['schedule']}", file=sys.stderr)
+    print(f"  pipeline.log   : {dirs['ir'] / PIPELINE_LOG_NAME}", file=sys.stderr)
 
     return 0
 
