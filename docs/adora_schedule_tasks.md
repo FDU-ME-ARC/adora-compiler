@@ -139,7 +139,7 @@ bash e2e_pipeline.sh      # 4 个例子完整 4-pass pipeline 验证
 
 | # | 问题 | 归属 |
 |---|------|------|
-| 1 | Loop-carried token yield 未实现 | 本 pass（PR6） |
+| ~~1~~ | ~~Loop-carried token yield 未实现~~ → **已实现**（见下方 2026-05-29 更新） | 本 pass（PR6） |
 | 2 | Load-after-Load 消除未实现 | 本 pass |
 | 3 | `AccessSameDataBlock` 对动态 shape 保守返回 true | 本 pass |
 | 4 | `adora-adjust-kernel-mem-footprint` SIGSEGV | **独立 bug**，与本 pass 无关（在 schedule-tasks 之前运行） |
@@ -153,8 +153,8 @@ bash e2e_pipeline.sh      # 4 个例子完整 4-pass pipeline 验证
 - Pass 注册：`include/ADORA/Dialect/ADORA/Transforms/Passes.td`
 - 测试：`test/cgra-opt/schedule/`
 - Experiment：`experiment/taskschedule/`
-- PR 历史：`docs/pr4_review.md`
-- 设计文档：`docs/async_token_design.md`
+- PR 历史：`docs/archive/pr4_review.md`
+- 设计文档：`docs/archive/async_token_design.md`
 
 ---
 
@@ -176,18 +176,26 @@ bash e2e_pipeline.sh      # 4 个例子完整 4-pass pipeline 验证
    - Legalize `ADORA::ADORADialect`（保留 `DataBlockLoadOp/DataBlockStoreOp/LocalMemAllocOp`）
    - 仅对 `affine.load/affine.store` 做 lowering（用 AffineLoadOpLowering/AffineStoreOpLowering，通过 `expandAffineMap`）
 
-#### emit 中 scf.for 支持计划（待实现）
-| 文件 | 改动内容 |
-| --- | --- |
-| `mapper/include/emit/OpVisitor.h` | 在 `TypeSwitch::Case` 列表中取消注释 `scf::ForOp` 和 `scf::YieldOp`，并加上 scf 头文件 include（`#include "mlir/Dialect/SCF/IR/SCF.h"`） |
-| `mapper/src/emit/EmitCGRACall.cpp` | 实现 `visitOp(scf::ForOp op)` 和 `visitOp(scf::YieldOp op)`，模仿 `affine::AffineForOp` 的实现但直接用 lb/ub/step value 而不是 affine map |
-| `mapper/src/emit/EmitPytest.cpp` | 实现 `visitOp(scf::ForOp op)` 和 `visitOp(scf::YieldOp op)`，模仿 `affine::AffineForOp` 的实现但直接用 `range(lb, ub, step)` 和 lb/ub/step value lookup |
-| `mapper/src/emit/EmitVitisSDK.cpp` | 实现 `visitOp(scf::ForOp op)` 和 `visitOp(scf::YieldOp op)`，模仿 `affine::AffineForOp` 的实现 |
+#### emit 中 scf.for 支持（已实现）
+| 文件 | 改动内容 | 位置 |
+| --- | --- | --- |
+| `mapper/include/emit/OpVisitor.h` | 在 `TypeSwitch::Case` 列表中取消注释 `scf::ForOp` 和 `scf::YieldOp`，并注册对应 `HANDLE` 宏 | `OpVisitor.h:45,48,145,150` |
+| `mapper/src/emit/EmitCGRACall.cpp` | 实现 `visitOp(scf::ForOp op)` 和 `visitOp(scf::YieldOp op)`，模仿 `affine::AffineForOp` 但直接用 lb/ub/step value（取不到名字时回退读 `arith::ConstantIndexOp`）而非 affine map | `EmitCGRACall.cpp:687,740` |
+| `mapper/src/emit/EmitPytest.cpp` | 实现 `visitOp(scf::ForOp op)` 和 `visitOp(scf::YieldOp op)`，用 `range(lb, ub, step)` 和 lb/ub/step value lookup，并支持 `EmitSkip` 属性跳过 | `EmitPytest.cpp:1218,1281` |
+| `mapper/src/emit/EmitVitisSDK.cpp` | 实现 `visitOp(scf::ForOp op)` 和 `visitOp(scf::YieldOp op)`，模仿 `affine::AffineForOp` 的实现 | `EmitVitisSDK.cpp:696,749` |
 
-#### PR6 预留：loop-carried token yield 框架
-当前转换仅处理无 `iter_args` 的外循环，为 PR6 预留空间：
-- 后续 PR6 中会实现：在 `affineForOuterToSCF` 中检测 loop-carried load/store pair（已由 `findLoopCarriedStoreLoadPair` 检测），然后在 new `scf.for` 中添加 `!ADORA.token` 的 iter_args，在 body yield 时传递 token。
-- 现在的 `[PR6-TODO]` 诊断保留不变。
+#### PR6：loop-carried token yield（已实现）
+原计划在 PR6 实现 loop-carried token threading，现已完成。`affine.for` 会带上 `!ADORA.token` 的 `iter_args`，并在 `affine.yield` 时传递 token；`[PR6-TODO]` 诊断已不再输出。
+
+验证（`experiment/taskschedule/05_loop_carried`，`--adora-schedule-tasks` 输出）：
+
+```mlir
+%3:3 = affine.for %arg1 = 0 to 4 iter_args(%arg2 = %0, %arg3 = %1, %arg4 = %2)
+       -> (!ADORA.token, !ADORA.token, !ADORA.token) {
+  ...
+  affine.yield %asyncToken, %6, %6 : !ADORA.token, !ADORA.token, !ADORA.token
+}
+```
 
 #### 测试
 - `test/cgra-opt/schedule/schedule_gemm_tiled.mlir` 通过 `--adora-schedule-tasks` 正常运行，输出有 scf.for（外层）和 affine.for（内层）的混合结构

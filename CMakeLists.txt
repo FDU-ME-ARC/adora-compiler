@@ -66,6 +66,7 @@ install(
     MLIRADORAOps MLIRADORAKernelOp 
     MLIRADORAAnalysis MLIRADORALowerings MLIRADORATransforms
     MLIRADORATransformsUtility MLIRADORALoopTransforms
+    MLIRADORATaskPipeline
     MLIRADORAKernelExtract GeneralCDFGGen
     ADORATensorInterface ADORATensorOps ADORATensorLower
     ADORATensorTransforms ADORATensorUtility ADORATensorOpGemmLower ADORATensorOpConvLower

@@ -13,7 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ADORA/Dialect/ADORA/IR/ADORA.h"
-#include "ADORA/Dialect/ADORA/Transforms/DependencyAnalysis.h"
+#include "ADORA/Dialect/ADORA/Analysis/DependencyAnalysis.h"
 #include "ADORA/Dialect/ADORA/Transforms/Passes.h"
 #include "ADORA/Dialect/ADORA/Utility/Utility.h"
 #include "./PassDetail.h"

@@ -4,7 +4,7 @@ module attributes {adora.scheduled} {
     %1 = ADORA.event.create -> !ADORA.token
     %2 = ADORA.event.create -> !ADORA.token
     %3:3 = affine.for %arg1 = 0 to 4 iter_args(%arg2 = %0, %arg3 = %1, %arg4 = %2) -> (!ADORA.token, !ADORA.token, !ADORA.token) {
-      %result, %asyncToken = ADORA.BlockLoad async [%arg3] %arg0 [0] : memref<16xf32> -> memref<16xf32>  {Id = "0", KernelName = "loop_carried_min_kernel"} -> !ADORA.token
+      %result, %asyncToken = ADORA.BlockLoad async [%arg3] %arg0 [0] : memref<16xf32> -> memref<16xf32>  {Id = "0", KernelName = "loop_carried_min_kernel"}
       %4 = ADORA.LocalMemAlloc memref<16xf32>  {Id = "1", KernelName = "loop_carried_min_kernel"}
       %5 = ADORA.kernel async [%asyncToken] {
         affine.for %arg5 = 0 to 16 {
@@ -13,7 +13,7 @@ module attributes {adora.scheduled} {
         }
         ADORA.terminator
       } {KernelName = "loop_carried_min_kernel"}
-      %6 = ADORA.BlockStore async [%5, %asyncToken, %arg2, %arg4] %4, %arg0 [0] : memref<16xf32> -> memref<16xf32>  {Id = "2", KernelName = "loop_carried_min_kernel"} -> !ADORA.token
+      %6 = ADORA.BlockStore async [%5, %asyncToken, %arg2, %arg4] %4, %arg0 [0] : memref<16xf32> -> memref<16xf32>  {Id = "2", KernelName = "loop_carried_min_kernel"}
       affine.yield %asyncToken, %6, %6 : !ADORA.token, !ADORA.token, !ADORA.token
     }
     return

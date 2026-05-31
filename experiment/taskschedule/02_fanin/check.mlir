@@ -1,10 +1,8 @@
 // FileCheck patterns for 02_fanin
-// Both loads produce tokens (independent → parallel DMA possible)
-// CHECK: %{{.*}}, %{{.*}} = ADORA.BlockLoad %arg0 {{.*}} -> !ADORA.token
-// CHECK: %{{.*}}, %{{.*}} = ADORA.BlockLoad %arg1 {{.*}} -> !ADORA.token
-// kernel consumes both tokens (fan-in)
+// Both loads are independent (no RAW pred) → empty async list → parallel DMA possible
+// CHECK: %{{.*}}, %{{.*}} = ADORA.BlockLoad async [] %arg0 {{.*}}{Id = "0"
+// CHECK: %{{.*}}, %{{.*}} = ADORA.BlockLoad async [] %arg1 {{.*}}{Id = "1"
+// kernel consumes both load tokens (fan-in)
 // CHECK: %{{.*}} = ADORA.kernel async [%{{.*}}, %{{.*}}]
-// BlockStore consumes kernel token
-// CHECK: ADORA.BlockStore async [%{{.*}}]
-// No async BlockLoad (no RAW pred)
-// CHECK-NOT: ADORA.BlockLoad async
+// store writes back the kernel result
+// CHECK: ADORA.BlockStore %{{.*}}, %arg2

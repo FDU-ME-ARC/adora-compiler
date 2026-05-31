@@ -2,6 +2,7 @@ add_mlir_dialect_library(MLIRADORAAnalysis
   AccessRegion.cpp
   LoopCarriedDep.cpp
   DepSummaryView.cpp
+  DependencyAnalysis.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJ_INCLUDE_DIR}/ADORA/Dialect/ADORA/Analysis

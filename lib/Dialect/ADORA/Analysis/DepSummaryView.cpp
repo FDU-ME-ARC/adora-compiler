@@ -1,7 +1,7 @@
 //===----------------------------------------------------------------------===//
 // DepSummaryView.cpp — parser impl for `adora.dep_summary`.
 //
-// Moved from lib/Dialect/ADORA/Transforms/TaskGraph/DepSummaryView.cpp to the
+// Moved from lib/Dialect/ADORA/Transforms/TaskPipeline/TaskGraph/DepSummaryView.cpp to the
 // Analysis library (PR6.1). No behavioural change.
 //===----------------------------------------------------------------------===//
 #include "ADORA/Dialect/ADORA/Analysis/DepSummaryView.h"

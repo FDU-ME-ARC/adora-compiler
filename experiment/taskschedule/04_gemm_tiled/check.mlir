@@ -7,5 +7,5 @@
 // CHECK-SAME: !ADORA.token
 // CHECK: ADORA.BlockLoad async
 // CHECK: ADORA.kernel async
-// CHECK: ADORA.BlockStore async {{.*}}-> !ADORA.token
-// CHECK: affine.yield {{.*}} : !ADORA.token
+// CHECK: %{{.*}} = ADORA.BlockStore async [%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}] %{{.*}}, %arg2
+// CHECK: affine.yield {{.*}} : !ADORA.token, !ADORA.token, !ADORA.token

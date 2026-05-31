@@ -7,7 +7,7 @@
 // `adora.dep_summary` attribute schema — do not rename without bumping the
 // schema version.
 //
-// Moved from include/ADORA/Dialect/ADORA/Transforms/TaskGraph/DepKind.h to
+// Moved from include/ADORA/Dialect/ADORA/Transforms/TaskPipeline/TaskGraph/DepKind.h to
 // the Analysis layer (PR6.1). The old path is preserved as a shim so existing
 // includes keep working.
 //===----------------------------------------------------------------------===//

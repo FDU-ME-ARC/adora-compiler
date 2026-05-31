@@ -1,9 +1,7 @@
 // FileCheck patterns for 01_linear_chain
-// BlockLoad produces token
-// CHECK: %{{.*}}, %{{.*}} = ADORA.BlockLoad %arg0 {{.*}} -> !ADORA.token
-// kernel consumes it, produces kernel token
+// BlockLoad of A has no predecessor → empty async list, returns (result, token)
+// CHECK: %{{.*}}, %{{.*}} = ADORA.BlockLoad async [] %arg0 {{.*}}{Id = "0"
+// kernel consumes the load token, produces a kernel token
 // CHECK: %{{.*}} = ADORA.kernel async [%{{.*}}]
-// BlockStore consumes kernel token
-// CHECK: ADORA.BlockStore async [%{{.*}}]
-// No async BlockLoad (no RAW pred on A)
-// CHECK-NOT: ADORA.BlockLoad async
+// store writes the kernel result back (no async list on this store)
+// CHECK: ADORA.BlockStore %{{.*}}, %arg1

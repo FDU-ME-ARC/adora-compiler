@@ -1,14 +1,14 @@
 digraph token_graph {
   rankdir=LR;
   node [shape=box, fontsize=10];
-  "0x562f075f8e10" [label="affine.yield"];
-  "0x562f075f9e50" [label="ADORA.BlockLoad\nId=0\nloop_carried_min_kernel", style=filled, fillcolor=lightblue];
-  "0x562f075d5c40" [label="ADORA.BlockStore\nId=2\nloop_carried_min_kernel", style=filled, fillcolor=lightcoral];
-  "0x562f075e5dc0" [label="ADORA.kernel\nloop_carried_min_kernel", style=filled, fillcolor=lightyellow];
-  "0x562f075f9e50" -> "0x562f075f8e10" [label="token", color=darkgreen];
-  "0x562f075f9e50" -> "0x562f075d5c40" [label="token", color=darkgreen];
-  "0x562f075f9e50" -> "0x562f075e5dc0" [label="token", color=darkgreen];
-  "0x562f075e5dc0" -> "0x562f075d5c40" [label="token", color=darkgreen];
-  "0x562f075d5c40" -> "0x562f075f8e10" [label="token", color=darkgreen];
-  "0x562f075d5c40" -> "0x562f075f8e10" [label="token", color=darkgreen];
+  "0x55900f61ac40" [label="ADORA.BlockStore\nId=2\nloop_carried_min_kernel", style=filled, fillcolor=lightcoral];
+  "0x55900f62a040" [label="ADORA.kernel\nloop_carried_min_kernel", style=filled, fillcolor=lightyellow];
+  "0x55900f63d110" [label="affine.yield"];
+  "0x55900f63e0e0" [label="ADORA.BlockLoad\nId=0\nloop_carried_min_kernel", style=filled, fillcolor=lightblue];
+  "0x55900f63e0e0" -> "0x55900f63d110" [label="token", color=darkgreen];
+  "0x55900f63e0e0" -> "0x55900f61ac40" [label="token", color=darkgreen];
+  "0x55900f63e0e0" -> "0x55900f62a040" [label="token", color=darkgreen];
+  "0x55900f62a040" -> "0x55900f61ac40" [label="token", color=darkgreen];
+  "0x55900f61ac40" -> "0x55900f63d110" [label="token", color=darkgreen];
+  "0x55900f61ac40" -> "0x55900f63d110" [label="token", color=darkgreen];
 }

@@ -4,7 +4,7 @@
 // P4.0: ScheduleAdoraTasks attaches an ArrayAttr of DictionaryAttr rows to the
 // enclosing FuncOp. Each row describes one DataBlock-level dependency edge.
 //
-// Moved from include/ADORA/Dialect/ADORA/Transforms/TaskGraph/DepSummaryView.h
+// Moved from include/ADORA/Dialect/ADORA/Transforms/TaskPipeline/TaskGraph/DepSummaryView.h
 // to the Analysis layer (PR6.1). The old path is preserved as a shim so
 // existing includes keep working.
 //

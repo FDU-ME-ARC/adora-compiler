@@ -1,20 +1,13 @@
 add_mlir_dialect_library(MLIRADORATransforms
-  AssignStreams.cpp
   BufferReuse.cpp
-  DependencyAnalysis.cpp
   DFGgenPass.cpp
-  LowerAsyncTokens.cpp
-  ScheduleAdoraTasks.cpp
   SimplifyLoadStore.cpp
-  ThreadLoopCarriedTokensImpl.cpp
-
-  TaskGraph/TaskNode.cpp
-  TaskGraph/TaskGraph.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJ_INCLUDE_DIR}/ADORA/Dialect/ADORA/IR
   ${PROJ_INCLUDE_DIR}/ADORA/Dialect/ADORA/Transforms
-  ${PROJ_INCLUDE_DIR}/ADORA/Dialect/ADORA/Transforms/TaskGraph
+  ${PROJ_INCLUDE_DIR}/ADORA/Dialect/ADORA/Transforms/TaskPipeline
+  ${PROJ_INCLUDE_DIR}/ADORA/Dialect/ADORA/Transforms/TaskPipeline/TaskGraph
   ${PROJ_INCLUDE_DIR}/lib/DFG/inc
 
   DEPENDS
@@ -22,6 +15,7 @@ add_mlir_dialect_library(MLIRADORATransforms
 
   LINK_LIBS PUBLIC
   MLIRIR
+  MLIRADORATaskPipeline
   MLIRADORALoopTransforms
   MLIRADORAKernelExtract
   MLIRADORAAnalysis
@@ -35,5 +29,6 @@ add_mlir_dialect_library(MLIRADORATransforms
   # MLIRAffineToStandard
   )
 
+add_subdirectory(TaskPipeline)
 add_subdirectory(Loop)
 add_subdirectory(Kernel)
