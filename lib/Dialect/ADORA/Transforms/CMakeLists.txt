@@ -3,6 +3,7 @@ add_mlir_dialect_library(MLIRADORATransforms
   BufferReuse.cpp
   DependencyAnalysis.cpp
   DFGgenPass.cpp
+  LLMPipelineSchedule.cpp
   LowerAsyncTokens.cpp
   ScheduleAdoraTasks.cpp
   SimplifyLoadStore.cpp
