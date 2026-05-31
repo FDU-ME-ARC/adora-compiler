@@ -14,7 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "ADORA/Dialect/ADORA/Transforms/TaskGraph/DepKind.h"
+#include "ADORA/Dialect/ADORA/Transforms/TaskPipeline/TaskGraph/DepKind.h"
 
 namespace mlir {
 namespace ADORA {

@@ -1,7 +1,7 @@
 //===----------------------------------------------------------------------===//
 // For Task Graph
 //===----------------------------------------------------------------------===//
-#include "ADORA/Dialect/ADORA/Transforms/TaskGraph/TaskNode.h"
+#include "ADORA/Dialect/ADORA/Transforms/TaskPipeline/TaskGraph/TaskNode.h"
 
 namespace mlir {
 namespace ADORA {

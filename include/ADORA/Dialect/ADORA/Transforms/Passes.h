@@ -37,11 +37,6 @@ std::unique_ptr<OperationPass<func::FuncOp>> createAssignStreamsPass();
 // PR4 commit E: eliminate redundant BlockStore/BlockLoad pairs for buffer reuse.
 std::unique_ptr<OperationPass<func::FuncOp>> createBufferReusePass();
 
-// LLM-guided task pipeline schedule: selects dep_type assignments via an
-// external LLM ranker and writes hw_dep_type attrs for EmitCGRACall /
-// EmitPytest to consume.
-std::unique_ptr<OperationPass<func::FuncOp>> createLLMPipelineSchedulePass();
-
 
 
 //===----------------------------------------------------------------------===//

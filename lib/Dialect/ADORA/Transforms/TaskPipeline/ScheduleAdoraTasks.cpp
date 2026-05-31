@@ -40,10 +40,10 @@
 #include "ADORA/Dialect/ADORA/Analysis/LoopCarriedDep.h"
 #include "ADORA/Dialect/ADORA/Transforms/ThreadLoopCarriedTokens.h"
 #include "ADORA/Dialect/ADORA/Transforms/Passes.h"
-#include "ADORA/Dialect/ADORA/Transforms/DependencyAnalysis.h"
-#include "ADORA/Dialect/ADORA/Transforms/TaskGraph/TaskGraph.h"
+#include "ADORA/Dialect/ADORA/Analysis/DependencyAnalysis.h"
+#include "ADORA/Dialect/ADORA/Transforms/TaskPipeline/TaskGraph/TaskGraph.h"
 #include "ADORA/Dialect/ADORA/Lowering/LowerPasses.h"
-#include "./PassDetail.h"
+#include "../PassDetail.h"
 
 using namespace llvm; // for llvm.errs()
 using namespace llvm::detail;

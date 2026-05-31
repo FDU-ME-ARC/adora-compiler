@@ -24,7 +24,7 @@
 #include "ADORA/Dialect/ADORA/IR/ADORA.h"
 #include "ADORA/Dialect/ADORA/Transforms/Passes.h"
 #include "ADORA/Dialect/ADORA/Utility/Utility.h"
-#include "./PassDetail.h"
+#include "../PassDetail.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/IR/Builders.h"
