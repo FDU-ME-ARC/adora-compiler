@@ -382,7 +382,7 @@ ADORA.kernel { ... }
 ADORA.event.signal %ev_k {stream = 0}
 ```
 
-> ⚠️ 一旦运行 lower-async-tokens，`asyncDependencies` 被清空，EmitPytest 的 Path 1（SSA 追踪）失效，只能靠 Path 2（dep_summary）。这是当前设计的核心矛盾（见 `review_current_state.md §关于双路径`）。
+> ⚠️ 一旦运行 lower-async-tokens，`asyncDependencies` 被清空，EmitPytest 的 Path 1（SSA 追踪）失效，只能靠 Path 2（dep_summary）。这是当前设计的核心矛盾（见 `archive/review_current_state.md §关于双路径`）。
 
 ---
 

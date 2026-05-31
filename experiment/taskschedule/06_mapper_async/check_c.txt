@@ -1,0 +1,15 @@
+// FileCheck for the --enable-async C output of the mvt kernel.
+// These markers are the schedule-derived async-token effects that the
+// baseline (no --enable-async) output does NOT contain. CHECK-DAG is used
+// because the mapper's placement search does not fix the emission order.
+
+// Loads carry an async token in the IR comment.
+// CHECK-DAG: ADORA.BlockLoad async [] %arg0
+// CHECK-DAG: ADORA.BlockLoad async [] %arg1
+
+// The store waits on a kernel token (async dep list).
+// CHECK-DAG: ADORA.BlockStore async [%{{.*}}]
+
+// The token dependency lowers to an actual execute() call carrying the
+// store dependency flag (in baseline this flag only appears in the #define).
+// CHECK-DAG: execute({{.*}}, _task_id, EX_DEP_ST_LAST_TASK)

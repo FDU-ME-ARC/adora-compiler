@@ -1,0 +1,12 @@
+// FileCheck for the --enable-async pytest output of the mvt kernel.
+// Verifies it targets the CGRA-Cocotb-Sim runtime (test_runif) and that the
+// schedule-derived token dep surfaces as a depend_type argument.
+
+// Generated code imports the simulator runtime interface.
+// CHECK-DAG: from test_runif import DeviceData, DeviceConfig, DeviceStream, DeviceRuntime
+
+// Async path threads the token as a depend_type on the H2D copy.
+// CHECK-DAG: memcpyHostToDevice({{.*}}depend_type=2)
+
+// Store comment retains the async token form.
+// CHECK-DAG: ADORA.BlockStore async [%{{.*}}]
