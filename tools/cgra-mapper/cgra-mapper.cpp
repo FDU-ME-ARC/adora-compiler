@@ -191,6 +191,17 @@ int main(int argc, char **argv) {
     cl::value_desc("bool"),
     cl::init(false));
 
+  static cl::opt<bool> enableLLMSchedule(
+    "enable-llm-schedule",
+    cl::Optional,
+    cl::desc("After schedule-tasks, run --llm-pipeline-schedule so an LLM ranker "
+             "picks per-task hw_dep_type (drives BlockStore await-gather in the "
+             "Python emit). Requires --enable-async. Default false. The ranker "
+             "command / dry-run / timeout are controlled by the global "
+             "--llm-pipeline-schedule-* flags."),
+    cl::value_desc("bool"),
+    cl::init(false));
+
   static cl::opt<int> specifictilenum(
     "tile",
     cl::Optional, 
@@ -497,12 +508,16 @@ int main(int argc, char **argv) {
     mlir::PassManager pm(&context);
     auto &fpm = pm.nest<mlir::func::FuncOp>();
     fpm.addPass(mlir::ADORA::createScheduleADORATasksPass());
+    if (enableLLMSchedule.getValue())
+      fpm.addPass(mlir::ADORA::createLLMPipelineSchedulePass());
     if (mlir::failed(pm.run(moduleop))) {
       llvm::errs() << "cgra-mapper: --enable-async pipeline failed.\n";
       return 1;
     }
     if (verbose.getValue())
-      llvm::errs() << "cgra-mapper: async pipeline (schedule-tasks) applied.\n";
+      llvm::errs() << "cgra-mapper: async pipeline (schedule-tasks"
+                   << (enableLLMSchedule.getValue() ? " + llm-pipeline-schedule" : "")
+                   << ") applied.\n";
   }
 
   moduleop.dump();

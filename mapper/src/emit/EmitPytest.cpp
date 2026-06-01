@@ -111,6 +111,14 @@ namespace
 
     // Generic: collect task variable names for all async-token deps of any op.
     llvm::SmallVector<std::string> getDepsTaskNames(mlir::Operation *op) {
+      // hw_dep_type = LD_DEP_NONE means this task's LOAD overlaps the previous
+      // task's EXECUTE — no asyncio.gather() should be emitted before it.
+      // LLMPipelineSchedulePass sets this attr on both the DataBlockLoadOp and
+      // the DataBlockStoreOp of the same task for convenience.
+      if (auto attr = op->getAttrOfType<mlir::StringAttr>("hw_dep_type"))
+        if (attr.getValue() == "LD_DEP_NONE")
+          return {};
+
       llvm::SmallVector<std::string> names;
       for (mlir::Value tok : ADORA::getAsyncDeps(op)) {
         mlir::Operation *producer = tok.getDefiningOp();

@@ -3,6 +3,7 @@ add_mlir_dialect_library(MLIRADORATaskPipeline
   AssignStreams.cpp
   LowerAsyncTokens.cpp
   ThreadLoopCarriedTokensImpl.cpp
+  LLMPipelineSchedule.cpp
 
   TaskGraph/TaskNode.cpp
   TaskGraph/TaskGraph.cpp

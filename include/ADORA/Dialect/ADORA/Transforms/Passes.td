@@ -531,6 +531,25 @@ def AutoDesignSpaceExplore : Pass<"adora-auto-dse", "ModuleOp"> {
   ];
 }
 
-
+//===----------------------------------------------------------------------===//
+// LLMPipelineSchedule
+//===----------------------------------------------------------------------===//
+def LLMPipelineSchedule : Pass<"llm-pipeline-schedule", "func::FuncOp"> {
+  let summary = "LLM-guided task pipeline dep_type selection";
+  let description = [{
+    Walks the IR to collect (Load, Kernel, Store) task triples, computes the
+    legal dep_type candidate set for each task pair, optionally queries an
+    external LLM ranker (task_schedule_ranker.py via stdin/stdout JSON), and
+    writes the selected dep_type as a "hw_dep_type" StringAttr on the relevant
+    DataBlockLoadOp / DataBlockStoreOp for downstream emitters (EmitCGRACall,
+    EmitPytest) to consume.  When the ranker command is empty or dry-run is
+    set, the pass always selects plan index 0 (conservative serial schedule).
+  }];
+  let constructor = "mlir::ADORA::createLLMPipelineSchedulePass()";
+  let dependentDialects = [
+    "::mlir::ADORA::ADORADialect",
+    "::mlir::func::FuncDialect"
+  ];
+}
 
 #endif // ADORA_DIALECT_PASSES

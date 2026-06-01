@@ -129,6 +129,7 @@ int main(int argc, char **argv) {
   mlir::ADORA::registerAssignStreamsPass();
   mlir::ADORA::registerBufferReusePass();
   mlir::ADORA::registerLowerAsyncTokensPass();
+  mlir::ADORA::registerLLMPipelineSchedule();
   mlir::ADORA::registerADORAAsyncRuntimeToLLVMPass();
 
   mlir::ADORA::registerConvertKernelCallToLLVMPass();

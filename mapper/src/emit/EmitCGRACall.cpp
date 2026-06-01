@@ -69,6 +69,11 @@ public:
   std::string computeDepFlag(mlir::Operation *op,
                               const std::string &noDepFlag = "0",
                               const std::string &fallback = "LD_DEP_ST_LAST_TASK") {
+    // LLMPipelineSchedulePass writes hw_dep_type on DataBlockLoadOp/KernelOp.
+    // If present, it overrides the async-token-based inference below.
+    if (auto attr = op->getAttrOfType<mlir::StringAttr>("hw_dep_type"))
+      return attr.getValue().str();
+
     auto deps = ADORA::getAsyncDeps(op);
     if (deps.empty())
       return noDepFlag;
