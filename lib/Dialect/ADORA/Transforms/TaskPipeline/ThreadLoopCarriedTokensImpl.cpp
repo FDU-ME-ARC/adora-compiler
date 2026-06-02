@@ -5,7 +5,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "ADORA/Dialect/ADORA/Transforms/ThreadLoopCarriedTokens.h"
+#include "ADORA/Dialect/ADORA/Transforms/TaskPipeline/ThreadLoopCarriedTokens.h"
 
 #include "ADORA/Dialect/ADORA/IR/ADORA.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
