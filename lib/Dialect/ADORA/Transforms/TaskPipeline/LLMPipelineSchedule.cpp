@@ -39,6 +39,7 @@
 
 #include <cstdio>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -142,14 +143,17 @@ static std::string buildRequestJson(llvm::StringRef kernelName,
   }
   os << "  ],\n";
 
-  // execution_plan_candidates (Gamma)
-  //   idx 0: all ST_LAST_TASK (conservative default = a_0)
-  //   idx 1: all NONE for pairs where legal (aggressive overlap)
-  os << "  \"execution_plan_candidates\": [\n";
-  os << "    {\"idx\": 0, \"label\": \"serial_default\"},\n";
-  os << "    {\"idx\": 1, \"label\": \"max_overlap\"}\n";
-  os << "  ],\n";
-  os << "  \"default_idx\": 0\n";
+  // P1: per-task selection (Gamma dimension A).
+  // The LLM picks a dep_type for EACH task from its legal_options above,
+  // instead of choosing one of two coarse whole-kernel plans. This lets it
+  // express mixed schedules (e.g. task1 overlap, task2 serial) and makes
+  // EX_LAST_TASK actually selectable.
+  // Response schema (per task):
+  //   {"per_task_choices": [{"task_id": <int>, "dep_type": "<LD_DEP_*>"}, ...]}
+  // The conservative default a_0 = all ST_LAST_TASK (used on any miss).
+  os << "  \"decision\": \"per_task_dep_type\",\n";
+  os << "  \"response_schema\": \"{per_task_choices:[{task_id,dep_type}]}\",\n";
+  os << "  \"default_dep_type\": \"" << kDepStLast.str() << "\"\n";
   os << "}\n";
   return os.str();
 }
@@ -163,7 +167,10 @@ static std::string buildRequestJson(llvm::StringRef kernelName,
 
 struct RankerResponse {
   bool        ok          = false;
-  int         selectedIdx = 0;
+  int         selectedIdx = -1;  // legacy whole-plan idx (compat); -1 = unset
+  // P1: per-task choices, task_id -> dep_type string. Empty => fall back to
+  // legacy selectedIdx interpretation, then to a_0.
+  std::map<int, std::string> perTaskChoices;
   std::string scratchpad;
   std::string error;
 };
@@ -285,18 +292,43 @@ static RankerResponse callRanker(llvm::StringRef cmd,
     return resp;
   }
 
-  // Parse {"selected_idx": N, "scratchpad": "..."}
-  auto pos = response.find("\"selected_idx\"");
-  if (pos == std::string::npos) {
-    resp.error = "no selected_idx in response: " + response;
-    return resp;
+  // P1: prefer per_task_choices: [{"task_id":i,"dep_type":"LD_DEP_*"}, ...]
+  // Scan all {"task_id": <int> ... "dep_type": "<str>"} pairs.
+  {
+    size_t cur = response.find("\"per_task_choices\"");
+    size_t scanFrom = (cur == std::string::npos) ? std::string::npos : cur;
+    while (scanFrom != std::string::npos) {
+      size_t tk = response.find("\"task_id\"", scanFrom);
+      if (tk == std::string::npos) break;
+      size_t tkColon = response.find(':', tk);
+      if (tkColon == std::string::npos) break;
+      int taskId = std::stoi(response.substr(tkColon + 1));
+      size_t dt = response.find("\"dep_type\"", tkColon);
+      if (dt == std::string::npos) break;
+      size_t q1 = response.find('"', response.find(':', dt) + 1);
+      size_t q2 = (q1 == std::string::npos) ? std::string::npos
+                                            : response.find('"', q1 + 1);
+      if (q1 == std::string::npos || q2 == std::string::npos) break;
+      resp.perTaskChoices[taskId] = response.substr(q1 + 1, q2 - q1 - 1);
+      scanFrom = q2 + 1;
+    }
   }
-  auto colon = response.find(':', pos);
-  if (colon == std::string::npos) {
-    resp.error = "parse error (no colon after selected_idx)";
-    return resp;
+
+  // Legacy / fallback: {"selected_idx": N}
+  if (resp.perTaskChoices.empty()) {
+    auto pos = response.find("\"selected_idx\"");
+    if (pos == std::string::npos) {
+      resp.error = "no per_task_choices and no selected_idx in response: " +
+                   response;
+      return resp;
+    }
+    auto colon = response.find(':', pos);
+    if (colon == std::string::npos) {
+      resp.error = "parse error (no colon after selected_idx)";
+      return resp;
+    }
+    resp.selectedIdx = std::stoi(response.substr(colon + 1));
   }
-  resp.selectedIdx = std::stoi(response.substr(colon + 1));
   resp.ok = true;
 
   auto sp = response.find("\"scratchpad\"");
@@ -387,10 +419,30 @@ struct LLMPipelineSchedulePass
       if (!resp.ok) {
         func.emitWarning("LLMPipelineSchedulePass: ranker failed (" +
                          resp.error + "), using default plan");
+      } else if (!resp.perTaskChoices.empty()) {
+        // P1: per-task choices. For each task, accept the LLM's dep_type only
+        // if it is in that task's legal_options; otherwise keep a_0 (ST_LAST).
+        for (size_t i = 1; i < tasks.size(); ++i) {
+          auto it = resp.perTaskChoices.find(tasks[i].taskIdx);
+          if (it == resp.perTaskChoices.end()) continue;  // keep a_0
+          const auto &opts = tasks[i].legalOptions;
+          if (std::find(opts.begin(), opts.end(), it->second) != opts.end())
+            chosen[i] = it->second;  // legal -> accept
+          // else: illegal choice, keep a_0 (already ST_LAST)
+        }
+        if (!clRankerLog.getValue().empty()) {
+          std::ofstream log(clRankerLog.getValue(), std::ios::app);
+          log << "{\"kernel\":\"" << kernelName << "\",\"per_task_choices\":[";
+          for (size_t i = 1; i < tasks.size(); ++i) {
+            if (i > 1) log << ",";
+            log << "{\"task_id\":" << tasks[i].taskIdx
+                << ",\"dep_type\":\"" << chosen[i] << "\"}";
+          }
+          log << "],\"scratchpad\":\"" << resp.scratchpad << "\"}\n";
+        }
       } else {
+        // Legacy whole-plan fallback: idx 1 = all NONE where legal.
         int sel = resp.selectedIdx;
-        // Plan idx 0 = all ST_LAST (already the default).
-        // Plan idx 1 = all NONE where legal (aggressive overlap).
         if (sel == 1) {
           for (size_t i = 1; i < tasks.size(); ++i) {
             const auto &opts = tasks[i].legalOptions;
@@ -398,7 +450,7 @@ struct LLMPipelineSchedulePass
                 opts.end())
               chosen[i] = kDepNone.str();
             else
-              chosen[i] = opts[0];  // fallback to first legal option
+              chosen[i] = opts[0];
           }
         }
         if (!clRankerLog.getValue().empty() && !resp.scratchpad.empty()) {
