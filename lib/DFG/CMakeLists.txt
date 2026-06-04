@@ -32,3 +32,5 @@ target_link_libraries(GeneralCDFGGen
 )
 
 add_dependencies(GeneralCDFGGen ADORAPassIncGen MLIRAffineDialect)
+
+add_subdirectory(python)

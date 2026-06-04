@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adora-mlir"
+version = "0.1.0"
+description = "Standalone Python bindings for the out-of-tree ADORA MLIR dialect"
+requires-python = ">=3.10"
+
+# NOTE: requires the upstream MLIR python package (mlir.ir / mlir.dialects)
+# to be importable at runtime (set PYTHONPATH to the mlir_core dir, or install
+# the matching mlir wheel). The bundled _adoraDialectsRegister*.so shares the
+# upstream libMLIRPythonCAPI.so runtime.
+
+[tool.setuptools]
+packages = ["adora_mlir"]
+package-dir = {"adora_mlir" = "."}
+
+[tool.setuptools.package-data]
+adora_mlir = ["*.so"]

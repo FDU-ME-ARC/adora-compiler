@@ -4,3 +4,5 @@ add_subdirectory(tensor-opt)
 add_subdirectory(adoracc)
 
 add_subdirectory(adora-nncompiler)
+
+add_subdirectory(cycle-estimator)
