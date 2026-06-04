@@ -51,6 +51,33 @@ class KernelLoops:
         return prod
 
 
+def _strip_module_attrs(text: str) -> str:
+    """Drop a leading `module attributes { ... } {` dict that some front-ends
+    (e.g. Polygeist's dlti.dl_spec) emit but the MLIR Python parser rejects.
+    Replaces it with a plain `module {`. Brace-matched, no regex."""
+    i = text.find("module attributes")
+    if i < 0:
+        return text
+    brace = text.find("{", i)
+    if brace < 0:
+        return text
+    depth = 0
+    j = brace
+    while j < len(text):
+        if text[j] == "{":
+            depth += 1
+        elif text[j] == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        j += 1
+    # j now at the closing brace of the attribute dict; find the module's own '{'
+    body = text.find("{", j + 1)
+    if body < 0:
+        return text
+    return text[:i] + "module " + text[body:]
+
+
 def _const_from_affine_map(map_attr) -> int | None:
     """Return the constant result of a 0-input affine map like
     `affine_map<() -> (100)>`, or None if not a plain constant."""
@@ -103,7 +130,7 @@ def extract_kernel_loops(mlir_path: str) -> list[KernelLoops]:
     import adora_mlir
 
     with open(mlir_path) as f:
-        txt = f.read()
+        txt = _strip_module_attrs(f.read())
     ctx = ir.Context()
     adora_mlir.register_dialect(ctx)
     module = ir.Module.parse(txt, ctx)
@@ -158,6 +185,11 @@ def extract_kernel_loops(mlir_path: str) -> list[KernelLoops]:
 
     find_kernels(module.operation)
     return out
+
+
+def parse_kernels(mlir_path: str) -> dict[str, KernelLoops]:
+    """Return all kernels in the MLIR keyed by kernel name."""
+    return {k.name: k for k in extract_kernel_loops(mlir_path)}
 
 
 def kernel_for_dot(mlir_path: str, dot_name: str) -> KernelLoops | None:

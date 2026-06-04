@@ -10,13 +10,13 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dot_parser import parse_dot
-from latency_table import op_latency, DIV_LATENCY
-from ii_model import estimate_ii, rec_mii, res_mii
-from cycle_model import (estimate_cycles, critical_path_latency,
-                         io_bytes_from_dot, config_overhead, dma_cycles)
-from mlir_loop_info import parse_kernels, kernel_for_dot
-from cfgnum import parse_cfgnums
+from core.dot_parser import parse_dot
+from core.latency_table import op_latency, DIV_LATENCY
+from core.ii_model import estimate_ii, rec_mii, res_mii
+from core.cycle_model import (estimate_cycles, critical_path_latency,
+                              io_bytes_from_dot, config_overhead, dma_cycles)
+from extract.loop_info import parse_kernels, kernel_for_dot
+from scripts.cfgnum import parse_cfgnums
 
 FIX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 GEMM_DOT = os.path.join(FIX, "gemm_1_0_CDFG.dot")
@@ -109,14 +109,19 @@ class TestCycleModel(unittest.TestCase):
         g = parse_dot(GEMM_DOT)
         kernels = parse_kernels(GEMM_MLIR)
         loops = kernels["gemm_1"]
-        est = estimate_cycles(g, loops)
-        # total = load + outer*(II*inner + drain) + store
-        expect = (est.load
-                  + est.outer_trip * (est.II * est.inner_trip + est.drain)
-                  + est.store + est.config)
-        self.assertEqual(est.total, expect)
-        self.assertEqual(est.inner_trip, 30)
-        self.assertEqual(est.outer_trip, 25)
+
+        # serial: total = cfg + load + compute + store
+        ser = estimate_cycles(g, loops, overlap=False)
+        compute = ser.outer_trip * (ser.II * ser.inner_trip + ser.drain)
+        self.assertEqual(ser.total, ser.config + ser.load + compute + ser.store)
+
+        # overlap (default): mem and compute run concurrently -> max()
+        ov = estimate_cycles(g, loops)
+        self.assertEqual(ov.total,
+                         ov.config + max(ov.load + ov.store, compute))
+
+        self.assertEqual(ov.inner_trip, 30)
+        self.assertEqual(ov.outer_trip, 25)
 
 
 class TestMlirLoopInfo(unittest.TestCase):
