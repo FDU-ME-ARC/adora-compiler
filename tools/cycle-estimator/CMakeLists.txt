@@ -30,4 +30,6 @@ install(FILES
 # Expose the package as `cycle_estimator` with a __main__ entry so that
 # `python -m cycle_estimator` runs the estimator.
 install(CODE "file(WRITE \"${_CE_DEST}/__init__.py\" \"\")")
-install(CODE "file(WRITE \"${_CE_DEST}/__main__.py\" \"from run import main\\nmain()\\n\")")
+# __main__ puts the package dir on sys.path so run.py's `from core.*` and the
+# `from run import main` below both resolve under `python -m cycle_estimator`.
+install(CODE "file(WRITE \"${_CE_DEST}/__main__.py\" \"import os, sys\\nsys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))\\nfrom run import main\\nmain()\\n\")")
