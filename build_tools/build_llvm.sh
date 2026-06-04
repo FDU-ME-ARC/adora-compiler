@@ -46,12 +46,19 @@ cmake -GNinja \
   -DLLVM_ENABLE_RTTI=ON    \
  -DENABLE_LIBOMPTARGET=OFF \
   -DLLVM_ENABLE_LLD=OFF \
-    -DBUILD_SHARED_LIBS=OFF 
+    -DBUILD_SHARED_LIBS=OFF \
+  -DMLIR_ENABLE_BINDINGS_PYTHON=ON
+
+ # MLIR_ENABLE_BINDINGS_PYTHON=ON enables the official mlir.ir / mlir.dialects
+ # python packages (nanobind backend; run: pip install nanobind). This is an
+ # in-place reconfigure of the existing build dir -- it only ADDS the python
+ # binding targets, the already-built LLVM/MLIR libs are not invalidated.
 
  # TODO check what these options do :
-  # -DMLIR_ENABLE_BINDINGS_PYTHON=ON \
   #  -DLLVM_ENABLE_LLD=ON   \
  # -DLLVM_OPTIMIZED_TABLEGEN=ON -DLLVM_ENABLE_OCAMLDOC=OFF -DLLVM_ENABLE_BINDINGS=OFF 
 
 cmake --build "$build_dir" --target opt mlir-opt mlir-translate mlir-cpu-runner clang install
+# build the official MLIR python bindings package
+cmake --build "$build_dir" --target MLIRPythonModules
 ninja -j 72 install 
