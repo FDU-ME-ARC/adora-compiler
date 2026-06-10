@@ -1,47 +1,51 @@
 # ADORA Cycle Estimator
 
-基于 ADORA 方言 MLIR 的快速周期数预估器。复用编译器 `adora-kernel-dfg-gen`
-pass 产出的结构化 CDFG dot 拿到算子图与 loop-carried 距离，用 **MLIR 官方 Python
-绑定强类型**读取循环 trip-count，结合 ADG 硬件参数与延迟表，估算 kernel 在 CGRA
-上的执行周期，**无需跑 RTL 仿真**。
+A fast cycle-count estimator for ADORA-dialect MLIR. It reuses the structured
+CDFG dot produced by the compiler's `adora-kernel-dfg-gen` pass to obtain the
+operator graph and loop-carried distances, reads loop trip-counts **strong-typed
+via the upstream MLIR Python bindings**, and combines them with ADG hardware
+parameters and a latency table to estimate a kernel's execution cycles on the
+CGRA — **without running RTL simulation**.
 
-- 设计细节见 [`docs/DESIGN.md`](docs/DESIGN.md)
-- 当前实现状态 / 现状 / 后续规划见 [`docs/STATUS.md`](docs/STATUS.md)
+- Design details: [`docs/DESIGN.md`](docs/DESIGN.md)
+- Implementation status / current accuracy / roadmap: [`docs/STATUS.md`](docs/STATUS.md)
 
-## 数据来源（无正则解析）
+## Data sources (no regex parsing)
 
-| 数据 | 来源 |
+| Data | Source |
 |---|---|
-| 算子节点 opcode / 边 / loop-carried `iterdist` / 访存字节 | cgra-opt 产的 `_CDFG.dot`（`core/dot_parser.py`） |
-| 循环 trip-count / 元素位宽 | MLIR 强类型读 `affine.for` bound（`extract/loop_info.py` + `adora_mlir`） |
-| PE 阵列 / SPAD / cfg 字宽 | ADG json（`arch/adg.py`） |
-| per-op 延迟 | 硬编码延迟表，源 `Operations.scala`（`core/latency_table.py`） |
+| Node opcode / edges / loop-carried `iterdist` / memory bytes | `_CDFG.dot` from cgra-opt (`core/dot_parser.py`) |
+| Loop trip-count / element width | strong-typed `affine.for` bounds (`extract/loop_info.py` + `adora_mlir`) |
+| PE array / SPAD / cfg width | ADG json (`arch/adg.py`) |
+| Per-op latency | hard-coded latency table, sourced from `Operations.scala` (`core/latency_table.py`) |
 
-> 旧的 `mlir_loop_info.py`（正则解析 MLIR 文本）与 `cdfg_native.py`（会段错误的
-> `_adora_cdfg` pybind）已删除。
+> The old `mlir_loop_info.py` (regex parsing of MLIR text) and `cdfg_native.py`
+> (the segfaulting `_adora_cdfg` pybind) have been removed.
 
-## 依赖
+## Dependencies
 
 - Python 3
-- 上游 MLIR Python 绑定（`mlir.ir` / `mlir.dialects`）：由 LLVM build 产出，路径经
-  环境变量 `ADORA_MLIR_CORE` 指定（默认指向本机 LLVM build 的
-  `python_packages/mlir_core`）
-- `adora_mlir` 包（随本工具，含 `_adoraDialectsRegister` 扩展）
+- Upstream MLIR Python bindings (`mlir.ir` / `mlir.dialects`): produced by the
+  LLVM build; the path is given via the `ADORA_MLIR_CORE` environment variable
+  (defaults to this host's LLVM build `python_packages/mlir_core`)
+- The `adora_mlir` package (shipped with this tool, includes the
+  `_adoraDialectsRegister` extension)
 
-## 安装与使用
+## Install & usage
 
-`ninja install` 后，工具装到安装前缀下：
+After `ninja install`, the tool is installed under the install prefix:
 
-- `bin/cycle-estimator`：可执行启动器，已设好 PYTHONPATH / ADORA_MLIR_CORE
-- `bin/pypack/cycle_estimator/`：可 import 的 Python 包
+- `bin/cycle-estimator`: an executable launcher with PYTHONPATH / ADORA_MLIR_CORE
+  preset
+- `bin/pypack/cycle_estimator/`: the importable Python package
 
-直接当命令用（推荐，无需设环境变量）：
+Use it directly as a command (recommended, no environment variables needed):
 
 ```bash
 cycle-estimator --mlir kernel.mlir --adg adg.json
 ```
 
-或显式以包形式调用：
+Or invoke it explicitly as a package:
 
 ```bash
 PYTHONPATH=<prefix>/bin/pypack \
@@ -49,26 +53,26 @@ ADORA_MLIR_CORE=<llvm-build>/python_packages/mlir_core \
 python3 -m cycle_estimator --mlir kernel.mlir --adg adg.json
 ```
 
-源码树内直接跑：
+Run directly from the source tree:
 
 ```bash
 ADORA_MLIR_CORE=<...>/mlir_core python3 run.py --mlir kernel.mlir --adg adg.json
 ```
 
-### 参数
+### Options
 
-| 参数 | 含义 |
+| Option | Meaning |
 |---|---|
-| `--mlir` | kernel MLIR：读 trip-count；或作为生成 dot 的源 |
-| `--dot` | 现成 `_CDFG.dot`（跳过 cgra-opt） |
-| `--adg` | ADG json：PE 数 / SPAD / cfg 字宽（替硬编码 `num_alus`） |
-| `--num-alus` | 阵列 ALU 数（给了 `--adg` 则忽略） |
-| `--num-tiles` | kernel tile 数（用于 tile-based cfgNum，默认 1） |
-| `--no-overlap` | 关闭访存/计算交叠，退回串行求和 |
-| `--route-lat` | 每边布线延迟（0 = 乐观下界） |
-| `--cfg-num` / `--load-bytes` / `--store-bytes` | 手动覆盖 |
+| `--mlir` | kernel MLIR: read trip-counts; or use as the source for dot generation |
+| `--dot` | an existing `_CDFG.dot` (skip cgra-opt) |
+| `--adg` | ADG json: PE count / SPAD / cfg width (overrides hard-coded `num_alus`) |
+| `--num-alus` | array ALU count (ignored if `--adg` is given) |
+| `--num-tiles` | kernel tile count (for tile-based cfgNum, default 1) |
+| `--no-overlap` | disable mem/compute overlap, fall back to serial sum |
+| `--route-lat` | per-edge routing latency (0 = optimistic lower bound) |
+| `--cfg-num` / `--load-bytes` / `--store-bytes` | manual overrides |
 
-### 输出示例
+### Example output
 
 ```
 kernel        : kernel_fir
@@ -84,39 +88,42 @@ mem/compute   : overlap (max)
 TOTAL cycles  : 898  (optimistic; routeLat=0)
 ```
 
-周期公式（默认 overlap）：
+Cycle formula (overlap by default):
 
 ```
 total = config_overhead + max(block_load + block_store, outer×(II×inner + drain))
 ```
 
-`--no-overlap` 时退回串行：`config + load + outer×(II×inner + drain) + store`。
+With `--no-overlap` it falls back to serial:
+`config + load + outer×(II×inner + drain) + store`.
 
-## 模块布局
+## Module layout
 
 ```
-run.py            唯一顶层入口
-core/             估算引擎: dot_parser / cycle_model / ii_model / latency_table
-extract/          MLIR 强类型 trip 提取: loop_info
+run.py            sole top-level entry point
+core/             estimation engine: dot_parser / cycle_model / ii_model / latency_table
+extract/          strong-typed MLIR trip extraction: loop_info
 arch/             ADG reader: adg
-scripts/          独立工具: adora_analyze / calibrate / cfgnum
-adora_mlir/       ADORA dialect 的官方 Python 绑定
+scripts/          standalone tools: adora_analyze / calibrate / cfgnum
+adora_mlir/       official Python bindings for the ADORA dialect
 docs/  tests/
 ```
 
-## 测试
+## Tests
 
 ```bash
 ADORA_MLIR_CORE=<...>/mlir_core python3 -m unittest discover -s tests
 ```
 
-## 校准（待做，需仿真环境）
+## Calibration (TODO, needs a simulation environment)
 
-当前是**乐观估计**，绝对值未经真值校准。校准链已就绪（`scripts/calibrate.py`），
-ground truth 来自 `CGRA-Cocotb-Sim/server/test_runif.py`（RTL 级，CLOCKPERIOD=2 ns）：
+The current numbers are an **optimistic estimate**; absolute values are not yet
+calibrated against ground truth. The calibration chain is in place
+(`scripts/calibrate.py`), with ground truth from
+`CGRA-Cocotb-Sim/server/test_runif.py` (RTL-level, CLOCKPERIOD=2 ns):
 
 ```bash
-python3 scripts/calibrate.py --log sim.log --dot-dir <dot目录> --mlir kernel.mlir
+python3 scripts/calibrate.py --log sim.log --dot-dir <dot dir> --mlir kernel.mlir
 ```
 
-详见 [`docs/STATUS.md`](docs/STATUS.md) 的"后续规划"。
+See the "Roadmap" section in [`docs/STATUS.md`](docs/STATUS.md) for details.
