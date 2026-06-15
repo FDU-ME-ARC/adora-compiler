@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+# Nested compiler tree accidentally placed here; not part of this tool.
+adora-compiler/

@@ -2765,7 +2765,13 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
           int memrefsize = GetMemrefSize(vecload);
           mlir::Operation* mrefop = vecload.getMemref().getDefiningOp();
           std::string ref_name;
-          if(isa<ADORA::DataBlockLoadOp>(mrefop)){
+          if(!mrefop){
+            // memref is a block argument (kernel/func boundary array); no defining op
+            auto barg = vecload.getMemref().dyn_cast<mlir::BlockArgument>();
+            ref_name = std::string(kernel.getKernelName()) + ":arg" +
+                       std::to_string(barg ? (int)barg.getArgNumber() : -1);
+          }
+          else if(isa<ADORA::DataBlockLoadOp>(mrefop)){
             ADORA::DataBlockLoadOp Bload = dyn_cast<ADORA::DataBlockLoadOp>(mrefop);
             ref_name = std::string(kernel.getKernelName()) + ":" + std::string(Bload.getId());
           }
@@ -2795,7 +2801,13 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
 
           mlir::Operation* mrefop = load.getMemref().getDefiningOp();
           std::string ref_name;
-          if(isa<ADORA::DataBlockLoadOp>(mrefop)){
+          if(!mrefop){
+            // memref is a block argument (kernel/func boundary array); no defining op
+            auto barg = load.getMemref().dyn_cast<mlir::BlockArgument>();
+            ref_name = std::string(kernel.getKernelName()) + ":arg" +
+                       std::to_string(barg ? (int)barg.getArgNumber() : -1);
+          }
+          else if(isa<ADORA::DataBlockLoadOp>(mrefop)){
             ADORA::DataBlockLoadOp Bload = dyn_cast<ADORA::DataBlockLoadOp>(mrefop);
             ref_name = std::string(kernel.getKernelName()) + ":" + std::string(Bload.getId());
           }
@@ -2827,7 +2839,13 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
           int memrefsize = GetMemrefSize(store);
           mlir::Operation* mrefop = store.getMemref().getDefiningOp();
           std::string ref_name;
-          if(isa<ADORA::DataBlockLoadOp>(mrefop)){
+          if(!mrefop){
+            // memref is a block argument (kernel/func boundary array); no defining op
+            auto barg = store.getMemref().dyn_cast<mlir::BlockArgument>();
+            ref_name = std::string(kernel.getKernelName()) + ":arg" +
+                       std::to_string(barg ? (int)barg.getArgNumber() : -1);
+          }
+          else if(isa<ADORA::DataBlockLoadOp>(mrefop)){
             ADORA::DataBlockLoadOp Bload = dyn_cast<ADORA::DataBlockLoadOp>(mrefop);
             ref_name = std::string(kernel.getKernelName()) + ":" + std::string(Bload.getId());
           }
@@ -2879,7 +2897,13 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
 
       mlir::Operation* mrefop = load.getMemref().getDefiningOp();
       std::string ref_name;
-      if(isa<ADORA::DataBlockLoadOp>(mrefop)){
+      if(!mrefop){
+        // memref is a block argument (kernel/func boundary array); no defining op
+        auto barg = load.getMemref().dyn_cast<mlir::BlockArgument>();
+        ref_name = std::string(kernel.getKernelName()) + ":arg" +
+                   std::to_string(barg ? (int)barg.getArgNumber() : -1);
+      }
+      else if(isa<ADORA::DataBlockLoadOp>(mrefop)){
         ADORA::DataBlockLoadOp Bload = dyn_cast<ADORA::DataBlockLoadOp>(mrefop);
         ref_name = std::string(kernel.getKernelName()) + ":" + std::string(Bload.getId());
       }
@@ -2888,7 +2912,8 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
         ref_name = std::string(kernel.getKernelName()) + ":" + std::string(BAlloc.getId());
       }
       else
-        assert(0);
+        // other local memref source (e.g. memref.alloca) on un-optimized IR
+        ref_name = std::string(kernel.getKernelName()) + ":local";
 
       int memrefsize = GetMemrefSize(load);
       node->setLinearAccess(linearaccess_str);
@@ -2904,7 +2929,13 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
       int memrefsize = GetMemrefSize(store);
       mlir::Operation* mrefop = store.getMemref().getDefiningOp();
       std::string ref_name;
-      if(isa<ADORA::DataBlockLoadOp>(mrefop)){
+      if(!mrefop){
+        // memref is a block argument (kernel/func boundary array); no defining op
+        auto barg = store.getMemref().dyn_cast<mlir::BlockArgument>();
+        ref_name = std::string(kernel.getKernelName()) + ":arg" +
+                   std::to_string(barg ? (int)barg.getArgNumber() : -1);
+      }
+      else if(isa<ADORA::DataBlockLoadOp>(mrefop)){
         ADORA::DataBlockLoadOp Bload = dyn_cast<ADORA::DataBlockLoadOp>(mrefop);
         ref_name = std::string(kernel.getKernelName()) + ":" + std::string(Bload.getId());
       }
@@ -2913,7 +2944,8 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
         ref_name = std::string(kernel.getKernelName()) + ":" + std::string(BAlloc.getId());
       }
       else{
-        assert(0);
+        // other local memref source (e.g. memref.alloca) on un-optimized IR
+        ref_name = std::string(kernel.getKernelName()) + ":local";
       }
       node->setLinearAccess(linearaccess_str);
       node->setInitAddr(initAddr_str);
