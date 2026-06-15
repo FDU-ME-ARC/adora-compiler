@@ -508,8 +508,16 @@ int main(int argc, char **argv) {
     mlir::PassManager pm(&context);
     auto &fpm = pm.nest<mlir::func::FuncOp>();
     fpm.addPass(mlir::ADORA::createScheduleADORATasksPass());
-    if (enableLLMSchedule.getValue())
+    if (enableLLMSchedule.getValue()) {
+      // TileAssignment (inside llm-pipeline-schedule) needs the CGRA geometry,
+      // which lives in the ADG (this module) and is not visible to the dialect
+      // pass.  Inject it via the pass's cl::opts before adding the pass.
+      extern llvm::cl::opt<int> clNumTiles;
+      extern llvm::cl::opt<int> clPePerTile;
+      clNumTiles  = numTiles;
+      clPePerTile = (numTiles > 0) ? (numGpeNodes / numTiles) : numGpeNodes;
       fpm.addPass(mlir::ADORA::createLLMPipelineSchedulePass());
+    }
     if (mlir::failed(pm.run(moduleop))) {
       llvm::errs() << "cgra-mapper: --enable-async pipeline failed.\n";
       return 1;
@@ -598,6 +606,72 @@ int main(int argc, char **argv) {
       }
       else{ /// default to be C
         CEmitter.preestablishPlacementConstraints(kernel, mapper);
+      }
+    }
+
+    // ---- Stage 2: tile-based placement constraints from adora.tile_set ----
+    // The dialect pass `llm-pipeline-schedule` (TileAssignment) writes an
+    // `adora.tile_set` DenseI64ArrayAttr on each KernelOp deciding WHICH tile(s)
+    // the kernel should occupy.  Independent kernels can be steered onto
+    // different tiles so they overlap.  Here we translate that decision into
+    // per-DFG-node placement constraints: every compute (non-IO) DFG node that
+    // is not already constrained (IO nodes already carry SPAD-bank constraints
+    // from the emitter above) is restricted to the FU nodes whose ADG `tile()`
+    // is in the allowed set.  The SA mapper's findCandidates() honours these
+    // constraints, while routing (GIB selection) stays free inside the tiles.
+    if (subadg->isMultipleTile()) {
+      std::lock_guard<std::mutex> lock(mlir_mutex);
+      if (auto tileSetAttr =
+              kernel->getAttrOfType<mlir::DenseI64ArrayAttr>("adora.tile_set")) {
+        std::set<int> allowedTiles;
+        for (int64_t t : tileSetAttr.asArrayRef())
+          allowedTiles.insert(static_cast<int>(t));
+
+        if (!allowedTiles.empty()) {
+          int constrained = 0;
+          for (auto &elem : dfg->nodes()) {
+            int nid = elem.first;
+            DFGNode *dfgNode = elem.second;
+            // IO nodes already constrained to accessible IOBs by the emitter.
+            if (dfg->isIONode(nid)) continue;
+            // Don't override any pre-existing (emitter) constraint.
+            if (!mapper->getPlacementConstraints(dfgNode).empty()) continue;
+
+            std::vector<ADGNode*> tileCandidates;
+            for (auto &adgElem : subadg->nodes()) {
+              ADGNode *adgNode = adgElem.second;
+              if (adgNode->type() == "GIB") continue;  // routing, not a FU
+              if (allowedTiles.count(adgNode->tile()) == 0) continue;
+              FUNode *fuNode = dynamic_cast<FUNode*>(adgNode);
+              if (fuNode && fuNode->opCapable(dfgNode->operation()))
+                tileCandidates.push_back(adgNode);
+            }
+            // Only apply if we found at least one legal FU on the allowed
+            // tiles; otherwise leave unconstrained (mapper searches all tiles)
+            // so a bad/aggressive tile decision never makes mapping infeasible.
+            if (!tileCandidates.empty()) {
+              mapper->preestablishPlacementConstraints(dfgNode, tileCandidates);
+              ++constrained;
+            }
+          }
+          if (AgentTrace::enabled()) {
+            std::string tileList = "[";
+            bool first = true;
+            for (int t : allowedTiles) {
+              if (!first) tileList += ",";
+              tileList += std::to_string(t);
+              first = false;
+            }
+            tileList += "]";
+            AgentTrace::emit(
+              "cgra_mapper",
+              "tile_constraints_applied",
+              "{\"kernel\":\"" + agentTraceJsonEscape(kernelName) +
+              "\",\"tile_set\":" + tileList +
+              ",\"constrained_nodes\":" + std::to_string(constrained) + "}"
+            );
+          }
+        }
       }
     }
 

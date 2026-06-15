@@ -3,6 +3,7 @@ add_mlir_dialect_library(MLIRADORAAnalysis
   LoopCarriedDep.cpp
   DepSummaryView.cpp
   DependencyAnalysis.cpp
+  LLMRankerClient.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJ_INCLUDE_DIR}/ADORA/Dialect/ADORA/Analysis

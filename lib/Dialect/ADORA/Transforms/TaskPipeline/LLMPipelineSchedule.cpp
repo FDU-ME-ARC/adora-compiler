@@ -28,9 +28,12 @@
 #include "ADORA/Dialect/ADORA/IR/ADORA.h"
 #include "ADORA/Dialect/ADORA/Transforms/Passes.h"
 #include "ADORA/Dialect/ADORA/Utility/Utility.h"
+#include "ADORA/Dialect/ADORA/Analysis/LLMRankerClient.h"
+#include "ADORA/Dialect/ADORA/Transforms/TaskPipeline/TileAssignment.h"
 #include "../PassDetail.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Operation.h"
@@ -43,13 +46,6 @@
 #include <sstream>
 #include <string>
 #include <vector>
-
-#include <cerrno>
-#include <csignal>
-#include <cstring>
-#include <poll.h>
-#include <sys/wait.h>
-#include <unistd.h>
 
 #define DEBUG_TYPE "llm-pipeline-schedule"
 
@@ -80,6 +76,19 @@ static llvm::cl::opt<bool> clDryRun(
     llvm::cl::desc("Always use default plan (idx 0), skip LLM call"),
     llvm::cl::init(false));
 
+// Tile assignment needs to know the CGRA geometry, which lives in the ADG
+// (mapper module) and is NOT visible to this dialect-library pass.  cgra-mapper
+// injects these by assigning to the cl::opts (extern) after reading the ADG.
+llvm::cl::opt<int> clNumTiles(
+    "llm-pipeline-schedule-num-tiles",
+    llvm::cl::desc("total CGRA tiles (= adg->tileNum())"),
+    llvm::cl::init(1));
+
+llvm::cl::opt<int> clPePerTile(
+    "llm-pipeline-schedule-pe-per-tile",
+    llvm::cl::desc("GPEs per tile (= adg->numGpeNodes()/adg->tileNum())"),
+    llvm::cl::init(16));
+
 namespace {
 
 // ---------------------------------------------------------------------------
@@ -107,6 +116,11 @@ struct TaskDesc {
   // Data filled during analysis
   bool rawDepOnPrev = false;  // true if loadOp reads storeOp of prev task
   bool bankConflict = false;  // true if active banks overlap (from ADG)
+  // True if this task is a single kernel inside an affine.for that carries
+  // !ADORA.token iter_args (iteration-to-iteration kernel reuse / software
+  // pipelining).  For such a task "prev" means the PREVIOUS LOOP ITERATION,
+  // not the previous textual task; rawDepOnPrev is then a cross-iteration RAW.
+  bool isLoopCarried = false;
 
   // Legal dep_type options for the LOAD of this task (vs previous task).
   // [0] is always the conservative default (ST_LAST_TASK).
@@ -132,6 +146,7 @@ static std::string buildRequestJson(llvm::StringRef kernelName,
     const auto &t = tasks[i];
     os << "    {\"task_id\": " << t.taskIdx
        << ", \"raw_dep_on_prev\": " << (t.rawDepOnPrev ? "true" : "false")
+       << ", \"is_loop_carried\": " << (t.isLoopCarried ? "true" : "false")
        << ", \"legal_options\": [";
     for (size_t j = 0; j < t.legalOptions.size(); ++j) {
       os << jsonStr(t.legalOptions[j]);
@@ -165,6 +180,8 @@ static std::string buildRequestJson(llvm::StringRef kernelName,
 // free of any dependency on the mapper module.
 // ---------------------------------------------------------------------------
 
+// dep_type 决策专用的响应结构 + 解析。通信由 Analysis/LLMRankerClient.h 的
+// callRanker 负责（返回原始字符串），这里只负责把原始响应解析成 dep_type 选择。
 struct RankerResponse {
   bool        ok          = false;
   int         selectedIdx = -1;  // legacy whole-plan idx (compat); -1 = unset
@@ -175,122 +192,17 @@ struct RankerResponse {
   std::string error;
 };
 
-/// Tokenise an argv string on whitespace (no quoting support needed: the
-/// ranker command is a fixed program path + flags).
-static std::vector<std::string> splitArgs(llvm::StringRef cmd) {
-  std::vector<std::string> args;
-  std::istringstream is(cmd.str());
-  std::string tok;
-  while (is >> tok) args.push_back(tok);
-  return args;
-}
-
-static RankerResponse callRanker(llvm::StringRef cmd,
-                                 const std::string &requestJson,
-                                 int timeoutMs) {
+/// 解析 callRanker 返回的原始响应字符串，填出 dep_type 决策。
+/// raw 为通用通信层的结果（含 response / scratchpad / error / ok）。
+static RankerResponse parseDepTypeResponse(const RankerRawResult &raw) {
   RankerResponse resp;
+  resp.scratchpad = raw.scratchpad;  // 通用推理日志，由通信层解析好
 
-  std::vector<std::string> args = splitArgs(cmd);
-  if (args.empty()) {
-    resp.error = "empty ranker command";
+  if (!raw.ok) {
+    resp.error = raw.error;
     return resp;
   }
-
-  int inPipe[2];   // parent writes -> child stdin
-  int outPipe[2];  // child stdout -> parent reads
-  if (pipe(inPipe) != 0 || pipe(outPipe) != 0) {
-    resp.error = std::string("pipe() failed: ") + std::strerror(errno);
-    return resp;
-  }
-
-  pid_t pid = fork();
-  if (pid < 0) {
-    resp.error = std::string("fork() failed: ") + std::strerror(errno);
-    ::close(inPipe[0]); ::close(inPipe[1]);
-    ::close(outPipe[0]); ::close(outPipe[1]);
-    return resp;
-  }
-
-  if (pid == 0) {
-    // ---- child ----
-    ::dup2(inPipe[0], STDIN_FILENO);
-    ::dup2(outPipe[1], STDOUT_FILENO);
-    ::close(inPipe[0]); ::close(inPipe[1]);
-    ::close(outPipe[0]); ::close(outPipe[1]);
-
-    std::vector<char *> argv;
-    argv.reserve(args.size() + 1);
-    for (auto &a : args) argv.push_back(const_cast<char *>(a.c_str()));
-    argv.push_back(nullptr);
-
-    execvp(argv[0], argv.data());
-    // exec failed
-    ::fprintf(stderr, "execvp(%s) failed: %s\n", argv[0], std::strerror(errno));
-    _exit(127);
-  }
-
-  // ---- parent ----
-  ::close(inPipe[0]);
-  ::close(outPipe[1]);
-
-  // Write the request, then close stdin so the child sees EOF.
-  {
-    const char *p = requestJson.data();
-    size_t remaining = requestJson.size();
-    while (remaining > 0) {
-      ssize_t n = ::write(inPipe[1], p, remaining);
-      if (n < 0) {
-        if (errno == EINTR) continue;
-        break;  // child may have died; let the read/wait path report it
-      }
-      p += n;
-      remaining -= static_cast<size_t>(n);
-    }
-  }
-  ::close(inPipe[1]);
-
-  // Read stdout with a poll-based timeout.
-  std::string response;
-  {
-    struct pollfd pfd;
-    pfd.fd = outPipe[0];
-    pfd.events = POLLIN;
-    char buf[4096];
-    bool timedOut = false;
-
-    while (true) {
-      int pr = ::poll(&pfd, 1, timeoutMs);
-      if (pr < 0) {
-        if (errno == EINTR) continue;
-        resp.error = std::string("poll() failed: ") + std::strerror(errno);
-        break;
-      }
-      if (pr == 0) { timedOut = true; break; }
-      ssize_t n = ::read(outPipe[0], buf, sizeof(buf));
-      if (n < 0) {
-        if (errno == EINTR) continue;
-        resp.error = std::string("read() failed: ") + std::strerror(errno);
-        break;
-      }
-      if (n == 0) break;  // EOF: child closed stdout
-      response.append(buf, static_cast<size_t>(n));
-    }
-    ::close(outPipe[0]);
-
-    if (timedOut) {
-      ::kill(pid, SIGKILL);
-      resp.error = "ranker timed out after " + std::to_string(timeoutMs) + "ms";
-    }
-  }
-
-  int status = 0;
-  ::waitpid(pid, &status, 0);
-
-  if (!resp.error.empty()) return resp;
-  if (WIFEXITED(status) && WEXITSTATUS(status) == 127) {
-    resp.error = "ranker exec failed (exit 127)";
-    return resp;
-  }
+  const std::string &response = raw.response;
 
   // P1: prefer per_task_choices: [{"task_id":i,"dep_type":"LD_DEP_*"}, ...]
   // Scan all {"task_id": <int> ... "dep_type": "<str>"} pairs.
@@ -330,15 +242,6 @@ static RankerResponse callRanker(llvm::StringRef cmd,
     resp.selectedIdx = std::stoi(response.substr(colon + 1));
   }
   resp.ok = true;
-
-  auto sp = response.find("\"scratchpad\"");
-  if (sp != std::string::npos) {
-    auto q1 = response.find('"', response.find(':', sp) + 1);
-    auto q2 = (q1 == std::string::npos) ? std::string::npos
-                                        : response.find('"', q1 + 1);
-    if (q1 != std::string::npos && q2 != std::string::npos)
-      resp.scratchpad = response.substr(q1 + 1, q2 - q1 - 1);
-  }
   return resp;
 }
 
@@ -352,6 +255,14 @@ struct LLMPipelineSchedulePass
   void runOnOperation() override {
     func::FuncOp func = getOperation();
     mlir::Builder builder(func.getContext());
+
+    // ---- Step 0: per-kernel tile assignment (writes adora.tile_set) ----
+    // Independent kernels can be placed on different tiles to overlap.  Done
+    // first so downstream stages (and dep_type below) see the tile decision.
+    ADORA::assignTiles(func, clRankerCmd.getValue(),
+                       clRankerTimeoutMs.getValue(), clNumTiles.getValue(),
+                       clPePerTile.getValue(), clDryRun.getValue(),
+                       clRankerLog.getValue());
 
     // ---- Step 1: collect tasks in program order ----
     std::vector<TaskDesc> tasks;
@@ -373,6 +284,19 @@ struct LLMPipelineSchedulePass
               td.loadOp   = pendingLoad;
               td.kernelOp = pendingKernel;
               td.storeOp  = store;
+              // Mark loop-carried tasks in place: a triple whose enclosing
+              // block is an affine.for carrying !ADORA.token iter_args is a
+              // single kernel reused across iterations (software pipelining).
+              // "prev" for such a task = the previous LOOP ITERATION.
+              if (auto forOp =
+                      dyn_cast<mlir::affine::AffineForOp>(block->getParentOp())) {
+                for (mlir::BlockArgument a : forOp.getRegionIterArgs()) {
+                  if (mlir::isa<ADORA::TokenType>(a.getType())) {
+                    td.isLoopCarried = true;
+                    break;
+                  }
+                }
+              }
               tasks.push_back(td);
               pendingLoad   = {};
               pendingKernel = {};
@@ -382,10 +306,45 @@ struct LLMPipelineSchedulePass
       });
     }
 
-    if (tasks.size() < 2) return;  // nothing to pipeline
+    // A single loop-carried task still forms a pipeline pair with its own
+    // previous iteration, so it is decidable on its own.  Straight-line tasks
+    // need at least 2 to have anything to pipeline.
+    bool hasLoopCarried = false;
+    for (const auto &t : tasks)
+      if (t.isLoopCarried) { hasLoopCarried = true; break; }
+    if (tasks.empty() || (!hasLoopCarried && tasks.size() < 2))
+      return;  // nothing to pipeline
 
-    // ---- Step 2: compute RAW deps between consecutive pairs ----
+    // ---- Step 2: compute RAW deps ----
+    // (2a) Loop-carried tasks: the cross-iteration RAW shows up as a LOAD whose
+    // async dep comes from a !ADORA.token iter_arg (a BlockArgument), NOT from a
+    // sibling store op.  A loop body can have several BlockLoads (e.g. GEMM
+    // loads C/A/B but only the C-tile carries the loop-carried token), and the
+    // task's single loadOp is just the LAST one collected — so we must scan ALL
+    // BlockLoads in the loop body, not only t.loadOp.  Per-task granularity:
+    // if ANY load has a cross-iteration RAW, the whole task is serial.
+    for (auto &t : tasks) {
+      if (!t.isLoopCarried || !t.loadOp) continue;
+      mlir::Block *body = t.loadOp->getBlock();
+      for (auto &op : *body) {
+        auto ld = dyn_cast<ADORA::DataBlockLoadOp>(&op);
+        if (!ld) continue;
+        for (mlir::Value dep : ADORA::getAsyncDeps(ld.getOperation())) {
+          if (auto ba = mlir::dyn_cast<mlir::BlockArgument>(dep)) {
+            if (mlir::isa<ADORA::TokenType>(ba.getType())) {
+              t.rawDepOnPrev = true;  // depends on previous iteration's store
+              break;
+            }
+          }
+        }
+        if (t.rawDepOnPrev) break;
+      }
+    }
+
+    // (2b) Straight-line tasks: RAW iff this load reads the previous task's
+    // store op (sibling op in the same block sequence).
     for (size_t i = 1; i < tasks.size(); ++i) {
+      if (tasks[i].isLoopCarried) continue;  // handled in 2a
       if (!tasks[i].loadOp || !tasks[i - 1].storeOp) continue;
       for (mlir::Value dep : ADORA::getAsyncDeps(tasks[i].loadOp.getOperation())) {
         if (dep.getDefiningOp() == tasks[i - 1].storeOp.getOperation()) {
@@ -396,7 +355,12 @@ struct LLMPipelineSchedulePass
     }
 
     // ---- Step 3: build legal options per task (Gamma generation) ----
-    for (size_t i = 1; i < tasks.size(); ++i) {
+    // A loop-carried task is decidable even at index 0 (its "prev" is the
+    // previous iteration), so it must get a legal set too.  Straight-line
+    // tasks only from i>=1 (the first has no textual predecessor).
+    for (size_t i = 0; i < tasks.size(); ++i) {
+      if (i == 0 && !tasks[i].isLoopCarried)
+        continue;  // first straight-line task: no predecessor, leave empty
       if (tasks[i].rawDepOnPrev) {
         tasks[i].legalOptions = {kDepStLast.str()};
       } else if (tasks[i].bankConflict) {
@@ -414,15 +378,17 @@ struct LLMPipelineSchedulePass
     if (useLLM) {
       std::string kernelName = func.getName().str();
       std::string req = buildRequestJson(kernelName, tasks);
-      auto resp = callRanker(clRankerCmd.getValue(), req,
-                             clRankerTimeoutMs.getValue());
+      RankerRawResult raw = callRanker(clRankerCmd.getValue(), req,
+                                       clRankerTimeoutMs.getValue());
+      RankerResponse resp = parseDepTypeResponse(raw);
       if (!resp.ok) {
         func.emitWarning("LLMPipelineSchedulePass: ranker failed (" +
                          resp.error + "), using default plan");
       } else if (!resp.perTaskChoices.empty()) {
         // P1: per-task choices. For each task, accept the LLM's dep_type only
         // if it is in that task's legal_options; otherwise keep a_0 (ST_LAST).
-        for (size_t i = 1; i < tasks.size(); ++i) {
+        for (size_t i = 0; i < tasks.size(); ++i) {
+          if (i == 0 && !tasks[i].isLoopCarried) continue;  // no predecessor
           auto it = resp.perTaskChoices.find(tasks[i].taskIdx);
           if (it == resp.perTaskChoices.end()) continue;  // keep a_0
           const auto &opts = tasks[i].legalOptions;
@@ -433,8 +399,11 @@ struct LLMPipelineSchedulePass
         if (!clRankerLog.getValue().empty()) {
           std::ofstream log(clRankerLog.getValue(), std::ios::app);
           log << "{\"kernel\":\"" << kernelName << "\",\"per_task_choices\":[";
-          for (size_t i = 1; i < tasks.size(); ++i) {
-            if (i > 1) log << ",";
+          bool first = true;
+          for (size_t i = 0; i < tasks.size(); ++i) {
+            if (i == 0 && !tasks[i].isLoopCarried) continue;
+            if (!first) log << ",";
+            first = false;
             log << "{\"task_id\":" << tasks[i].taskIdx
                 << ",\"dep_type\":\"" << chosen[i] << "\"}";
           }
@@ -444,7 +413,8 @@ struct LLMPipelineSchedulePass
         // Legacy whole-plan fallback: idx 1 = all NONE where legal.
         int sel = resp.selectedIdx;
         if (sel == 1) {
-          for (size_t i = 1; i < tasks.size(); ++i) {
+          for (size_t i = 0; i < tasks.size(); ++i) {
+            if (i == 0 && !tasks[i].isLoopCarried) continue;
             const auto &opts = tasks[i].legalOptions;
             if (std::find(opts.begin(), opts.end(), kDepNone.str()) !=
                 opts.end())
@@ -463,7 +433,10 @@ struct LLMPipelineSchedulePass
     }
 
     // ---- Step 5: write hw_dep_type attrs ----
-    for (size_t i = 1; i < tasks.size(); ++i) {
+    // i=0 is written only when it is a loop-carried task (decidable vs its own
+    // previous iteration); a straight-line first task has no predecessor.
+    for (size_t i = 0; i < tasks.size(); ++i) {
+      if (i == 0 && !tasks[i].isLoopCarried) continue;
       auto attr = builder.getStringAttr(chosen[i]);
       if (tasks[i].loadOp)
         tasks[i].loadOp->setAttr(kHwDepTypeAttr, attr);
