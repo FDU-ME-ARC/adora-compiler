@@ -53,13 +53,35 @@ _STRUCTURAL = {"for": 0, "yield": 0, "CONST": 0,
                "Input": 2, "Output": 1, "LocalAlloc": 0,
                "BlockLoad": 0, "BlockStore": 0}
 
+# MLIR arith/math dialect op names (as emitted into the CDFG dot) -> hardware
+# op names in LATENCY above. The DFG dot sometimes carries raw arith.* mnemonics
+# (e.g. "divsi", "muli") instead of the hardware names (SDIV, MUL); map them so
+# the estimator stays robust to front-end op-name choices.
+_ARITH_ALIAS = {
+    "addi": "ADD", "subi": "SUB", "muli": "MUL",
+    "divsi": "SDIV", "divui": "UDIV", "remsi": "SREM", "remui": "UREM",
+    "andi": "AND", "ori": "OR", "xori": "XOR",
+    "shli": "SHL", "shrsi": "ASHR", "shrui": "LSHR",
+    "addf": "FADD32", "subf": "FSUB32", "mulf": "FMUL32", "divf": "FDIV32",
+    "negf": "FSUB32", "cmpi": "EQ", "cmpf": "FEQ32", "select": "SEL",
+    "maxsi": "MAX", "minsi": "MIN", "maxf": "MAX", "minf": "MIN",
+    "extf": "PASS", "truncf": "PASS", "extsi": "PASS", "extui": "PASS",
+    "trunci": "PASS", "sitofp": "PASS", "fptosi": "PASS", "bitcast": "PASS",
+    "sqrt": "FSQRT", "exp": "FSQRT", "log": "FSQRT",  # transcendental ~ heavy
+}
+
 
 def op_latency(opcode: str) -> int:
-    """Return forward latency (cycles) for an op. Case-insensitive fallback."""
+    """Return forward latency (cycles) for an op. Case-insensitive fallback;
+    MLIR arith/math mnemonics are mapped to hardware op names."""
     if opcode in LATENCY:
         return LATENCY[opcode]
     if opcode in _STRUCTURAL:
         return _STRUCTURAL[opcode]
+    # strip a leading dialect prefix like "arith." / "math." if present
+    bare = opcode.split(".")[-1]
+    if bare in _ARITH_ALIAS:
+        return LATENCY[_ARITH_ALIAS[bare]]
     up = opcode.upper()
     if up in LATENCY:
         return LATENCY[up]

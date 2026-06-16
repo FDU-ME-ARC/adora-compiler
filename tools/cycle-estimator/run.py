@@ -116,6 +116,13 @@ def main():
                     help="override config words")
     ap.add_argument("--load-bytes", type=int, default=None)
     ap.add_argument("--store-bytes", type=int, default=None)
+    ap.add_argument("--viz", default=None,
+                    help="render a PE-array occupancy Gantt (PDF/PNG) of the "
+                         "task schedule; requires a SCHEDULED MLIR (with "
+                         "adora.tile_set) and matplotlib")
+    ap.add_argument("--viz-sram", default=None,
+                    help="render a SPAD/SRAM occupancy timeline (PDF/PNG); "
+                         "same inputs as --viz")
     args = ap.parse_args()
 
     if not args.dot and not args.mlir:
@@ -142,11 +149,81 @@ def main():
         if not dots:
             print("no _CDFG.dot produced", file=sys.stderr)
             sys.exit(1)
+        estimates = {}                       # name -> CycleEstimate (source order)
         for dot in dots:
             dot_name = os.path.basename(dot).replace("_CDFG.dot", "")
             loops = _match_loops(loops_map, dot_name)
-            print(estimate_one(dot, loops, **common).report())
+            est = estimate_one(dot, loops, **common)
+            estimates[est.kernel] = est
+            print(est.report())
             print()
+
+        if args.viz or args.viz_sram:
+            _render_viz(args.mlir, estimates,
+                        viz=args.viz, viz_sram=args.viz_sram,
+                        num_alus=(adg.num_alus if adg else args.num_alus),
+                        adg=adg)
+
+
+def _align(mlir_path, estimates):
+    """Align estimate keys (CDFG dot names) with schedule keys (KernelNames) by
+    source order; the dot `_<i>_CDFG` suffix is generated in kernel source order.
+    Returns (aligned_est, aligned_sched) keyed by KernelName."""
+    from extract.sched_info import extract_kernel_sched
+    sched_list = extract_kernel_sched(mlir_path)
+    est_items = list(estimates.items())
+    aligned_est, aligned_sched = {}, {}
+    if len(est_items) == len(sched_list):
+        for (ename, est), ks in zip(est_items, sched_list):
+            aligned_est[ks.name] = est
+            aligned_sched[ks.name] = ks
+    else:
+        print(f"[viz] warning: {len(est_items)} estimates vs {len(sched_list)} "
+              "scheduled kernels; tile mapping may be approximate",
+              file=sys.stderr)
+        sched_by = {s.name: s for s in sched_list}
+        for ename, est in est_items:
+            aligned_est[ename] = est
+            aligned_sched[ename] = sched_by.get(ename)
+    if not any(s and s.tiles != [0] for s in aligned_sched.values()):
+        print("[viz] warning: no kernel has a non-[0] adora.tile_set; is this "
+              "MLIR scheduled? (run cgra-opt --llm-pipeline-schedule first)",
+              file=sys.stderr)
+    return aligned_est, aligned_sched
+
+
+def _spad_capacity(adg):
+    """Total per-tile SPAD capacity in bytes, approximated from the ADG."""
+    if adg is None:
+        return None
+    # iob_spad_bank_size (words) * num_input lanes * (data_width/8) bytes/word
+    elt_b = max(1, (adg.data_width or 32) // 8)
+    cap = (adg.iob_spad_bank_size or 0) * max(1, adg.num_input) * elt_b
+    return cap or None
+
+
+def _render_viz(mlir_path, estimates, viz=None, viz_sram=None,
+                num_alus=None, adg=None):
+    """Render figure A (PE-array Gantt) and/or figure B (SPAD occupancy)."""
+    try:
+        from viz.timeline import render, render_sram
+    except Exception as e:                   # pragma: no cover
+        print(f"[viz] skipped (import failed: {e})", file=sys.stderr)
+        return
+    aligned_est, aligned_sched = _align(mlir_path, estimates)
+
+    if viz:
+        out = render(aligned_est, aligned_sched, viz, num_alus=num_alus)
+        print(f"[viz] wrote {out}"
+              + (f" (+ {out[:-4]}.png)" if out.lower().endswith('.pdf') else ""),
+              file=sys.stderr)
+    if viz_sram:
+        cap = _spad_capacity(adg)
+        out = render_sram(aligned_est, aligned_sched, viz_sram,
+                          spad_capacity=cap)
+        print(f"[viz] wrote {out}"
+              + (f" (+ {out[:-4]}.png)" if out.lower().endswith('.pdf') else ""),
+              file=sys.stderr)
 
 
 if __name__ == "__main__":

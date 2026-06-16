@@ -101,6 +101,8 @@ class CycleEstimate:
     store: int
     total: int
     overlap: bool = True
+    load_bytes: int = 0     # raw data-movement bytes (for SRAM-occupancy viz)
+    store_bytes: int = 0
 
     def report(self) -> str:
         return (
@@ -161,4 +163,5 @@ def estimate_cycles(cdfg: CDFG, loops: KernelLoops, *,
         rec_mii=ii_info["RecMII"], res_mii=ii_info["ResMII"],
         inner_trip=inner, outer_trip=outer, drain=drain,
         config=cfg_c, load=load_c, store=store_c, total=total, overlap=overlap,
+        load_bytes=load_bytes, store_bytes=store_bytes,
     )
