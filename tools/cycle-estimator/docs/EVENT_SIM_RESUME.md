@@ -18,14 +18,27 @@
 - 文档：EVENT_SIM_ARCH.md（架构）、EVENT_SIM_REDESIGN.md（重写设计）、EVENT_SIM_PLAN.md（计划）。
 
 ### 三例子结果（spec=cgra_bf16，DMA_BPC=16）
-| 例子 | 结构 | events | makespan | overlap | conflicts |
-|---|---|---|---|---|---|
-| gesummv | 外层 for×64 包 ADORA op；2 kernel；跨 kernel RAR | 768 | 8737 | 1.49x | 0 |
-| tri | ADORA op 跑一次；for 全在 kernel 体内 | 7 | 408 | 1.16x | 0 |
-| attn | 外层 for×8 + iter_args 携带 4 token（loop-carried） | 132 | 2248 | 1.26x | 0 |
 
 - gesummv 8737 vs 旧公式 4480（compute-only）→ 迭代间 load 已计入。
 - 跨 kernel RAR（E8←E2）、loop-carried token（E25←E9/E13）均从 IR 直接读出、验证通过。
+
+### ★ 全部 8 个正式实验例子已跑通并出图（明天检查用）
+路径：`experiment/taskschedule/complex/<name>/_gantt/_cc/adora-cc-ir/3_task-schedule/<name>.final.mlir`
+完整数字见 `docs/EVENT_SIM_RESULTS.md`；图在 `/tmp/evsim_all/<name>_{gantt,sram}.png`（共 16 张，0 冲突）。
+
+| 例子 | trip | events | makespan | overlap |
+|---|---|---|---|---|
+| atax | 1 | 13 | 592 | 1.12x |
+| attn | 8 | 132 | 2248 | 1.26x |
+| cholesky | 16 | 195 | 4620 | 1.05x |
+| ffn | 1 | 7 | 33412 | 1.01x (单大 kernel) |
+| gesummv | 64 | 768 | 8737 | 1.49x |
+| jacobi1d | 8 | 100 | 992 | 1.00x (token 链强制串行,非bug) |
+| sobel | 62 | 1126 | 18732 | 1.54x |
+| viterbi | 1 | 10 | 88 | 1.06x |
+
+批量重跑：`tools/cycle-estimator/` 下对每个 name 跑
+`python3 run.py --event-sim --mlir <f> --spec <vitra_spec.json> --viz /tmp/o/<n>_gantt.png --viz-sram /tmp/o/<n>_sram.png`
 - 6 张图在 /tmp/evsim_out/（gesummv/tri/attn × gantt/sram）。
 
 ### 重跑命令
