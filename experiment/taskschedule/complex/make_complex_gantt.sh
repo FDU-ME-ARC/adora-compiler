@@ -25,7 +25,7 @@ RANKER="${AGENT_ROOT}/experiments/llm_pipeline_tuning/task_schedule_ranker.py"
 export PATH="${ROOT}/build/bin:${CGEIST_DIR}:${PATH}"
 export ADORA_MLIR_CORE="${ADORA_MLIR_CORE:-/data00/home/loujiahang/CGRVOPT/llvm-project-onnx/build/python_packages/mlir_core}"
 
-KERNELS=(attn ffn fft sobel viterbi atax jacobi1d cholesky)
+KERNELS=(attn ffn sobel viterbi atax jacobi1d cholesky)
 FILTER="${1:-}"
 ok=0; fail=0
 echo "=== C -> Gantt for complex/ kernels (14..18) ==="

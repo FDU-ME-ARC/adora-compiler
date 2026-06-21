@@ -34,8 +34,14 @@ class KernelSched:
 
     @property
     def overlaps_prev(self) -> bool:
-        """True if this kernel may overlap with prior tasks (no serial barrier)."""
-        return self.dep_type == _DEP_NONE or not self.dep_on
+        """True if this kernel may overlap with prior tasks (no serial barrier).
+
+        Judged SOLELY by dep_type: LD_DEP_NONE means no RAW barrier, so it may
+        overlap. Must NOT also test `dep_on` here -- dep_on is DERIVED from this
+        flag later (serial-chain backfill), so including it created a circular
+        definition (`not dep_on` was always True before backfill, making
+        overlaps_prev always True and the dep_on backfill never fire)."""
+        return self.dep_type == _DEP_NONE
 
 
 def _parse_i64_array(attr_str: str) -> list[int]:

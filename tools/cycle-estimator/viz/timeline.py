@@ -63,13 +63,20 @@ def _kernel_phases(est, base: int) -> list[Phase]:
 
     compute = est.outer_trip * (est.II * est.inner_trip + est.drain)
     if getattr(est, "overlap", True):
-        # memory (load->store) and compute run concurrently from t.
+        # Heterogeneous-token HW overlaps data movement with compute, but the
+        # data-flow order still holds: LOAD feeds the pipeline at the head,
+        # COMPUTE runs concurrently, and STORE writes results back only AFTER
+        # compute has produced them -> store sits at the COMPUTE TAIL, not right
+        # after load. (Previously store was drawn at t+load, which looked like
+        # "load then immediately store".)
+        body = max(est.load + est.store, compute)  # body window length
         if est.load > 0:
             phases.append(Phase("load", t, est.load))
-        if est.store > 0:
-            phases.append(Phase("store", t + est.load, est.store))
         if compute > 0:
             phases.append(Phase("compute", t, compute))
+        if est.store > 0:
+            # tail-align store to the end of the body window
+            phases.append(Phase("store", t + body - est.store, est.store))
     else:
         if est.load > 0:
             phases.append(Phase("load", t, est.load)); t += est.load
@@ -197,24 +204,29 @@ def render(estimates: dict, scheds: dict, out_path: str,
 
 def _occupancy_steps(intervals):
     """Given [(start, end, bytes)], return (xs, ys) of a step function = total
-    occupied bytes over time (stacked, since concurrent buffers coexist)."""
-    events = []
+    occupied bytes over time (stacked, since concurrent buffers coexist).
+
+    All deltas at the SAME time point are merged before emitting a value, so a
+    buffer ending exactly when another begins does NOT produce a spurious dip to
+    zero (the previous version processed -b then +b separately, drawing a fake
+    sawtooth down-and-up at shared boundaries)."""
+    from collections import defaultdict
+    delta = defaultdict(int)
     for s, e, b in intervals:
         if b <= 0 or e <= s:
             continue
-        events.append((s, +b))
-        events.append((e, -b))
-    if not events:
+        delta[s] += b
+        delta[e] -= b
+    if not delta:
         return [0], [0]
-    events.sort()
     xs, ys, cur = [], [], 0
-    last_x = events[0][0]
-    xs.append(last_x); ys.append(0)
-    for x, d in events:
-        if x != last_x:
-            xs.append(x); ys.append(cur)
-            last_x = x
-        cur += d
+    times = sorted(delta)
+    # start baseline at first event time
+    xs.append(times[0]); ys.append(0)
+    for x in times:
+        # value just before x (left edge of the step)
+        xs.append(x); ys.append(cur)
+        cur += delta[x]          # apply ALL deltas at this instant at once
         xs.append(x); ys.append(cur)
     return xs, ys
 

@@ -133,14 +133,14 @@ benchmark 补成完整 MLIR 再出甘特。
 |--------|--------|--------:|:----:|------|
 | attn | complex/attn/attn.c | 3 | OK | 线性链 QK→AV |
 | ffn | complex/ffn/ffn.c | 4 | OK | |
-| fft | complex/fft/fft.c | 7 | OK | 对数链 butterfly |
+| fft | （已移除） | — | — | hw_dep_type 标注与对数链真实依赖不符（上游 schedule pass 只给 fft_1/fft_2 标 dep、命名 fft_0/1/2 vs stage0-3 错位），留着误导，已 git rm |
 | sobel | complex/sobel/sobel.c | 3 | OK | 菱形依赖 |
 | viterbi | complex/viterbi/viterbi.c | 1 | OK | loop-carried |
 | atax | complex/atax/atax.c（新写） | 2 | OK | 2-stage 链 tmp=A·x; y=Aᵀ·tmp |
 | jacobi1d | complex/jacobi1d/jacobi1d.c（新写） | 2 | OK | loop-carried stencil |
 | cholesky | complex/cholesky/cholesky.c（新写，矩形化） | 2 | OK | 见 B4 解决方案 |
 
-总计 18 个 benchmark 全部出甘特（01–10 共 10 + complex 8）。
+总计 17 个 benchmark 出甘特（01–10 共 10 + complex 7；fft 已移除）。
 
 ### 实现时修的 bug
 - **B-fix1（estimator）**：`latency_table.op_latency` 不认 MLIR arith 助记符（divsi/muli 等），
@@ -164,4 +164,4 @@ benchmark 补成完整 MLIR 再出甘特。
 
 ### 一键复现
 - `make_all_gantt.sh` — 01–10
-- `complex/make_complex_gantt.sh` — attn/ffn/fft/sobel/viterbi/atax/jacobi1d（cholesky 会触发 B4）
+- `complex/make_complex_gantt.sh` — attn/ffn/sobel/viterbi/atax/jacobi1d/cholesky（cholesky 已矩形化绕过 B4；fft 已移除）
