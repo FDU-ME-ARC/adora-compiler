@@ -149,11 +149,44 @@ def extract_kernel_loops(mlir_path: str) -> list[KernelLoops]:
                             if a.name in ("KernelName", "kernel_name", "sym_name"):
                                 kname = str(a.attr).strip('"')
                         trips: list[int] = []
-                        elt = 4
+                        # (1) ENCLOSING affine.for loops that wrap this kernel and
+                        # make it RE-EXECUTE N times (outermost first). Without
+                        # this, a kernel inside `affine.for i=0..64` was counted
+                        # once instead of 64x -> grossly underestimated cycles
+                        # (e.g. gesummv: 132 instead of ~8000).
+                        trips.extend(_enclosing_loop_trips(co))
+                        # (2) loops INSIDE the kernel body (the pipelined ones)
                         _collect_loops(co, trips)
+                        elt = 4
                         elt = _first_memref_elt(co, elt)
                         out.append(KernelLoops(kname, trips, elt))
                     find_kernels(co, parent_name)
+
+    def _enclosing_loop_trips(kernel_op):
+        """Trip counts of affine.for loops that enclose kernel_op (outermost
+        first). The kernel executes once per iteration of each, so these
+        multiply its total cycle count. Uses the MLIR-py `.parent` attribute
+        (an Operation), walking up until the top."""
+        trips: list[int] = []
+        cur = None
+        try:
+            cur = kernel_op.parent
+        except Exception:
+            cur = None
+        while cur is not None:
+            try:
+                if cur.name == "affine.for":
+                    t = _for_trip(cur)
+                    if t is not None:
+                        trips.append(t)
+            except Exception:
+                pass
+            try:
+                cur = cur.parent
+            except Exception:
+                cur = None
+        trips.reverse()  # outermost first
+        return trips
 
     def _collect_loops(op, trips):
         for region in op.regions:

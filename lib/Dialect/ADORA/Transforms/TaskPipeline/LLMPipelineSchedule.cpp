@@ -114,8 +114,14 @@ struct TaskDesc {
   ADORA::DataBlockStoreOp storeOp;
 
   // Data filled during analysis
-  bool rawDepOnPrev = false;  // true if loadOp reads storeOp of prev task
+  bool rawDepOnPrev = false;  // true if loadOp reads the store of ANY earlier
+                              // task (not only the immediately previous one) --
+                              // covers fork-join / diamond deps, not just chains
   bool bankConflict = false;  // true if active banks overlap (from ADG)
+  // Task indices this task RAW-depends on (its load reads their store). For a
+  // straight-line chain this is {i-1}; for fork-join (e.g. gesummv merge reads
+  // Stage1 AND Stage2) it can be multiple / non-adjacent predecessors.
+  std::vector<int> depPreds;
   // True if this task is a single kernel inside an affine.for that carries
   // !ADORA.token iter_args (iteration-to-iteration kernel reuse / software
   // pipelining).  For such a task "prev" means the PREVIOUS LOOP ITERATION,
@@ -146,6 +152,12 @@ static std::string buildRequestJson(llvm::StringRef kernelName,
     const auto &t = tasks[i];
     os << "    {\"task_id\": " << t.taskIdx
        << ", \"raw_dep_on_prev\": " << (t.rawDepOnPrev ? "true" : "false")
+       << ", \"dep_preds\": [";
+    for (size_t k = 0; k < t.depPreds.size(); ++k) {
+      os << t.depPreds[k];
+      if (k + 1 < t.depPreds.size()) os << ", ";
+    }
+    os << "]"
        << ", \"is_loop_carried\": " << (t.isLoopCarried ? "true" : "false")
        << ", \"legal_options\": [";
     for (size_t j = 0; j < t.legalOptions.size(); ++j) {
@@ -341,15 +353,26 @@ struct LLMPipelineSchedulePass
       }
     }
 
-    // (2b) Straight-line tasks: RAW iff this load reads the previous task's
-    // store op (sibling op in the same block sequence).
+    // (2b) Straight-line tasks: RAW iff this task's load(s) read the store of
+    // ANY earlier task -- not only the immediately previous one. This covers
+    // fork-join / diamond dependencies (e.g. gesummv's merge reads Stage1 AND
+    // Stage2, the latter being non-adjacent). We collect ALL such predecessors
+    // into depPreds; rawDepOnPrev stays as the coarse "has any RAW predecessor"
+    // flag used for legal-option generation.
     for (size_t i = 1; i < tasks.size(); ++i) {
       if (tasks[i].isLoopCarried) continue;  // handled in 2a
-      if (!tasks[i].loadOp || !tasks[i - 1].storeOp) continue;
-      for (mlir::Value dep : ADORA::getAsyncDeps(tasks[i].loadOp.getOperation())) {
-        if (dep.getDefiningOp() == tasks[i - 1].storeOp.getOperation()) {
-          tasks[i].rawDepOnPrev = true;
-          break;
+      if (!tasks[i].loadOp) continue;
+      // async deps of this task's load -> which earlier task's store produced them
+      llvm::SmallVector<mlir::Value> deps(
+          ADORA::getAsyncDeps(tasks[i].loadOp.getOperation()));
+      for (size_t j = 0; j < i; ++j) {
+        if (!tasks[j].storeOp) continue;
+        for (mlir::Value dep : deps) {
+          if (dep.getDefiningOp() == tasks[j].storeOp.getOperation()) {
+            tasks[i].depPreds.push_back(tasks[j].taskIdx);
+            tasks[i].rawDepOnPrev = true;
+            break;
+          }
         }
       }
     }
