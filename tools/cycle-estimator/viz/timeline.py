@@ -304,3 +304,137 @@ def render_sram(estimates: dict, scheds: dict, out_path: str,
         fig.savefig(out_path[:-4] + ".png", dpi=160, bbox_inches="tight")
     plt.close(fig)
     return out_path
+
+
+# ===========================================================================
+# Event-level (cycle-accurate) renderers — consume a core.event_sim.Timeline.
+# These replace the formula-based phase摆放 with the SIMULATED [start,finish)
+# of every Event, so inter-iteration load / DMA‖compute overlap are drawn as
+# actually scheduled, not摆出来的.
+# ===========================================================================
+_OPCODE_COLORS = {
+    "LOAD":   "#4c78a8",   # blue
+    "STORE":  "#e8893a",   # orange
+    "KERNEL": "#59a14f",   # green
+    "ALLOC":  "#9aa0a6",   # gray
+    "CONFIG": "#bbbbbb",
+}
+
+
+def render_event_gantt(timeline, out_path: str,
+                       title: str = "ADORA cycle-accurate event timeline",
+                       max_cycles: int | None = None) -> str:
+    """Figure A: one Gantt row per resource unit (DMA, PE-tile*).
+
+    Each Event is drawn at its SIMULATED [start, finish); colour = opcode.
+    DMA and PE rows running in the same x-window = DMA‖compute overlap.
+    ``max_cycles`` zooms the x-axis to show the steady-state pipeline.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    rows = timeline.by_resource()  # {("DMA",): [...], ("PE",tile): [...]}
+    def _row_key(k):
+        return (0, 0) if k[0] == "DMA" else (1, k[1])
+    keys = sorted(rows.keys(), key=_row_key)
+    row_of = {k: i for i, k in enumerate(keys)}
+    labels = ["DMA" if k[0] == "DMA" else f"PE tile {k[1]}" for k in keys]
+
+    span = max_cycles if max_cycles else timeline.makespan
+    fig_w = max(8.0, min(span / 60.0 + 3.0, 26.0))
+    fig, ax = plt.subplots(figsize=(fig_w, 1.0 + 0.8 * len(keys)))
+    row_h = 0.7
+
+    for k in keys:
+        y = row_of[k]
+        for e in rows[k]:
+            if e.cost <= 0:
+                continue
+            if max_cycles and e.start >= max_cycles:
+                continue
+            ax.broken_barh([(e.start, e.cost)], (y - row_h / 2, row_h),
+                           facecolors=_OPCODE_COLORS.get(e.opcode.name, "#888"),
+                           edgecolors="#222", linewidth=0.3, zorder=3)
+
+    ax.set_yticks(range(len(keys)))
+    ax.set_yticklabels(labels)
+    ax.set_ylim(-0.6, len(keys) - 0.4)
+    ax.set_xlim(0, span * 1.02)
+    ax.set_xlabel("cycle (simulated, cycle-accurate)")
+    ax.set_title(title + f"   makespan={timeline.makespan}")
+    ax.grid(axis="x", linestyle=":", alpha=0.4, zorder=0)
+    ax.invert_yaxis()
+    legend = [Patch(facecolor=_OPCODE_COLORS[k], label=k)
+              for k in ("LOAD", "KERNEL", "STORE", "ALLOC")]
+    ax.legend(handles=legend, loc="upper right", ncol=4, fontsize=8,
+              framealpha=0.9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=160, bbox_inches="tight")
+    if out_path.lower().endswith(".pdf"):
+        fig.savefig(out_path[:-4] + ".png", dpi=160, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+def render_event_sram(timeline, out_path: str,
+                      title: str = "ADORA SPAD occupancy (cycle-accurate)",
+                      bank_size: int | None = None,
+                      max_cycles: int | None = None) -> str:
+    """Figure B: time (x) × SPAD address (y) × which buffer/op holds it.
+
+    Each SRAMAccess is a rectangle [start,finish) × [addr_lo,addr_hi), coloured
+    per logical buffer stream.  Bank boundaries are dashed lines.  Rotating
+    slots of the same buffer appear as bands at different addresses across
+    iterations (double/triple buffering made visible).
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    accesses = timeline.sram
+    if not accesses:
+        raise ValueError("no SRAM accesses to plot")
+
+    def _stream(buf):
+        return buf.split("#", 1)[0]
+    streams = sorted({_stream(a.buf) for a in accesses})
+    cmap = plt.get_cmap("tab10")
+    col = {s: cmap(i % 10) for i, s in enumerate(streams)}
+
+    span = max_cycles if max_cycles else timeline.makespan
+    max_addr = max(a.addr_hi for a in accesses)
+    fig_w = max(8.0, min(span / 60.0 + 3.0, 26.0))
+    fig, ax = plt.subplots(figsize=(fig_w, 4.4))
+
+    for a in accesses:
+        if max_cycles and a.start >= max_cycles:
+            continue
+        ax.broken_barh([(a.start, max(1, a.finish - a.start))],
+                       (a.addr_lo, a.addr_hi - a.addr_lo),
+                       facecolors=col[_stream(a.buf)], alpha=0.75,
+                       edgecolors="#333", linewidth=0.3, zorder=3)
+
+    if bank_size:
+        nb = (max_addr // bank_size) + 1
+        for b in range(1, nb + 1):
+            ax.axhline(b * bank_size, ls="--", color="#999", linewidth=0.8,
+                       zorder=2)
+
+    ax.set_xlim(0, span * 1.02)
+    ax.set_ylim(0, max_addr * 1.05)
+    ax.set_xlabel("cycle (simulated)")
+    ax.set_ylabel("SPAD byte address" + (f"  (bank={bank_size}B)" if bank_size else ""))
+    ax.set_title(title)
+    ax.grid(axis="x", linestyle=":", alpha=0.4, zorder=0)
+    legend = [Patch(facecolor=col[s], label=s) for s in streams]
+    ax.legend(handles=legend, loc="upper right", ncol=2, fontsize=7,
+              framealpha=0.9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=160, bbox_inches="tight")
+    if out_path.lower().endswith(".pdf"):
+        fig.savefig(out_path[:-4] + ".png", dpi=160, bbox_inches="tight")
+    plt.close(fig)
+    return out_path

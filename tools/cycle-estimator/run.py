@@ -123,7 +123,26 @@ def main():
     ap.add_argument("--viz-sram", default=None,
                     help="render a SPAD/SRAM occupancy timeline (PDF/PNG); "
                          "same inputs as --viz")
+    # ---- cycle-accurate event-level simulator (docs/EVENT_SIM_ARCH.md) ----
+    ap.add_argument("--event-sim", action="store_true",
+                    help="run the cycle-accurate event-level simulator on a "
+                         "SCHEDULED MLIR (adora.scheduled); prints makespan + "
+                         "overlap and (with --viz/--viz-sram) emits event-driven "
+                         "Gantt / SPAD figures")
+    ap.add_argument("--spec", default=None,
+                    help="vitra_spec.json (DMA bandwidth / SPAD banks / PE); "
+                         "if omitted, built-in defaults are used")
+    ap.add_argument("--dma-bpc", type=int, default=None,
+                    help="override DMA bytes/cycle (default from --spec)")
+    ap.add_argument("--dma-setup", type=int, default=0,
+                    help="DMA startup latency (calibration residual, default 0)")
+    ap.add_argument("--max-cycles", type=int, default=None,
+                    help="zoom event figures to the first N cycles")
     args = ap.parse_args()
+
+    if args.event_sim:
+        _run_event_sim(args)
+        return
 
     if not args.dot and not args.mlir:
         ap.error("need --dot or --mlir")
@@ -224,6 +243,47 @@ def _render_viz(mlir_path, estimates, viz=None, viz_sram=None,
         print(f"[viz] wrote {out}"
               + (f" (+ {out[:-4]}.png)" if out.lower().endswith('.pdf') else ""),
               file=sys.stderr)
+
+
+def _run_event_sim(args):
+    """Cycle-accurate event-level simulation entry point.
+
+    Requires a SCHEDULED MLIR (adora.scheduled).  Builds the Event graph
+    (extract.event_build), runs the discrete-event simulator (core.event_sim),
+    prints the makespan/overlap summary, and — if --viz/--viz-sram given —
+    renders the event-driven Gantt (figure A) and SPAD occupancy (figure B).
+    """
+    if not args.mlir:
+        print("--event-sim needs --mlir <scheduled.mlir>", file=sys.stderr)
+        sys.exit(1)
+
+    from extract.event_build import build_event_graph, CostModel
+    from core.event_sim import simulate, summarize
+
+    spec = None
+    if args.spec:
+        from arch.spec import load_spec
+        spec = load_spec(args.spec)
+
+    dma_bpc = args.dma_bpc or (spec.dma_bpc if spec else 16)
+    cost = CostModel(dma_bpc=dma_bpc, dma_setup=args.dma_setup)
+
+    g = build_event_graph(args.mlir, cost=cost, spec=spec)
+    tl = simulate(g)
+    print(summarize(g, tl))
+
+    if args.viz:
+        from viz.timeline import render_event_gantt
+        out = render_event_gantt(tl, args.viz, max_cycles=args.max_cycles,
+                                 title=f"{os.path.basename(args.mlir)} — event timeline")
+        print(f"[viz] wrote {out}", file=sys.stderr)
+    if args.viz_sram:
+        from viz.timeline import render_event_sram
+        bank = spec.spad_bank_size if spec else None
+        out = render_event_sram(tl, args.viz_sram, bank_size=bank,
+                                max_cycles=args.max_cycles,
+                                title=f"{os.path.basename(args.mlir)} — SPAD occupancy")
+        print(f"[viz] wrote {out}", file=sys.stderr)
 
 
 if __name__ == "__main__":
