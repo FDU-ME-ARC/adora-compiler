@@ -113,5 +113,83 @@ mem-bound kernel 偏低（B-cyc-1），看图时需知道这是公式近似、�
 ## 4. 给接手人的 TL;DR
 - 现在的周期 = 公式近似，**迭代间 load 漏算**（gesummv 类 mem-bound 偏低）
 - 根因：dot 的 size 是 per-iter tile，但 cycle_model 当 whole-nest 只算一次
-- 正解：改**事件级仿真**（按外层 for + op 序 + 依赖逐事件推进），见 §2
+- 正解：改**事件级仿真**（按外层 for + op 序 + 依赖逐事件推进），见 §2 / §5
 - 入口数据全都有（op 序/依赖/代价/资源），主要是写 `core/event_sim.py` + 改出图
+
+---
+
+## 5. 参考实现：AdaTileSim（只借范式，不照抄、不做那么精细）
+
+参考项目：`/data00/home/loujiahang/agent/AdaTileSim`（一个成熟的 cycle-accurate NPU 仿真器）。
+
+> **定位（重要）**：我们**只借它的调度范式**（依赖驱动 + 逐拍推进 + SRAM 占用记录），
+> **不照抄代码、不做它那么精细**。AdaTileSim 是 cycle-accurate 全功能仿真器（NoC/多 device/
+> DSL/分支等），ADORA 这边只要一个**轻量事件级仿真**：够把「迭代间 load、依赖等待、资源占用」
+> 仿出来、让甘特/SRAM 图可信即可。**够用就停，不追求 cycle 级精确**。
+> 一句话：要的是「事件级近似」而非「cycle-accurate 仿真」——比现在的公式准、比 AdaTileSim 简单。
+
+### 5.1 借鉴这三个核心范式（看懂思路，自己写精简版，别照抄）（路径 `python/adt/simulator/`）
+
+**(a) `instruction.py::Instruction` — 依赖驱动的事件模型**
+```python
+@dataclass
+class Instruction:
+    opcode: Opcode                 # LOAD / STORE / TCORE_OP(compute) ...
+    ready_counter: int = 0         # 还有几个前驱没完成；==0 才能执行
+    children: Set[Instruction]     # 我完成后通知谁
+    start_cycle: int = -1
+    finish_cycle: int = -1
+    def is_ready(self): return self.ready_counter == 0 and not self.finished
+    def finish(self, cyc):         # 完成时驱动依赖图前进
+        self.finish_cycle = cyc; self.finished = True
+        for c in self.children: c.ready_counter -= 1
+```
+→ ADORA 版：每个 `BlockLoad/LocalMemAlloc/Kernel/BlockStore`（×外层 for 每次迭代）= 一个
+  Instruction；依赖来自 async token / SSA（load 读的 memref 是哪个 store/alloc 写的）。
+
+**(b) `scheduler.py::_simulate` — 逐拍事件推进主循环**
+```python
+current_cycle = 0
+while current_cycle < max_cycles:
+    for pe in pes: pe.cycle(current_cycle)   # 每个资源单元推进就绪指令
+    if all(pe.all_finished()): break
+    if no_progress > hang_threshold: report_hang()  # 依赖死锁能报出来
+    current_cycle += 1
+```
+→ ADORA 版：单 tile 至少有 {DMA 引擎, PE 阵列} 两类资源单元；每拍各自挑就绪指令执行，
+  受资源占用 + 依赖约束。迭代间 load 自然被展开成多个 LOAD 事件 → B-cyc-1 解决。
+
+**(c) `sram_tracker.py::SRAMAccess` — 图 B「数据段被占据」的现成数据结构**
+```python
+@dataclass
+class SRAMAccess:
+    sram_name: str
+    addr_lo: int; addr_hi: int      # 地址区间（byte）
+    start_cycle: int; finish_cycle: int   # 时间窗
+    access_type: str                # load/store/tcore_read/tcore_write
+    inst_name: str                  # 对应哪条指令
+```
+→ 这正是用户要的：**横轴时间 × 纵轴地址段 × 谁占 × 对应哪条 MLIR 指令**。仿真时每个
+  LOAD/STORE/Kernel 产生一条 SRAMAccess，直接喂给图 B。bank 维度 = 按 addr 段划分。
+
+### 5.2 ADORA 适配要点（与 AdaTileSim 的差异）
+- **输入**：AdaTileSim 从它自己的 DSL/task-IR 构 TileGraph；ADORA 改为从 scheduled MLIR
+  读 op 序 + async deps + memref SSA（复用现有 `extract/loop_info.py` 的 MLIR-py 遍历）。
+- **代价**：LOAD/STORE = `dma_cycles(per-iter tile bytes)`（dot per-buffer size）；
+  Kernel = `II*inner + drain`（复用现有 II 估计）。
+- **资源**：先做 {1 个 DMA 引擎串行 + 1 个 PE 阵列} 最简模型（Stage C 再细化 bank/多 DMA）。
+- **去掉**：NoC、多 device、inter-device link、nocsim C++ bridge、broadcast/multicast、
+  RUNTIME_BRANCH —— ADORA 单芯片任务调度用不到。
+
+### 5.3 落地映射（新文件）
+| AdaTileSim | ADORA cycle-estimator 新文件 |
+|---|---|
+| `instruction.py::Instruction` | `core/event.py::Event`（精简版：opcode/ready_counter/children/cost/res/sram_access） |
+| `scheduler.py::_simulate` | `core/event_sim.py::simulate(events, resources) -> timeline` |
+| `sram_tracker.py` | `core/sram_track.py`（借鉴 SRAMAccess 结构，自己写精简版） |
+| `loader`（DSL→graph） | `extract/event_build.py`：scheduled MLIR → Event 图（按外层 for 展开 + 连依赖） |
+| 出图 | `viz/timeline.py` 改吃 Event timeline（甘特按 Event、SRAM 按 SRAMAccess） |
+
+> 建议从 Stage A 起步：只跑 gesummv_0 单 kernel，参照 (a)(b)(c) 的思路写最简版，验证总周期
+> 含迭代间 load（不再是 4480 这种 compute-only 低估值）。跑通后再加多 kernel/资源。
+
