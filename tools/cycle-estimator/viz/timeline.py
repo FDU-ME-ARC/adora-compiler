@@ -438,3 +438,135 @@ def render_event_sram(timeline, out_path: str,
         fig.savefig(out_path[:-4] + ".png", dpi=160, bbox_inches="tight")
     plt.close(fig)
     return out_path
+
+
+# ---------------------------------------------------------------------------
+# Shared-axis drawing helpers — each helper draws onto a caller-supplied `ax`
+# so both the standalone renderers and the combined view can reuse them.
+# Each helper does its own lazy matplotlib import.
+# ---------------------------------------------------------------------------
+def _draw_event_gantt(ax, timeline, max_cycles=None):
+    """Draw the resource-occupancy Gantt (DMA / PE-tile rows) onto *ax*.
+
+    Returns (keys, labels) so callers can use the row count for figure sizing.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    rows = timeline.by_resource()
+
+    def _row_key(k):
+        return (0, 0) if k[0] == "DMA" else (1, k[1])
+    keys   = sorted(rows.keys(), key=_row_key)
+    row_of = {k: i for i, k in enumerate(keys)}
+    labels = ["DMA" if k[0] == "DMA" else f"PE tile {k[1]}" for k in keys]
+
+    row_h = 0.7
+    for k in keys:
+        y = row_of[k]
+        for e in rows[k]:
+            if e.cost <= 0:
+                continue
+            if max_cycles and e.start >= max_cycles:
+                continue
+            ax.broken_barh([(e.start, e.cost)], (y - row_h / 2, row_h),
+                           facecolors=_OPCODE_COLORS.get(e.opcode.name, "#888"),
+                           edgecolors="#222", linewidth=0.3, zorder=3)
+
+    ax.set_yticks(range(len(keys)))
+    ax.set_yticklabels(labels)
+    ax.set_ylim(-0.6, len(keys) - 0.4)
+    ax.grid(axis="x", linestyle=":", alpha=0.4, zorder=0)
+    ax.invert_yaxis()
+    legend = [Patch(facecolor=_OPCODE_COLORS[k], label=k)
+              for k in ("LOAD", "KERNEL", "STORE", "ALLOC")]
+    ax.legend(handles=legend, loc="upper right", ncol=4, fontsize=8,
+              framealpha=0.9)
+    return keys, labels
+
+
+def _draw_event_sram(ax, timeline, bank_size=None, max_cycles=None):
+    """Draw the time × SPAD-address × buffer map onto *ax*. Returns max_addr."""
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    accesses = timeline.sram
+    if not accesses:
+        raise ValueError("no SRAM accesses to plot")
+
+    def _stream(buf):
+        return buf.split("#", 1)[0]
+    streams  = sorted({_stream(a.buf) for a in accesses})
+    cmap     = plt.get_cmap("tab10")
+    col      = {s: cmap(i % 10) for i, s in enumerate(streams)}
+    max_addr = max(a.addr_hi for a in accesses)
+
+    for a in accesses:
+        if max_cycles and a.start >= max_cycles:
+            continue
+        ax.broken_barh([(a.start, max(1, a.finish - a.start))],
+                       (a.addr_lo, a.addr_hi - a.addr_lo),
+                       facecolors=col[_stream(a.buf)], alpha=0.75,
+                       edgecolors="#333", linewidth=0.3, zorder=3)
+
+    if bank_size:
+        nb = (max_addr // bank_size) + 1
+        for b in range(1, nb + 1):
+            ax.axhline(b * bank_size, ls="--", color="#999", linewidth=0.8,
+                       zorder=2)
+
+    ax.set_ylim(0, max_addr * 1.05)
+    ax.set_ylabel("SPAD byte address"
+                  + (f"  (bank={bank_size}B)" if bank_size else ""))
+    ax.grid(axis="x", linestyle=":", alpha=0.4, zorder=0)
+    legend = [Patch(facecolor=col[s], label=s) for s in streams]
+    ax.legend(handles=legend, loc="upper right", ncol=2, fontsize=7,
+              framealpha=0.9)
+    return max_addr
+
+
+def render_event_combined(timeline, out_path: str,
+                          title: str = "ADORA cycle-accurate event timeline",
+                          bank_size: int | None = None,
+                          max_cycles: int | None = None) -> str:
+    """Combined view: hardware Gantt (top) + SPAD address map (bottom) sharing
+    one x (cycle) axis, so PE/DMA activity lines up vertically with the exact
+    SPAD addresses being touched at that moment.
+
+    Top panel  = DMA / PE-tile resource rows (per-event [start,finish)).
+    Bottom panel = time × SPAD address × buffer rectangles.
+    The two panels share the x-axis (sharex), so a DMA LOAD bar sits directly
+    above the address band it fills, and PE KERNEL bars line up with the SPAD
+    regions they read/write — making double/triple-buffer overlap legible.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    rows = timeline.by_resource()
+    n_rows = max(1, len(rows))
+    span = max_cycles if max_cycles else timeline.makespan
+    fig_w = max(8.0, min(span / 60.0 + 3.0, 26.0))
+    gantt_h = 0.8 * n_rows
+    sram_h = 4.4
+    fig, (ax_g, ax_s) = plt.subplots(
+        2, 1, sharex=True,
+        figsize=(fig_w, 1.2 + gantt_h + sram_h),
+        gridspec_kw={"height_ratios": [gantt_h, sram_h]},
+    )
+
+    _draw_event_gantt(ax_g, timeline, max_cycles=max_cycles)
+    _draw_event_sram(ax_s, timeline, bank_size=bank_size, max_cycles=max_cycles)
+
+    ax_g.set_title(title + f"   makespan={timeline.makespan}")
+    ax_g.set_ylabel("hardware unit")
+    ax_s.set_xlim(0, span * 1.02)
+    ax_s.set_xlabel("cycle (simulated, cycle-accurate)")
+
+    fig.tight_layout()
+    fig.subplots_adjust(hspace=0.08)
+    fig.savefig(out_path, dpi=160, bbox_inches="tight")
+    if out_path.lower().endswith(".pdf"):
+        fig.savefig(out_path[:-4] + ".png", dpi=160, bbox_inches="tight")
+    plt.close(fig)
+    return out_path

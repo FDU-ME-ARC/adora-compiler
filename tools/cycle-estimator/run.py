@@ -284,6 +284,18 @@ def _run_event_sim(args):
                                 max_cycles=args.max_cycles,
                                 title=f"{os.path.basename(args.mlir)} — SPAD occupancy")
         print(f"[viz] wrote {out}", file=sys.stderr)
+    # When BOTH panels are requested, also emit a combined shared-x figure so
+    # the hardware Gantt and the SPAD address map line up vertically in time.
+    if args.viz and args.viz_sram:
+        from viz.timeline import render_event_combined
+        bank = spec.spad_bank_size if spec else None
+        base = args.viz
+        combo = (base[:-4] + "_combined" + base[-4:]) if base.lower().endswith(
+            (".png", ".pdf")) else base + "_combined.png"
+        out = render_event_combined(
+            tl, combo, bank_size=bank, max_cycles=args.max_cycles,
+            title=f"{os.path.basename(args.mlir)} — HW timeline + SPAD")
+        print(f"[viz] wrote {out}", file=sys.stderr)
 
 
 if __name__ == "__main__":

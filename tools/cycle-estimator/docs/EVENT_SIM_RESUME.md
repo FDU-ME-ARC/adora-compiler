@@ -12,8 +12,11 @@
   func 层 affine.for→事件展开，kernel 体内 affine.for→cost；iter_args/yield→loop-carried token；
   event.create→零代价 marker；bank slot-recycle 边。
 - `core/event_sim.py` — 离散事件 list-scheduler（最早可行 start 填资源）+ hang 检测。
-- `viz/timeline.py` — render_event_gantt（DMA/PE 行）+ render_event_sram（addr×time×buf）。旧公式函数保留。
+- `viz/timeline.py` — render_event_gantt（DMA/PE 行）+ render_event_sram（addr×time×buf）
+  + **render_event_combined（共享 x 轴：上 HW甘特 + 下 SPAD地址图，时间列对齐）**。
+  绘制逻辑抽成 `_draw_event_gantt` / `_draw_event_sram(ax,...)` 复用。旧公式函数保留。
 - `run.py` — `--event-sim`（+ --spec/--dma-bpc/--dma-setup/--max-cycles/--viz/--viz-sram）。
+  同时给 `--viz` 与 `--viz-sram` 时，额外输出 `<viz>_combined.png`（共享 x 轴的 HW甘特+SPAD 合图）。
 - `tests/test_event_sim.py` — 4 个回归全 PASS。
 - 文档：EVENT_SIM_ARCH.md（架构）、EVENT_SIM_REDESIGN.md（重写设计）、EVENT_SIM_PLAN.md（计划）。
 
