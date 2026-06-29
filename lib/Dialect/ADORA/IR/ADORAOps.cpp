@@ -196,15 +196,21 @@ ParseResult DataBlockLoadOp::parse(OpAsmParser &parser, OperationState &result) 
   result.addAttribute("operandSegmentSizes",
       builder.getDenseI32ArrayAttr(
           {1, (int32_t)mapOperands.size(), (int32_t)asyncDeps.size()}));
-  // async keyword presence implies a token result (GPU-dialect style: no explicit "-> !ADORA.token")
+  // BlockLoad always defines a result memref; its async token (the implicit 2nd
+  // result) is expressed by the `async` keyword (GPU-dialect style), not by a
+  // trailing `-> !ADORA.token` suffix. A load that consumes a dependency also
+  // produces a token, so the keyword unambiguously carries both.
   if (isAsync)
     result.addTypes(ADORA::TokenType::get(parser.getContext()));
   return success();
 }
 
 void DataBlockLoadOp::print(OpAsmPrinter &p) {
-  // Always print "async [...]" when a token result exists so the parser
-  // can reconstruct the correct number of results (GPU-dialect style).
+  // BlockLoad expresses its async token (the implicit 2nd result) via the
+  // `async` keyword, GPU-dialect style — NOT via a trailing `-> !ADORA.token`
+  // suffix (the op already prints its result-memref type after `->`). A load
+  // that participates in scheduling always produces a token, so printing
+  // `async [...]` exactly when a token exists also reveals any dependencies.
   if (getAsyncToken()) {
     p << " async [";
     llvm::interleaveComma(getAsyncDependencies(), p);
@@ -228,7 +234,6 @@ void DataBlockLoadOp::print(OpAsmPrinter &p) {
   // p << "{\""  << getKernelName() << "\"}";
   p.printOptionalAttrDict((*this)->getAttrs(),
                           /*elidedAttrs=*/{getMapAttrStr(), getStridesAttrStr(), "operandSegmentSizes"});
-  // async token type is implicit from the "async" keyword (GPU-dialect style)
 }
 
 // Returns true if 'value' is a valid index to an affine operation (e.g.
@@ -518,6 +523,17 @@ ParseResult DataBlockStoreOp::parse(OpAsmParser &parser, OperationState &result)
     result.addAttribute("strides", DenseI64ArrayAttr::get(builder.getContext(), ArrayRef<int64_t>(strides_vec)));
   }
 
+  // The token result is expressed explicitly as a trailing `-> !ADORA.token`,
+  // independent of whether the op consumes dependencies. This lets a store own
+  // async dependencies without producing a token (terminal write-backs).
+  bool hasTokenResult = false;
+  if (succeeded(parser.parseOptionalArrow())) {
+    Type tokenTy;
+    if (parser.parseType(tokenTy))
+      return failure();
+    hasTokenResult = true;
+  }
+
   if (parser.parseOptionalAttrDict(result.attributes) ||
       parser.resolveOperand(sourceInfo, sourceType, result.operands) ||
       parser.resolveOperand(targetInfo, targetType, result.operands) ||
@@ -529,16 +545,21 @@ ParseResult DataBlockStoreOp::parse(OpAsmParser &parser, OperationState &result)
   result.addAttribute("operandSegmentSizes",
       builder.getDenseI32ArrayAttr(
           {1, 1, (int32_t)mapOperands.size(), (int32_t)asyncDeps.size()}));
-  // async keyword presence implies a token result (GPU-dialect style)
-  if (isAsync)
+  // Token-result production is decided solely by the explicit `-> !ADORA.token`
+  // suffix. The `async [...]` keyword only carries consumed dependencies, so an
+  // op may consume tokens without producing one (e.g. terminal write-backs).
+  if (hasTokenResult)
     result.addTypes(ADORA::TokenType::get(parser.getContext()));
   return success();
 }
 
 
 void DataBlockStoreOp::print(OpAsmPrinter &p) {
-  // Always print "async [...]" when a token result exists (GPU-dialect style).
-  if (getAsyncToken()) {
+  // Print "async [...]" when the op produces a token (keeping the legacy empty
+  // "async []" marker) OR consumes dependencies. Token-result production is
+  // still expressed separately by the trailing "-> !ADORA.token" below, so a
+  // dependency-consuming op need not produce a token (terminal write-backs).
+  if (getAsyncToken() || !getAsyncDependencies().empty()) {
     p << " async [";
     llvm::interleaveComma(getAsyncDependencies(), p);
     p << "]";
@@ -560,11 +581,15 @@ void DataBlockStoreOp::print(OpAsmPrinter &p) {
     ArrayRef<int64_t> strides = getStridesAsArrayRef();
     printStrides(p, strides);
   }
-  
+
+  // Emit the token result explicitly so the parser can reconstruct it
+  // independently of the dependency list.
+  if (getAsyncToken())
+    p << " -> " << getAsyncToken().getType();
+
   // p << "{\""  << getKernelName() << "\"}";
   p.printOptionalAttrDict((*this)->getAttrs(),
                           /*elidedAttrs=*/{getMapAttrStr(), getStridesAttrStr(), "operandSegmentSizes"});
-  // async token type is implicit from the "async" keyword (GPU-dialect style)
 }
 
 
