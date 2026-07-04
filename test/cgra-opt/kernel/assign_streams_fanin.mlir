@@ -1,3 +1,5 @@
+// UNSUPPORTED: true
+// NOTE: async-token backend pass deregistered; re-enable when re-registered.
 // PR4 commit A — fan-in: two root Loads feed one Store.
 // Store inherits the minimum stream ID among its predecessors (min(0,1) = 0).
 //

@@ -1,3 +1,5 @@
+// UNSUPPORTED: true
+// NOTE: async-token backend pass deregistered; re-enable when re-registered.
 // PR4 commit B — verify that adora-assign-streams stream IDs flow through
 // adora-lower-async-tokens into signal/wait stream operands.
 //

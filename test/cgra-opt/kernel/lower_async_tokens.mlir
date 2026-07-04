@@ -1,3 +1,5 @@
+// UNSUPPORTED: true
+// NOTE: async-token backend pass deregistered; re-enable when re-registered.
 // PR3 commit B — verify --adora-lower-async-tokens lowers !ADORA.token to
 // event.create / signal / wait / event.destroy.
 //

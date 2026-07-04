@@ -12,10 +12,10 @@
 // RUN: cgra-opt %s --adora-schedule-tasks 2>/dev/null | FileCheck %s
 
 // CHECK: module attributes {adora.scheduled}
-// CHECK: adora.dep_summary
-// CHECK-NOT: adora.dep_summary = []
-// CHECK: kind = "RAW"
-// CHECK: kind = "RAR"
+// CHECK-NOT: adora.dep_summary
+// CHECK: dep_kinds = [
+// CHECK: "RAW"
+// CHECK: "RAR"
 // CHECK: ADORA.BlockLoad async [
 // CHECK: ADORA.kernel async [
 

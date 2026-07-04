@@ -26,7 +26,7 @@
 // CHECK: }
 // CHECK: affine.store %[[RED]], %[[Tmp]][0] : memref<1xi32>
 // CHECK: ADORA.terminator
-// CHECK: } {KernelName = "atax_0"}
+// CHECK: } {KernelName = "atax_0"
 // CHECK: ADORA.BlockStore {{.*}}%[[Tmp]], %arg3 {{\[}}%{{.*}}] : memref<1xi32> -> memref<?xi32>
 // CHECK: %[[Y:.*]], %{{.*}} = ADORA.BlockLoad async {{.*}} %arg2 [0] : memref<?xi32> -> memref<24xi32>
 // CHECK: %[[Arow2:.*]], %{{.*}} = ADORA.BlockLoad async {{.*}} %arg0 {{\[}}%{{.*}}, 0] : memref<?x24xi32> -> memref<1x24xi32>
@@ -41,7 +41,7 @@
 // CHECK: affine.store %{{.*}}, %[[Out]]
 // CHECK: }
 // CHECK: ADORA.terminator
-// CHECK: } {KernelName = "atax_1"}
+// CHECK: } {KernelName = "atax_1"
 // CHECK: ADORA.BlockStore {{.*}}%[[Out]], %arg2 [0] : memref<24xi32> -> memref<?xi32>
 // CHECK: }
 // CHECK: return

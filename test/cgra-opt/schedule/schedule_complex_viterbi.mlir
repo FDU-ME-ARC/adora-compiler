@@ -12,11 +12,11 @@
 // RUN: cgra-opt %s --adora-schedule-tasks 2>/dev/null | FileCheck %s
 
 // CHECK: module attributes {adora.scheduled}
-// CHECK: adora.dep_summary
-// CHECK-NOT: adora.dep_summary = []
-// CHECK: kind = "RAW"
-// CHECK: ADORA.BlockLoad async [
-// CHECK: ADORA.kernel async [
+// CHECK-NOT: adora.dep_summary
+// CHECK-DAG: dep_kinds = [
+// CHECK-DAG: "RAW"
+// CHECK-DAG: ADORA.BlockLoad async [
+// CHECK-DAG: ADORA.kernel async [
 
 // REGRESSION: BlockLoad must use implicit async keyword (GPU-dialect style).
 // No explicit "-> !ADORA.token" suffix should appear.

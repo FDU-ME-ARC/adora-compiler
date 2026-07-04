@@ -1,16 +1,19 @@
-// End-to-end test for P1.0 + P4.0: verify adora.dep_summary contains
-// RAR, WAR, and WAW edges from analyzeDependencyInGraph.
+// End-to-end test: verify per-op `dep_kinds` attribute carries RAR/WAR/WAW
+// dependency kinds (from analyzeDependencyInGraph), aligned with async deps.
+// (Replaces the retired adora.dep_summary attribute channel.)
 //
 // Uses generic-form IR with pre-built BlockLoad/Store/Kernel ops to bypass
-// adora-adjust-kernel-mem-footprint (pre-existing crash, unrelated to PR1/PR2).
+// adora-adjust-kernel-mem-footprint (pre-existing crash, unrelated).
 //
 // RUN: cgra-opt %s --adora-schedule-tasks 2>/dev/null | FileCheck %s
 
 // CHECK: adora.scheduled
-// CHECK: adora.dep_summary = [{block_idx = 0 : i64, edges = [
-// CHECK-DAG: kind = "RAR"
-// CHECK-DAG: kind = "WAR"
-// CHECK-DAG: kind = "WAW"
+// CHECK-NOT: adora.dep_summary
+// dep kinds now live on each async op's `dep_kinds` attribute, aligned 1:1
+// with its async dependency operands.
+// CHECK-DAG: dep_kinds = ["RAR"]
+// CHECK-DAG: dep_kinds = ["RAW", "WAR", "WAR"]
+// CHECK-DAG: dep_kinds = ["RAW", "WAW", "WAR", "WAR"]
 
 module {
   // Three loads and one store on the same underlying memref: produces

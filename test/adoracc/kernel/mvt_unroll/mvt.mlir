@@ -25,7 +25,7 @@
 // CHECK: affine.store %[[RED]], %[[OUT0]]{{\[}}%[[I]]{{\]}} : memref<40xf32>
 // CHECK: }
 // CHECK: ADORA.terminator
-// CHECK: } {KernelName = "kernel_mvt_0"}
+// CHECK: } {KernelName = "kernel_mvt_0"
 // CHECK: ADORA.BlockStore {{.*}}%[[OUT0]], %arg0 [0] : memref<40xf32> -> memref<?xf32>
 // CHECK: }
 

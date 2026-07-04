@@ -1,3 +1,5 @@
+// UNSUPPORTED: true
+// NOTE: async-token backend pass deregistered; re-enable when re-registered.
 // PR3 commit C — verify --adora-to-llvm-async-runtime lowers the four ADORA
 // async event ops to llvm.call into the runtime ABI:
 //
