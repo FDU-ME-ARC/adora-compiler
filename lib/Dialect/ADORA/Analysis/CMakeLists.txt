@@ -1,7 +1,6 @@
 add_mlir_dialect_library(MLIRADORAAnalysis
   AccessRegion.cpp
   LoopCarriedDep.cpp
-  DepSummaryView.cpp
   DependencyAnalysis.cpp
   LLMRankerClient.cpp
 

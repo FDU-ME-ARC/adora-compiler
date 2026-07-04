@@ -126,11 +126,16 @@ int main(int argc, char **argv) {
   mlir::ADORA::registerADORAAutoUnroll();
   mlir::ADORA::registerAffineLoopReorder();
   mlir::ADORA::registerScheduleADORATasks();
-  mlir::ADORA::registerAssignStreamsPass();
-  mlir::ADORA::registerBufferReusePass();
-  mlir::ADORA::registerLowerAsyncTokensPass();
   mlir::ADORA::registerLLMPipelineSchedule();
-  mlir::ADORA::registerADORAAsyncRuntimeToLLVMPass();
+  // Async-token backend passes are disabled: dependency ordering is carried by
+  // SSA !ADORA.token from schedule-tasks; the pytest emit path consumes tokens
+  // directly and does not lower them. Source files are kept but not registered.
+  //   registerAssignStreamsPass / registerBufferReusePass /
+  //   registerLowerAsyncTokensPass / registerADORAAsyncRuntimeToLLVMPass
+  // mlir::ADORA::registerAssignStreamsPass();
+  // mlir::ADORA::registerBufferReusePass();
+  // mlir::ADORA::registerLowerAsyncTokensPass();
+  // mlir::ADORA::registerADORAAsyncRuntimeToLLVMPass();
 
   mlir::ADORA::registerConvertKernelCallToLLVMPass();
   mlir::ADORA::registerConvertADORAToSCFPass();

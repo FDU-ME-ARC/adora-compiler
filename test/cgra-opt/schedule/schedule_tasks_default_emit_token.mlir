@@ -1,8 +1,8 @@
 // PR6.2 — verify --adora-schedule-tasks defaults `emit-token` to true.
 //
 // Without passing any option, the pass must produce SSA !ADORA.token values
-// and async operand lists. The opt-out form `emit-token=false` must still
-// produce pre-PR6 baseline (dep_summary only, NO token).
+// and async operand lists (with per-op `dep_kinds`). The opt-out form
+// `emit-token=false` must produce neither tokens nor dep_kinds.
 //
 // RUN: %cgra-opt %s --adora-schedule-tasks 2>/dev/null \
 // RUN:   | FileCheck %s --check-prefix=DEFAULT
@@ -10,12 +10,12 @@
 // RUN:   | FileCheck %s --check-prefix=OPTOUT
 
 // DEFAULT: adora.scheduled
-// DEFAULT: adora.dep_summary
+// DEFAULT-NOT: adora.dep_summary
 // DEFAULT: ADORA.BlockLoad async
 
 // OPTOUT-NOT: !ADORA.token
+// OPTOUT-NOT: adora.dep_summary
 // OPTOUT: adora.scheduled
-// OPTOUT: adora.dep_summary
 
 #map = affine_map<()[s0] -> (0)>
 

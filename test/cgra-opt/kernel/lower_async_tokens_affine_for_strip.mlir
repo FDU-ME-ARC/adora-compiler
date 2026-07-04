@@ -1,3 +1,5 @@
+// UNSUPPORTED: true
+// NOTE: async-token backend pass deregistered; re-enable when re-registered.
 // PR6.3 Pass 5 — verify --adora-lower-async-tokens strips !ADORA.token
 // iter_args / affine.yield operands emitted by PR6.2 on affine.for ops.
 //

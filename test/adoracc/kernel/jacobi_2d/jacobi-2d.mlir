@@ -9,9 +9,9 @@
 // CHECK: func.func @jacobi_2d(
 // CHECK: affine.for %{{.*}} = 0 to 10
 // CHECK: ADORA.kernel
-// CHECK: } {KernelName = "jacobi_2d_0"}
+// CHECK: } {KernelName = "jacobi_2d_0"
 // CHECK: ADORA.kernel
-// CHECK: } {KernelName = "jacobi_2d_1"}
+// CHECK: } {KernelName = "jacobi_2d_1"
 module attributes {} {
   func.func @jacobi_2d(%arg0: memref<?x30xi32>, %arg1: memref<?x30xi32>) attributes {llvm.linkage = #llvm.linkage<external>} {
     %c5_i32 = arith.constant 5 : i32

@@ -1,3 +1,5 @@
+// UNSUPPORTED: true
+// NOTE: async-token backend pass deregistered; re-enable when re-registered.
 // PR3 commit B — fan-in test: two BlockLoads feed one BlockStore via async tokens.
 // Exercises Pass 1 twice (two creates+signals), Pass 2 twice (two waits on one op),
 // Pass 3 (three rebuilds), Pass 4 (two destroys).

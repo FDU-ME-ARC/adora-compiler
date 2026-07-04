@@ -1,5 +1,5 @@
 // PR2 — verify --adora-schedule-tasks threads SSA !ADORA.token (emit-token=true)
-// and preserves dep_summary-only path (emit-token=false, NFC).
+// with per-op `dep_kinds`; emit-token=false produces neither token nor kinds.
 //
 // Uses generic-form IR with pre-built BlockLoad/Store/Kernel ops to bypass
 // the adora-adjust-kernel-mem-footprint pass (pre-existing crash, unrelated).
@@ -10,12 +10,12 @@
 // RUN:   | FileCheck %s --check-prefix=NOTOKEN
 
 // TOKEN: adora.scheduled
-// TOKEN: adora.dep_summary
+// TOKEN-NOT: adora.dep_summary
 // TOKEN: ADORA.BlockLoad async
 
 // NOTOKEN-NOT: !ADORA.token
+// NOTOKEN-NOT: adora.dep_summary
 // NOTOKEN: adora.scheduled
-// NOTOKEN: adora.dep_summary
 
 #map = affine_map<()[s0] -> (0)>
 

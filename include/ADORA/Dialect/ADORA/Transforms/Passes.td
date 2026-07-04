@@ -391,22 +391,15 @@ def ScheduleADORATasks: Pass<"adora-schedule-tasks", "func::FuncOp"> {
     "::mlir::scf::SCFDialect",
     "::mlir::arith::ArithDialect"
   ];
-  // PR2 commit B: drive the !ADORA.token threading + dep_summary emission
-  // + (CI-only) cross-check between the two representations.
+  // PR2 commit B: drive the !ADORA.token threading. Dependency kind is
+  // attached per-op as the `dep_kinds` attribute (retired adora.dep_summary).
   let options = [
     Option<"emitTokens", "emit-token", "bool", /*default=*/"true",
            "Thread SSA !ADORA.token values through DataBlockLoad/Store/Kernel "
-           "ops based on graph dep edges. Default true (PR6.2 flip): tokens are "
-           "the canonical IR-level carrier of async deps, consumed by "
-           "adora-buffer-reuse / adora-assign-streams / adora-lower-async-tokens "
-           "(PR6.3). Set false only to reproduce pre-PR6 byte-level baselines.">,
-    Option<"emitSummary", "emit-summary", "bool", /*default=*/"true",
-           "Emit the PR1 adora.dep_summary DictionaryAttr on the enclosing "
-           "func. Kept on during the PR2 gradual-rollout window.">,
-    Option<"crossCheck", "cross-check-summary-vs-token", "bool",
-           /*default=*/"false",
-           "Assert that the SSA token edges match the dep_summary edges. "
-           "CI-only; fails the pass on mismatch.">,
+           "ops based on graph dep edges. Default true: tokens are the "
+           "canonical IR-level carrier of async deps; per-edge dependency kind "
+           "is written on each op's `dep_kinds` attribute. Set false only to "
+           "reproduce pre-PR6 byte-level baselines.">,
     Option<"tokenGraphPath", "dump-token-graph", "std::string",
            /*default=*/"\"\"",
            "If non-empty, write a Graphviz DOT file of the async-token dep "
