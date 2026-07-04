@@ -534,7 +534,7 @@ def AutoDesignSpaceExplore : Pass<"adora-auto-dse", "ModuleOp"> {
 //===----------------------------------------------------------------------===//
 // LLMPipelineSchedule
 //===----------------------------------------------------------------------===//
-def LLMPipelineSchedule : Pass<"llm-pipeline-schedule", "func::FuncOp"> {
+def LLMPipelineSchedule : Pass<"adora-llm-pipeline-schedule", "func::FuncOp"> {
   let summary = "LLM-guided task pipeline dep_type selection";
   let description = [{
     Walks the IR to collect (Load, Kernel, Store) task triples, computes the

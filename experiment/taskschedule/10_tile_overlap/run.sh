@@ -40,8 +40,8 @@ echo "============================================================"
 echo ""
 echo "--- Check 1: TileAssignment writes adora.tile_set (dry-run) ---"
 "${CGRA_OPT}" "${MLIR}" \
-  --llm-pipeline-schedule --llm-pipeline-schedule-dry-run \
-  --llm-pipeline-schedule-num-tiles=2 --llm-pipeline-schedule-pe-per-tile=16 \
+  --adora-llm-pipeline-schedule --adora-llm-pipeline-schedule-dry-run \
+  --adora-llm-pipeline-schedule-num-tiles=2 --adora-llm-pipeline-schedule-pe-per-tile=16 \
   2>/dev/null > "${WORK}/dryrun.mlir"
 N=$(grep -c "adora.tile_set = array<i64:" "${WORK}/dryrun.mlir" || true)
 grep -o 'KernelName = "k[01]", adora.tile_set = array<i64:[^>]*>' "${WORK}/dryrun.mlir" | sed 's/^/      /'
@@ -59,8 +59,8 @@ echo "--- Check 2: e2e map, compute nodes land on different tiles ---"
     --adg="${ADG}" --op-file="${OPS}" \
     --output-type=c --obj-opt=true --max-iters=4 \
     --tile=2 --enable-async --enable-llm-schedule \
-    --llm-pipeline-schedule-ranker-cmd="python3 ${RANKER} --backend dryrule" \
-    --llm-pipeline-schedule-num-tiles=2 --llm-pipeline-schedule-pe-per-tile=16 \
+    --adora-llm-pipeline-schedule-ranker-cmd="python3 ${RANKER} --backend dryrule" \
+    --adora-llm-pipeline-schedule-num-tiles=2 --adora-llm-pipeline-schedule-pe-per-tile=16 \
     --emit-agent-trace --agent-trace-root="${WORK}/trace" \
     "${MLIR}" --output="${WORK}/out.c" ) > "${WORK}/map_stdout.log" 2> "${WORK}/map_stderr.log"
 MAP_RC=$?

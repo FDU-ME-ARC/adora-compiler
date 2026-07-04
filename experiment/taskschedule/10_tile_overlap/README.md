@@ -32,10 +32,10 @@
 
 ## 三项自检
 
-1. **Check 1 — Stage 1（dry-run，确定性）**：`cgra-opt --llm-pipeline-schedule --llm-pipeline-schedule-dry-run`
+1. **Check 1 — Stage 1（dry-run，确定性）**：`cgra-opt --adora-llm-pipeline-schedule --adora-llm-pipeline-schedule-dry-run`
    两个 kernel 都写出 `adora.tile_set`。dry-run 跳过 LLM，给保守的 `[0..minTiles-1]`，所以两个都是 `[0]`（验证"属性被写出"）。
 
-2. **Check 2 — Stage 1+2 端到端（dryrule ranker，轮转分 tile）**：`cgra-mapper --tile=2 --enable-async --enable-llm-schedule --llm-pipeline-schedule-ranker-cmd="... --backend dryrule"`
+2. **Check 2 — Stage 1+2 端到端（dryrule ranker，轮转分 tile）**：`cgra-mapper --tile=2 --enable-async --enable-llm-schedule --adora-llm-pipeline-schedule-ranker-cmd="... --backend dryrule"`
    - `cgra-mapper` exit 0；
    - IR dump 里 `k0: tile_set=[0]`、`k1: tile_set=[1]`（不同 tile）；
    - agent trace 有 **2 条** `tile_constraints_applied`（`k0 tile_set=[0] constrained_nodes=2`、`k1 tile_set=[1] constrained_nodes=2`）；

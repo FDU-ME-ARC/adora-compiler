@@ -8,7 +8,7 @@
 | pipeline | 结果 |
 |----------|------|
 | async token pipeline（`schedule-tasks → assign-streams → lower-async-tokens → to-llvm-async-runtime`） | 18/18 跑通无 crash，但 **11–18 是假阳性**（0 token） |
-| LLM schedule pass（`llm-pipeline-schedule --dry-run`，写 tile_set + hw_dep_type） | 18/18 **0 crash**；tile_set/dep_type 计数符合 input 形态 |
+| LLM schedule pass（`adora-llm-pipeline-schedule --dry-run`，写 tile_set + hw_dep_type） | 18/18 **0 crash**；tile_set/dep_type 计数符合 input 形态 |
 
 **没有 compiler crash。** 暴露的问题全部是 **测试 input 本身处于错误的 pipeline 阶段**（11–18 是半成品/裸输入），不是 pass 的 bug。
 
@@ -75,8 +75,8 @@ cgra-opt input.mlir --adora-schedule-tasks --adora-assign-streams \
 
 命令（每个 benchmark）：
 ```
-cgra-opt input.mlir --llm-pipeline-schedule --llm-pipeline-schedule-dry-run \
-         --llm-pipeline-schedule-num-tiles=2 --llm-pipeline-schedule-pe-per-tile=16
+cgra-opt input.mlir --adora-llm-pipeline-schedule --adora-llm-pipeline-schedule-dry-run \
+         --adora-llm-pipeline-schedule-num-tiles=2 --adora-llm-pipeline-schedule-pe-per-tile=16
 ```
 
 | benchmark | rc | tile_set | dep_type | 说明 |
@@ -116,7 +116,7 @@ cgra-opt input.mlir --llm-pipeline-schedule --llm-pipeline-schedule-dry-run \
 ```bash
 cd experiment/taskschedule
 bash e2e_pipeline.sh                 # token pipeline，全部 18 个
-# LLM schedule 扫描见本仓 commit 里的 sweep 脚本逻辑（dry-run，逐 benchmark 跑 llm-pipeline-schedule）
+# LLM schedule 扫描见本仓 commit 里的 sweep 脚本逻辑（dry-run，逐 benchmark 跑 adora-llm-pipeline-schedule）
 ```
 
 > 真正"能完整跑 LLM tile 交叠 + 出甘特"的端到端例子是 `10_tile_overlap/`（run.sh + make_figure.sh）。

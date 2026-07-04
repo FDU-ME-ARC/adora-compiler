@@ -1,12 +1,12 @@
 // Test: TileAssignment writes adora.tile_set on each kernel (dry-run).
 //
-// TileAssignment runs as Step 0 of llm-pipeline-schedule.  In dry-run (no LLM)
+// TileAssignment runs as Step 0 of adora-llm-pipeline-schedule.  In dry-run (no LLM)
 // each kernel gets the conservative default tile_set = [0 .. minTiles-1], where
 // minTiles = ceil(computeNodes / pe_per_tile).  Both kernels below have few
 // compute ops, so minTiles = 1 and tile_set = [0].
 //
-// RUN: cgra-opt %s --llm-pipeline-schedule --llm-pipeline-schedule-dry-run \
-// RUN:   --llm-pipeline-schedule-num-tiles=2 --llm-pipeline-schedule-pe-per-tile=16 \
+// RUN: cgra-opt %s --adora-llm-pipeline-schedule --adora-llm-pipeline-schedule-dry-run \
+// RUN:   --adora-llm-pipeline-schedule-num-tiles=2 --adora-llm-pipeline-schedule-pe-per-tile=16 \
 // RUN:   2>/dev/null | FileCheck %s
 
 module {

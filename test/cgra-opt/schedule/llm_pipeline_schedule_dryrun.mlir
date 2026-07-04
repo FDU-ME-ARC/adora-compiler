@@ -4,7 +4,7 @@
 // so every task after the first gets hw_dep_type = "LD_DEP_ST_LAST_TASK" on both
 // its load and store.  The first task has no predecessor and stays unannotated.
 //
-// RUN: cgra-opt %s --llm-pipeline-schedule --llm-pipeline-schedule-dry-run 2>/dev/null | FileCheck %s
+// RUN: cgra-opt %s --adora-llm-pipeline-schedule --adora-llm-pipeline-schedule-dry-run 2>/dev/null | FileCheck %s
 
 module {
   func.func @two_tasks(%arg0: memref<?x25xf32>, %arg1: memref<?x25xf32>) {

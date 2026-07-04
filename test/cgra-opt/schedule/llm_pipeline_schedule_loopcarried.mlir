@@ -14,7 +14,7 @@
 // The input below is the post-`schedule-tasks` IR for a tiled GEMM inner tk
 // loop (see schedule_gemm_tiled.mlir for the pre-schedule source).
 //
-// RUN: cgra-opt %s --llm-pipeline-schedule --llm-pipeline-schedule-dry-run 2>/dev/null | FileCheck %s
+// RUN: cgra-opt %s --adora-llm-pipeline-schedule --adora-llm-pipeline-schedule-dry-run 2>/dev/null | FileCheck %s
 
 module attributes {adora.scheduled} {
   func.func @gemm_tiled(%arg0: memref<64x64xf32>, %arg1: memref<64x64xf32>, %arg2: memref<64x64xf32>) attributes {adora.dep_summary = [{block_idx = 0 : i64, edges = [{dst = 4 : i64, kind = "RAW", overlap = true, src = 3 : i64}, {dst = 5 : i64, kind = "WAR", overlap = true, src = 0 : i64}]}], adora.lc_dep_summary = [{edges = [{exact = true, kind = "LC-RAW", step = 1 : i64}], loop_idx = 0 : i64, loop_op = "affine.for"}]} {

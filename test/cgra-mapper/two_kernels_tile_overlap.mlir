@@ -1,5 +1,5 @@
 // Two independent kernels (disjoint memrefs => no cross-kernel dep).
-// With multi-tile ADG + llm-pipeline-schedule, TileAssignment should place
+// With multi-tile ADG + adora-llm-pipeline-schedule, TileAssignment should place
 // them on DIFFERENT tiles (round-robin / LLM) so they overlap; the mapper
 // then constrains each kernel's compute nodes to its assigned tile.
 //

@@ -194,11 +194,11 @@ int main(int argc, char **argv) {
   static cl::opt<bool> enableLLMSchedule(
     "enable-llm-schedule",
     cl::Optional,
-    cl::desc("After schedule-tasks, run --llm-pipeline-schedule so an LLM ranker "
+    cl::desc("After schedule-tasks, run --adora-llm-pipeline-schedule so an LLM ranker "
              "picks per-task hw_dep_type (drives BlockStore await-gather in the "
              "Python emit). Requires --enable-async. Default false. The ranker "
              "command / dry-run / timeout are controlled by the global "
-             "--llm-pipeline-schedule-* flags."),
+             "--adora-llm-pipeline-schedule-* flags."),
     cl::value_desc("bool"),
     cl::init(false));
 
@@ -509,7 +509,7 @@ int main(int argc, char **argv) {
     auto &fpm = pm.nest<mlir::func::FuncOp>();
     fpm.addPass(mlir::ADORA::createScheduleADORATasksPass());
     if (enableLLMSchedule.getValue()) {
-      // TileAssignment (inside llm-pipeline-schedule) needs the CGRA geometry,
+      // TileAssignment (inside adora-llm-pipeline-schedule) needs the CGRA geometry,
       // which lives in the ADG (this module) and is not visible to the dialect
       // pass.  Inject it via the pass's cl::opts before adding the pass.
       extern llvm::cl::opt<int> clNumTiles;
@@ -524,7 +524,7 @@ int main(int argc, char **argv) {
     }
     if (verbose.getValue())
       llvm::errs() << "cgra-mapper: async pipeline (schedule-tasks"
-                   << (enableLLMSchedule.getValue() ? " + llm-pipeline-schedule" : "")
+                   << (enableLLMSchedule.getValue() ? " + adora-llm-pipeline-schedule" : "")
                    << ") applied.\n";
   }
 
@@ -610,7 +610,7 @@ int main(int argc, char **argv) {
     }
 
     // ---- Stage 2: tile-based placement constraints from adora.tile_set ----
-    // The dialect pass `llm-pipeline-schedule` (TileAssignment) writes an
+    // The dialect pass `adora-llm-pipeline-schedule` (TileAssignment) writes an
     // `adora.tile_set` DenseI64ArrayAttr on each KernelOp deciding WHICH tile(s)
     // the kernel should occupy.  Independent kernels can be steered onto
     // different tiles so they overlap.  Here we translate that decision into

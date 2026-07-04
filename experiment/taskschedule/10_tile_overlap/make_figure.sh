@@ -3,7 +3,7 @@
 # Gantt) for the two-independent-kernels overlap story.
 #
 # Pipeline:
-#   1. cgra-opt --llm-pipeline-schedule (dryrule ranker -> k0=tile0, k1=tile1)
+#   1. cgra-opt --adora-llm-pipeline-schedule (dryrule ranker -> k0=tile0, k1=tile1)
 #      => scheduled MLIR carrying adora.tile_set + hw_dep_type
 #   2. cycle-estimator run.py --viz => PE-array occupancy Gantt (PDF + PNG)
 #
@@ -33,9 +33,9 @@ mkdir -p "${WORK}"
 
 echo "=== [1/2] schedule (dryrule -> k0=tile0, k1=tile1) ==="
 "${CGRA_OPT}" "${MLIR}" \
-  --llm-pipeline-schedule \
-  --llm-pipeline-schedule-ranker-cmd="python3 ${RANKER} --backend dryrule" \
-  --llm-pipeline-schedule-num-tiles=2 --llm-pipeline-schedule-pe-per-tile=16 \
+  --adora-llm-pipeline-schedule \
+  --adora-llm-pipeline-schedule-ranker-cmd="python3 ${RANKER} --backend dryrule" \
+  --adora-llm-pipeline-schedule-num-tiles=2 --adora-llm-pipeline-schedule-pe-per-tile=16 \
   2>/dev/null > "${SCHED}"
 echo "    tile_set:"
 grep -o "adora.tile_set = array<i64:[^>]*>" "${SCHED}" | sed 's/^/      /'

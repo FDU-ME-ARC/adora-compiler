@@ -90,10 +90,10 @@ trap 'rm -f "${IR}" "${RANKER_LOG}"' EXIT
 
 echo "== Running cgra-opt with LIVE Ark ranker (model=${PTL_MODEL}) =="
 OUT="$("${CGRA_OPT}" "${IR}" \
-    --llm-pipeline-schedule \
-    --llm-pipeline-schedule-ranker-cmd="python3 ${RANKER} --backend openai --base-url ${PTL_BASE_URL} --model ${PTL_MODEL} --timeout ${PTL_TIMEOUT}" \
-    --llm-pipeline-schedule-ranker-timeout=$(( ${PTL_TIMEOUT%.*} * 1000 )) \
-    --llm-pipeline-schedule-ranker-log="${RANKER_LOG}" \
+    --adora-llm-pipeline-schedule \
+    --adora-llm-pipeline-schedule-ranker-cmd="python3 ${RANKER} --backend openai --base-url ${PTL_BASE_URL} --model ${PTL_MODEL} --timeout ${PTL_TIMEOUT}" \
+    --adora-llm-pipeline-schedule-ranker-timeout=$(( ${PTL_TIMEOUT%.*} * 1000 )) \
+    --adora-llm-pipeline-schedule-ranker-log="${RANKER_LOG}" \
     2>/tmp/llm_sched_live.stderr)"
 
 echo "----- IR output -----"

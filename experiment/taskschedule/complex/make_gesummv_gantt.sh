@@ -48,11 +48,11 @@ echo "=== [4] kernel-opt ==="
   "${KERN}" -o "${OPT}"
 echo "    kernels=$(grep -c 'ADORA.kernel' "${OPT}")  funcs=$(grep -c 'func.func @' "${OPT}")"
 
-echo "=== [5] llm-pipeline-schedule (dryrule; 改 --backend openai 可走真实 LLM) ==="
+echo "=== [5] adora-llm-pipeline-schedule (dryrule; 改 --backend openai 可走真实 LLM) ==="
 "${CGRA_OPT}" "${OPT}" \
-  --llm-pipeline-schedule \
-  --llm-pipeline-schedule-ranker-cmd="python3 ${RANKER} --backend dryrule" \
-  --llm-pipeline-schedule-num-tiles=2 --llm-pipeline-schedule-pe-per-tile=16 \
+  --adora-llm-pipeline-schedule \
+  --adora-llm-pipeline-schedule-ranker-cmd="python3 ${RANKER} --backend dryrule" \
+  --adora-llm-pipeline-schedule-num-tiles=2 --adora-llm-pipeline-schedule-pe-per-tile=16 \
   > "${SCHED}" 2>/dev/null
 echo "    tile_set: $(grep -c 'adora.tile_set' "${SCHED}")  hw_dep_type: $(grep -c 'hw_dep_type' "${SCHED}")"
 

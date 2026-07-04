@@ -1,7 +1,7 @@
 // 10_tile_overlap/two_kernels.mlir
 // Two INDEPENDENT kernels (disjoint memrefs => no cross-kernel data dependency).
 //
-// With a multi-tile ADG + the llm-pipeline-schedule pass, TileAssignment should
+// With a multi-tile ADG + the adora-llm-pipeline-schedule pass, TileAssignment should
 // place k0 and k1 on DIFFERENT tiles (round-robin / LLM) so they can overlap;
 // the mapper then constrains each kernel's COMPUTE nodes (mulf/addf) to its
 // assigned tile's GPEs.  IO nodes (Load/Store) keep their SPAD-bank constraints.

@@ -7,10 +7,10 @@
 // so that downstream emitters (EmitCGRACall, EmitPytest) pick them up.
 //
 // Pass options (all optional - defaults give safe no-op behaviour):
-//   llm-pipeline-schedule-ranker-cmd      argv for task_schedule_ranker.py
-//   llm-pipeline-schedule-ranker-timeout  per-call timeout in ms (default 10000)
-//   llm-pipeline-schedule-ranker-log      NDJSON decision log path
-//   llm-pipeline-schedule-dry-run         always use plan idx 0, skip LLM call
+//   adora-llm-pipeline-schedule-ranker-cmd      argv for task_schedule_ranker.py
+//   adora-llm-pipeline-schedule-ranker-timeout  per-call timeout in ms (default 10000)
+//   adora-llm-pipeline-schedule-ranker-log      NDJSON decision log path
+//   adora-llm-pipeline-schedule-dry-run         always use plan idx 0, skip LLM call
 //
 // When ranker-cmd is empty (or dry-run is true) the pass runs in dry-run mode:
 // it still walks the IR and computes the legal candidate set but always selects
@@ -47,7 +47,7 @@
 #include <string>
 #include <vector>
 
-#define DEBUG_TYPE "llm-pipeline-schedule"
+#define DEBUG_TYPE "adora-llm-pipeline-schedule"
 
 using namespace mlir;
 using namespace mlir::ADORA;
@@ -57,22 +57,22 @@ using namespace mlir::ADORA;
 // ---------------------------------------------------------------------------
 
 static llvm::cl::opt<std::string> clRankerCmd(
-    "llm-pipeline-schedule-ranker-cmd",
+    "adora-llm-pipeline-schedule-ranker-cmd",
     llvm::cl::desc("argv for task_schedule_ranker.py (empty = dry-run)"),
     llvm::cl::init(""));
 
 static llvm::cl::opt<int> clRankerTimeoutMs(
-    "llm-pipeline-schedule-ranker-timeout",
+    "adora-llm-pipeline-schedule-ranker-timeout",
     llvm::cl::desc("LLM ranker call timeout in ms"),
     llvm::cl::init(10000));
 
 static llvm::cl::opt<std::string> clRankerLog(
-    "llm-pipeline-schedule-ranker-log",
+    "adora-llm-pipeline-schedule-ranker-log",
     llvm::cl::desc("NDJSON log path for ranker decisions"),
     llvm::cl::init(""));
 
 static llvm::cl::opt<bool> clDryRun(
-    "llm-pipeline-schedule-dry-run",
+    "adora-llm-pipeline-schedule-dry-run",
     llvm::cl::desc("Always use default plan (idx 0), skip LLM call"),
     llvm::cl::init(false));
 
@@ -80,12 +80,12 @@ static llvm::cl::opt<bool> clDryRun(
 // (mapper module) and is NOT visible to this dialect-library pass.  cgra-mapper
 // injects these by assigning to the cl::opts (extern) after reading the ADG.
 llvm::cl::opt<int> clNumTiles(
-    "llm-pipeline-schedule-num-tiles",
+    "adora-llm-pipeline-schedule-num-tiles",
     llvm::cl::desc("total CGRA tiles (= adg->tileNum())"),
     llvm::cl::init(1));
 
 llvm::cl::opt<int> clPePerTile(
-    "llm-pipeline-schedule-pe-per-tile",
+    "adora-llm-pipeline-schedule-pe-per-tile",
     llvm::cl::desc("GPEs per tile (= adg->numGpeNodes()/adg->tileNum())"),
     llvm::cl::init(16));
 

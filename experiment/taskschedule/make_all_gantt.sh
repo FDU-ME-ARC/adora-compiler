@@ -4,7 +4,7 @@
 # (no kernels / no BlockLoad-Store -> nothing to schedule; see SWEEP_RESULTS).
 #
 # For each benchmark:
-#   1. cgra-opt --llm-pipeline-schedule (dryrule ranker -> round-robin tiles)
+#   1. cgra-opt --adora-llm-pipeline-schedule (dryrule ranker -> round-robin tiles)
 #   2. cycle-estimator run.py --viz / --viz-sram
 #
 # Output: <bench>/_gantt/<bench>_gantt.{pdf,png} + _sram.{pdf,png}
@@ -37,9 +37,9 @@ for b in "${BENCHES[@]}"; do
 
   # 1) schedule (tile_set + dep_type)
   if ! "${CGRA_OPT}" "${IN}" \
-        --llm-pipeline-schedule \
-        --llm-pipeline-schedule-ranker-cmd="python3 ${RANKER} --backend dryrule" \
-        --llm-pipeline-schedule-num-tiles=2 --llm-pipeline-schedule-pe-per-tile=16 \
+        --adora-llm-pipeline-schedule \
+        --adora-llm-pipeline-schedule-ranker-cmd="python3 ${RANKER} --backend dryrule" \
+        --adora-llm-pipeline-schedule-num-tiles=2 --adora-llm-pipeline-schedule-pe-per-tile=16 \
         > "${SCHED}" 2>/dev/null; then
     echo "  ${b}: schedule FAILED"; fail=$((fail+1)); continue
   fi
