@@ -176,15 +176,19 @@ int main(int argc, char **argv) {
     cl::value_desc("bool"),
     cl::init(false));
 
-  // PR6.4 — opt-in switch to run schedule-tasks + assign-streams +
-  // lower-async-tokens on the module right before per-kernel mapping &
-  // emit. Default off keeps cgra-mapper byte-identical to pre-PR6.
+  // Opt-in switch to run adora-schedule-tasks on the module right before
+  // per-kernel mapping & emit, so the schedule-derived SSA !ADORA.token
+  // dependencies surface in the generated code. Tokens are consumed directly
+  // by the emit layer (stream colouring / await-gather in pytest, LD_DEP/EX_DEP
+  // flags in C); they are NOT lowered here. Default off keeps cgra-mapper
+  // byte-identical to the non-async baseline.
   static cl::opt<bool> enableAsync(
     "enable-async",
     cl::Optional,
-    cl::desc("Run --adora-schedule-tasks + --adora-assign-streams + "
-             "--adora-lower-async-tokens before emit so PR6.4 dep_summary "
-             "path drives BlockStore await-gather. Default false."),
+    cl::desc("Run --adora-schedule-tasks before emit so SSA !ADORA.token "
+             "dependencies drive BlockStore await-gather / dep flags. "
+             "Tokens are consumed directly by emit (not lowered). "
+             "Default false."),
     cl::value_desc("bool"),
     cl::init(false));
 
@@ -357,16 +361,26 @@ int main(int argc, char **argv) {
   /// Stream coloring is computed inside EmitPytest from SSA token edges
   /// (no assign-streams pass needed).  lower-async-tokens is only for
   /// the LLVM firmware path and must NOT run before Python emit.
+  ///
+  /// Skip if the module was already scheduled (carries adora.scheduled):
+  /// schedule-tasks is not a no-op on already-async IR, and the existing
+  /// SSA tokens already drive emit, so re-running would be redundant.
   if (enableAsync.getValue()) {
-    mlir::PassManager pm(&context);
-    auto &fpm = pm.nest<mlir::func::FuncOp>();
-    fpm.addPass(mlir::ADORA::createScheduleADORATasksPass());
-    if (mlir::failed(pm.run(moduleop))) {
-      llvm::errs() << "cgra-mapper: --enable-async pipeline failed.\n";
-      return 1;
+    if (moduleop->hasAttr("adora.scheduled")) {
+      if (verbose.getValue())
+        llvm::errs() << "cgra-mapper: --enable-async: module already scheduled "
+                        "(adora.scheduled); skipping schedule-tasks.\n";
+    } else {
+      mlir::PassManager pm(&context);
+      auto &fpm = pm.nest<mlir::func::FuncOp>();
+      fpm.addPass(mlir::ADORA::createScheduleADORATasksPass());
+      if (mlir::failed(pm.run(moduleop))) {
+        llvm::errs() << "cgra-mapper: --enable-async pipeline failed.\n";
+        return 1;
+      }
+      if (verbose.getValue())
+        llvm::errs() << "cgra-mapper: async pipeline (schedule-tasks) applied.\n";
     }
-    if (verbose.getValue())
-      llvm::errs() << "cgra-mapper: async pipeline (schedule-tasks) applied.\n";
   }
 
   moduleop.dump();

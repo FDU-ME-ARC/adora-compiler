@@ -1,11 +1,11 @@
-// Test: cgra-mapper --enable-async drives the schedule-tasks +
-// assign-streams + lower-async-tokens path before emit, so the
-// schedule-derived token dependencies surface in the generated code.
+// Test: cgra-mapper --enable-async runs the schedule-tasks pass before emit,
+// so the schedule-derived SSA !ADORA.token dependencies surface in the
+// generated code. Tokens are consumed directly by the emit layer (not lowered).
 //
 // Same kernel as mvt_small_emit.mlir, but here we assert the async-token
 // effects that are ABSENT in the non-async baseline:
 //   C:      BlockLoad/BlockStore carry `async`, and the store dependency
-//           lowers to an actual execute(...) call with EX_DEP_ST_LAST_TASK.
+//           becomes an execute(...) call with EX_DEP_ST_LAST_TASK.
 //   pytest: imports the CGRA-Cocotb-Sim runtime (test_runif) and threads the
 //           token as a depend_type=2 argument on the H2D copy.
 //
