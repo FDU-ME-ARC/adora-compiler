@@ -1,7 +1,7 @@
 """Extract per-kernel SCHEDULING decisions from an ADORA kernel MLIR using the
 upstream MLIR Python bindings (strong-typed), with no regex on the IR body.
 
-These attributes are written by the `llm-pipeline-schedule` pass:
+These attributes are written by the `adora-llm-pipeline-schedule` pass:
   - `adora.tile_set` (DenseI64ArrayAttr on the KernelOp): which CGRA tile(s)
     the kernel is assigned to.  Printed as `array<i64: 0, 1>`.
   - `hw_dep_type`     (StringAttr, on the kernel's BlockLoad/BlockStore ops that

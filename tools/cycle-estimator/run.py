@@ -206,7 +206,7 @@ def _align(mlir_path, estimates):
             aligned_sched[ename] = sched_by.get(ename)
     if not any(s and s.tiles != [0] for s in aligned_sched.values()):
         print("[viz] warning: no kernel has a non-[0] adora.tile_set; is this "
-              "MLIR scheduled? (run cgra-opt --llm-pipeline-schedule first)",
+              "MLIR scheduled? (run cgra-opt --adora-llm-pipeline-schedule first)",
               file=sys.stderr)
     return aligned_est, aligned_sched
 

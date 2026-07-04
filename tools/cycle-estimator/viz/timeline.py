@@ -1,7 +1,7 @@
 """Resource-occupancy timeline (Gantt) for an ADORA task schedule.
 
 Turns per-kernel `CycleEstimate` (real cycles) + per-kernel `KernelSched`
-(tile_set / hw_dep_type, from the llm-pipeline-schedule pass) into a Gantt
+(tile_set / hw_dep_type, from the adora-llm-pipeline-schedule pass) into a Gantt
 chart of PE-array occupancy over time, one row per CGRA tile.
 
 Story: independent kernels (dep=LD_DEP_NONE) on DIFFERENT tiles start together
