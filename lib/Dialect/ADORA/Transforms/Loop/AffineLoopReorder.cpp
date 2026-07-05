@@ -37,15 +37,11 @@ namespace {
 struct AffineLoopReorder : public AffineLoopReorderBase<AffineLoopReorder> {
   AffineLoopReorder() = default;
 
-  SmallVector<SmallVector<unsigned>> findValidLoopPermutations(AffineForOp forOp);
-  
-  template <typename LoadOrStoreOpPointer>
-    bool IsIndexOfAccess(AffineForOp for_tocheck,LoadOrStoreOpPointer accessop);
-
   LogicalResult ReorderOnAffineForOp(AffineForOp forOp);
-  SmallVector<int64_t> GetAccessShapeAtThisLevel(AffineForOp ForLevel, SmallVector<Operation*> MemAccessOps);
-  SmallVector<Operation*> Corresponding_MemAccessOps(AffineForOp forOp);
-  SmallVector<std::pair<AffineLoadOp, AffineStoreOp>> getRelatedLoadStorePair(SmallVector<Operation*> Ops);
+  uint64_t ComputeMemoryAccessCost(
+      ArrayRef<AffineForOp> loops,
+      SmallDenseMap<unsigned, SmallVector<SmallVector<Operation *>>> &loopRefGroups,
+      unsigned innerLevel);
   void runOnOperation() override {
     func::FuncOp func = getOperation();
     // llvm::errs() << "func:\n" << func << "\n";
@@ -57,7 +53,7 @@ struct AffineLoopReorder : public AffineLoopReorderBase<AffineLoopReorder> {
         // for(auto it=loops.begin();it!=loops.end();it++) { (*it).dump(); }
         ArrayRef<AffineForOp> loops_arrayRef = llvm::ArrayRef(loops);
         if (isPerfectlyNested(loops_arrayRef)) {
-          ReorderOnAffineForOp(forOp);
+          (void)ReorderOnAffineForOp(forOp);
         }
         else {
           // llvm::outs() << "Loops are not perfectly nested\n";
@@ -91,9 +87,66 @@ struct AffineLoopReorder : public AffineLoopReorderBase<AffineLoopReorder> {
 //        Cost of synchronization is calculated for each parallel loop.
 //        For a loop, synchronization cost = product of tripCounts of all loops which are at outer positions to this loop.
 //6. Choose the permutation with the least synchronization cost as the best permutation.
-LogicalResult AffineLoopReorder::ReorderOnAffineForOp(AffineForOp forOp) {
-  SmallDenseMap<unsigned, SmallVector<SmallVector<Operation *>> > loop_refGroups = getReuseGroupsForEachLoop(forOp);
+/// Estimate the total number of distinct memory accesses when the loop at
+/// `innerLevel` is placed as the innermost loop, following the reuse-group
+/// cost model described in the comment above (steps 1-2).
+/// For every reference group w.r.t. `innerLevel` a representative reference R
+/// contributes, per innermost iteration:
+///   - 1                        if R is loop-invariant (temporal reuse);
+///   - ceildiv(trip, cacheLine) if R has spatial reuse (innermost index only
+///                              appears in the last array dimension, stride 1);
+///   - trip                     otherwise (strided, no reuse).
+/// The per-iteration count is then multiplied by the product of the trip counts
+/// of all the remaining (non-innermost) loops. A lower cost means the loop is a
+/// better candidate for the innermost position.
+uint64_t AffineLoopReorder::ComputeMemoryAccessCost(
+    ArrayRef<AffineForOp> loops,
+    SmallDenseMap<unsigned, SmallVector<SmallVector<Operation *>>> &loopRefGroups,
+    unsigned innerLevel) {
+  constexpr int64_t kCacheLineSize = 8;
+  AffineForOp innerFor = loops[innerLevel];
+  uint64_t innerTrip = getConstantTripCount(innerFor).value_or(1);
 
+  uint64_t perIterAccesses = 0;
+  for (const SmallVector<Operation *> &group : loopRefGroups[innerLevel]) {
+    if (group.empty())
+      continue;
+    Operation *repOp = group.front();
+
+    unsigned arrayRank = 0;
+    std::pair<int, int> rankMult(-1, -1);
+    if (auto load = dyn_cast<AffineLoadOp>(repOp)) {
+      arrayRank = load.getMemRef().getType().cast<MemRefType>().getRank();
+      rankMult = getCorrespondingRankAndMultiplicator(load, innerFor);
+    } else if (auto store = dyn_cast<AffineStoreOp>(repOp)) {
+      arrayRank = store.getMemRef().getType().cast<MemRefType>().getRank();
+      rankMult = getCorrespondingRankAndMultiplicator(store, innerFor);
+    } else {
+      continue;
+    }
+
+    if (rankMult.first < 0) {
+      // Innermost induction variable does not index this reference: reused.
+      perIterAccesses += 1;
+    } else if ((unsigned)rankMult.first == arrayRank - 1 && rankMult.second == 1) {
+      // Contiguous access along the innermost loop: spatial reuse.
+      perIterAccesses += (innerTrip + kCacheLineSize - 1) / kCacheLineSize;
+    } else {
+      // Strided access, no reuse.
+      perIterAccesses += innerTrip;
+    }
+  }
+
+  uint64_t remainingTrips = 1;
+  for (unsigned l = 0; l < loops.size(); l++) {
+    if (l == innerLevel)
+      continue;
+    remainingTrips *= getConstantTripCount(loops[l]).value_or(1);
+  }
+  return perIterAccesses * remainingTrips;
+}
+
+LogicalResult AffineLoopReorder::ReorderOnAffineForOp(AffineForOp forOp) {
   AffineForOp rootForOp = forOp;
   SmallVector<AffineForOp, 4> loops;
   getPerfectlyNestedLoops(loops, rootForOp);
@@ -103,6 +156,17 @@ LogicalResult AffineLoopReorder::ReorderOnAffineForOp(AffineForOp forOp) {
   }
   SmallVector<unsigned> loopPermMap(loopDepth), OriginloopPerm(loopDepth);
 
+  // Reuse groups are keyed by loop depth on the original nest. The memory-access
+  // cost of a loop as the innermost loop depends only on that loop's own access
+  // pattern and the product of the other trip counts, both invariant to loop
+  // ordering. So compute the analysis once and cache the cost per physical loop.
+  SmallDenseMap<unsigned, SmallVector<SmallVector<Operation *>>> loop_refGroups =
+      getReuseGroupsForEachLoop(rootForOp);
+  SmallDenseMap<Operation *, uint64_t> costOf;
+  for (unsigned d = 0; d < loopDepth; d++)
+    costOf[loops[d].getOperation()] =
+        ComputeMemoryAccessCost(loops, loop_refGroups, d);
+
   bool Interchangable = true;
   while(Interchangable){
     Interchangable = false;
@@ -110,9 +174,7 @@ LogicalResult AffineLoopReorder::ReorderOnAffineForOp(AffineForOp forOp) {
     for (unsigned d=0;d < loopDepth - 1;d++) {
       loops.clear();
       getPerfectlyNestedLoops(loops, rootForOp);
-      if(Interchangable) 
-        break;/// traverse from root for op again
-      
+
       /// initialize permutation map
       for (unsigned i = 0; i < loopDepth; i++) {
         OriginloopPerm[i] = i;
@@ -126,127 +188,30 @@ LogicalResult AffineLoopReorder::ReorderOnAffineForOp(AffineForOp forOp) {
 
       AffineForOp OuterFor = loops[d];
       AffineForOp InnerFor = loops[d + 1];
-      llvm::errs() << "Outer:\n"  << OuterFor ;
-                    // << "Inner:\n" << InnerFor;
       /***
        * Step1: check whether two loop can be interchanged
       */
       ArrayRef<AffineForOp> loops_arrayRef = llvm::ArrayRef(loops);
       ArrayRef<unsigned> loopPermMap_arrayRef = llvm::ArrayRef(loopPermMap);
       if ( isValidLoopInterchangePermutation(loops_arrayRef,loopPermMap_arrayRef) ) {
-        // llvm::errs() << "Valid interchange\n"; 
         /***
-        * Step2: Find corresponding load and store operations and check 
-        *       whether there exist load-store pair which access the same address in one iteration
-        *       which might have the potential to be extracts as the Accumulation(ACC/AMUL) operation
+        * Decide the adjacent interchange with the reuse-group memory-access
+        * cost model. ComputeMemoryAccessCost folds both temporal reuse (a
+        * loop-invariant reference costs 1) and spatial reuse (a unit-stride
+        * innermost reference costs trip/cacheLine) into a single per-loop key
+        * that is invariant to loop ordering. Move the outer loop inward iff it
+        * incurs strictly fewer memory accesses than its inner neighbour when
+        * placed innermost; ties are left untouched so the bubbling converges.
         */
-        SmallVector<Operation*> MemAccessOps_in = Corresponding_MemAccessOps(InnerFor);
-        SmallVector<Operation*> MemAccessOps_out = Corresponding_MemAccessOps(OuterFor);
-        // MemAccessOps_in.insert(MemAccessOps_in.end(), MemAccessOps_out.begin(), MemAccessOps_out.end());
-        SmallVector<Operation*> MemAccessOps = ADORA::SetMergeForVector(MemAccessOps_in, MemAccessOps_out);
-        SmallVector<std::pair<AffineLoadOp, AffineStoreOp>> LSPairs = getRelatedLoadStorePair(MemAccessOps);
-
-        /***
-        * Step3: If load-store pair which access the same address exits, consider temporal reuse;
-        *   else, consider spatial reuse.
-        */        
-        if(LSPairs.size() != 0){
-          /// If there exits temporal reuse, the corresponding loop should be outer.
-          SmallDenseMap<std::pair<AffineLoadOp, AffineStoreOp>, bool> pair_to_interchange;
-          bool skip = 0;
-          for(auto lspair : LSPairs){
-            if(IsIndexOfAccess(InnerFor, lspair.first)) {
-              assert(IsIndexOfAccess(InnerFor, lspair.second));
-              if(IsIndexOfAccess(OuterFor ,lspair.first)){
-                /// If the outer loop corresponds to higher rank, then 
-                /// there is no need to interchange
-                std::pair<int, int> p_out = getCorrespondingRankAndMultiplicator(lspair.first, OuterFor);
-                std::pair<int, int> p_in = getCorrespondingRankAndMultiplicator(lspair.first, InnerFor);
-                if(p_out.first < p_in.first){
-                  /// outer corresponds to higher rank, no need to permutate
-                  Interchangable = false;
-                  skip = true;
-                }
-                else if(p_out.first == p_in.first){
-                  /// both corresponds to the same rank, compare Multiplicator
-                  if(p_out.first > p_in.first){
-                    Interchangable = false;
-                    skip = true;
-                  }
-                  else{
-                    pair_to_interchange[lspair] = true;
-                  }
-                }
-                else{
-                  pair_to_interchange[lspair] = true;
-                }
-              }
-              else{
-                pair_to_interchange[lspair] = true;
-              }
-            }
-            else{
-              pair_to_interchange[lspair] = false;
-            }
-          }
-          if(skip){
-            continue;
-          }
-
+        uint64_t costOuterAsInner = costOf[OuterFor.getOperation()];
+        uint64_t costInnerAsInner = costOf[InnerFor.getOperation()];
+        LLVM_DEBUG(llvm::errs() << "cost[outer as inner]=" << costOuterAsInner
+                                << " cost[inner as inner]=" << costInnerAsInner << "\n");
+        if (costOuterAsInner < costInnerAsInner) {
           Interchangable = true;
-          for(auto lspair_result : pair_to_interchange){
-            if(lspair_result.second == false){
-              /// If there is one pair do not prefer this interchange, then we won't interchange.
-              Interchangable = false; 
-            }
-          }
-          if(Interchangable){
-            unsigned NewRootIndex = permuteLoops(loops, loopPermMap);
-            break;
-          }
-        }
-        /***
-        * Step4: Spatial reuse is a more common situation.
-        *  compare the shapes of memory access before and after interchanging
-        */        
-        /// Before interchanging
-        SmallVector<int64_t> Shape_before = GetAccessShapeAtThisLevel(/*level=*/InnerFor, MemAccessOps);
-
-        /// After interchanging
-        unsigned NewRootIndex = permuteLoops(loops, loopPermMap);
-        SmallVector<int64_t> Shape_after = GetAccessShapeAtThisLevel(/*level=*/OuterFor, MemAccessOps);
-        llvm::errs() << "Shape_before:";
-        for(auto d : Shape_before){
-          llvm::errs() << d << " ";
-        }
-        llvm::errs() << ";\n";
-        llvm::errs() << "Shape_after:";
-        for(auto d : Shape_after){
-          llvm::errs() << d << " ";
-        }
-        llvm::errs() << ";\n";
-
-        for(unsigned d = 0; d < Shape_after.size() || d < Shape_before.size(); d++){
-          /* We want deliver as more data to accelerator's local memory as possible,
-          * so we want the last dimmension(lowest) of the shape is larger.
-          */ 
-          if(Shape_before[Shape_before.size()-1-d] < Shape_after[Shape_after.size()-1-d]){
-            Interchangable = true;
-            break;
-          }
-          else if(Shape_before[Shape_before.size()-1-d] > Shape_after[Shape_after.size()-1-d]){
-            Interchangable = false;
-            break;
-          }
-        }
-        rootForOp = loops[NewRootIndex];
-        if(!Interchangable){
-          /// permute to original nested-loop levels
-          loops.clear();
-          getPerfectlyNestedLoops(loops, rootForOp);
-          NewRootIndex = permuteLoops(loops, loopPermMap);
+          unsigned NewRootIndex = permuteLoops(loops, loopPermMap);
           rootForOp = loops[NewRootIndex];
-          /// Don't interchange, check the next loop level
+          break; /// a swap happened, restart bubbling from the root
         }
       }
     }
@@ -254,185 +219,6 @@ LogicalResult AffineLoopReorder::ReorderOnAffineForOp(AffineForOp forOp) {
 
   return success();
 }
-
-SmallVector<Operation*> AffineLoopReorder::Corresponding_MemAccessOps(AffineForOp forOp){
-  SmallVector<Operation *> loadAndStoreOpInsts;
-  // llvm::errs() << "forOp: " << forOp << "\n";
-  forOp.getOperation()->walk([&](Operation *opInst) {
-    SmallVector<SmallVector<int> > AccessMatrix;
-    unsigned arrayDimension;
-    if (auto store = dyn_cast<AffineStoreOp>(opInst)) {
-      auto memRefType = store.getMemRef().getType().template cast<MemRefType> ();
-      arrayDimension = memRefType.getRank();
-    }
-    else if (auto load = dyn_cast<AffineLoadOp>(opInst)) {
-      auto memRefType = load.getMemRef().getType().template cast<MemRefType> ();
-      arrayDimension = memRefType.getRank();
-    }
-    else{
-      return WalkResult::advance();
-    }
-
-    AccessMatrix = getAccessMatrix(opInst);
-    for(unsigned i = 0; i <  arrayDimension; i++){
-      if(AccessMatrix[i][getNestingDepth(forOp)] != 0){
-        loadAndStoreOpInsts.push_back(opInst);
-        // llvm::errs() << "Corresponfing: " << *opInst << "\n";
-        break;
-      }
-    }
-
-    return WalkResult::advance();
-  });
-
-  return loadAndStoreOpInsts;
-}
-
-
-SmallVector<int64_t> AffineLoopReorder::GetAccessShapeAtThisLevel(
-      AffineForOp ForLevel, SmallVector<Operation*> AccessOps){
-  SmallVector<int64_t> CriticalShape;
-  std::optional<int64_t> BiggestSize;  
-  MemRefRegion CriticalRegion(AccessOps[0]->getLoc());
-  for(Operation* AccessOp : AccessOps){
-    auto region = std::make_unique<MemRefRegion>(AccessOp->getLoc());
-    if (failed(region->compute(AccessOp,
-                  /*loopDepth=*/getNestingDepth(ForLevel)))) {
-      assert(0 && "[Error] error obtaining memory region\n");
-      // return AccessOp->emitError("error obtaining memory region\n");
-    }
-    SmallVector <int64_t> shape;
-    // llvm::errs() << "region:\n";
-    // region->dump();
-    region->getConstantBoundingSizeAndShape(/*shape=*/&shape/*, lbs= , lbDivisors=*/);
-    llvm::errs() << "op:"; AccessOp->dump();
-    llvm::errs() << "shape:";
-    for(auto d : shape){
-      llvm::errs() << d << " ";
-    }
-    llvm::errs() << ";\n";
-    std::optional<int64_t> size = region->getRegionSize();
-    llvm::errs() << "size: "<< size <<"\n";
-
-    if(size > BiggestSize){
-      BiggestSize = size;
-      CriticalShape = shape;
-    }
-  }
-  return CriticalShape;
-
-}
-
-
-
-// SmallVector<int64_t> AffineLoopReorder::GetAccessCountsAtThisLevel(
-//       AffineForOp ForLevel, SmallVector<Operation*> AccessOps){
-//   SmallVector <int64_t> CriticalShape;
-//   std::optional<int64_t> BiggestSize;  
-//   MemRefRegion CriticalRegion(AccessOps[0]->getLoc());
-//   for(Operation* AccessOp : AccessOps){
-//     auto region = std::make_unique<MemRefRegion>(AccessOp->getLoc());
-//     if (failed(region->compute(AccessOp,
-//                   /*loopDepth=*/getNestingDepth(ForLevel)))) {
-//       assert(0 && "[Error] error obtaining memory region\n");
-//       // return AccessOp->emitError("error obtaining memory region\n");
-//     }
-//     SmallVector <int64_t> shape;
-//     // llvm::errs() << "region:\n";
-//     // region->dump();
-//     region->getConstantBoundingSizeAndShape(/*shape=*/&shape/*, lbs= , lbDivisors=*/);
-//     llvm::errs() << "op:"; AccessOp->dump();
-//     llvm::errs() << "shape:";
-//     for(auto d : shape){
-//       llvm::errs() << d << " ";
-//     }
-//     llvm::errs() << ";\n";
-//     std::optional<int64_t> size = region->getRegionSize();
-//     llvm::errs() << "size: "<< size <<"\n";
-
-//     if(size > BiggestSize){
-//       BiggestSize = size;
-//       CriticalShape = shape;
-//     }
-//   }
-//   return CriticalShape;
-
-// }
-
-// Given a forOp, returns all the loop permutations which have lexicographically positive dependence vectors.
-SmallVector<SmallVector<unsigned>> AffineLoopReorder::findValidLoopPermutations(AffineForOp forOp) {
-  SmallVector<AffineForOp, 4> loops;
-  getPerfectlyNestedLoops(loops,forOp);
-  SmallVector<SmallVector<unsigned>> validLoopPerm;
-  if (loops.size() < 2)
-    return validLoopPerm;  
-  unsigned maxLoopDepth = loops.size();
-  unsigned arr[maxLoopDepth];
-  for(unsigned i=0; i<maxLoopDepth; i++) {
-    arr[i] = i;
-  }
-  SmallVector<unsigned> loopPermMap(maxLoopDepth);
-  SmallVector<unsigned> loopPerm(maxLoopDepth);
-  do {
-    for (unsigned i = 0; i < maxLoopDepth; ++i) {
-      loopPermMap[arr[i]] = i; // inverted, referred sinkSequentialLoops func
-      loopPerm[i] = arr[i];    // not inverted
-    }
-    ArrayRef<AffineForOp> loops_arrayRef = llvm::ArrayRef(loops);
-    ArrayRef<unsigned> loopPermMap_arrayRef = llvm::ArrayRef(loopPermMap);
-    if ( isValidLoopInterchangePermutation(loops_arrayRef,loopPermMap_arrayRef) ) {
-      // display(arr,maxLoopDepth);
-      validLoopPerm.push_back(loopPerm); // not loopPermMap
-    }
-  } while(std::next_permutation(arr,arr+maxLoopDepth));
-  return validLoopPerm;
-}
-
-
-SmallVector<std::pair<AffineLoadOp, AffineStoreOp>>
-  AffineLoopReorder::getRelatedLoadStorePair(SmallVector<Operation*> ops){
-  SmallVector<AffineLoadOp> loads;
-  SmallVector<AffineStoreOp> stores;
-  SmallVector<std::pair<AffineLoadOp, AffineStoreOp>> ls_pair;
-
-  for(Operation* op : ops){
-    if(isa<AffineLoadOp>(op))
-      loads.push_back(dyn_cast<AffineLoadOp>(op));
-    if(isa<AffineStoreOp>(op))
-      stores.push_back(dyn_cast<AffineStoreOp>(op));
-  }
-
-  for(AffineLoadOp loadop : loads){
-    /// Check whether this load occurs with a corresponding store which have
-    /// the same memref and address to access. 
-    for(AffineStoreOp storeop : stores){
-      // llvm::errs() << "[info] loadop: " << loadop << "\n";   
-      // llvm::errs() << "[info] storeop: " << storeop << "\n";    
-      if(LoadStoreSameMemAddr(loadop, storeop)){
-        ls_pair.push_back(std::pair(loadop, storeop));
-      }
-    }
-  }
-
-  return ls_pair;
-}
-
-template <typename LoadOrStoreOpPointer>
-bool AffineLoopReorder::IsIndexOfAccess(AffineForOp for_tocheck,LoadOrStoreOpPointer accessop){
-  Operation::operand_range Indices = accessop.getIndices();
-  for(unsigned d = 0; d < Indices.size(); d++){
-    // llvm::errs() << "[test] loadIndice[i]: " ; loadIndices[d].dump() ; 
-    AffineForOp forop = dyn_cast<AffineForOp>(Indices[d].getParentBlock()->getParentOp());
-    if(for_tocheck == forop){
-      return true;
-    }
-  }
-  
-  return false;
-}
-
-
-
 
 std::unique_ptr<OperationPass<func::FuncOp>> mlir::ADORA::createAffineLoopReorderPass() {
   return std::make_unique<AffineLoopReorder>();
