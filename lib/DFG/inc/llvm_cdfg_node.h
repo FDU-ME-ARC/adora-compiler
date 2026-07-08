@@ -176,7 +176,8 @@ public:
     mlir::Block* getBlockPtr(){ return _BlockPtr;}
     void setisSCFForOp(bool is){ _isSCFForOp = is;}
     bool isSCFForOp(){ return _isSCFForOp;}
-    bool isLinearAccess() {return (_operation->getName().getStringRef() == "affine.load" 
+    bool isLinearAccess() {return _operation != nullptr  // [hjy] guard null for synthetic nodes
+                                && (_operation->getName().getStringRef() == "affine.load" 
                                     || _operation->getName().getStringRef() == "affine.store"
                                     || _operation->getName().getStringRef() == "affine.vector_store"
                                     || _operation->getName().getStringRef() == "affine.vector_load")
