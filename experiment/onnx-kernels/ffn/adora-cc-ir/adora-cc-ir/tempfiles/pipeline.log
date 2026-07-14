@@ -1,0 +1,568 @@
+
+========================================================================
+2026-07-15T03:07:55
+cwd: None
++ /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/build/bin/cgra-opt --allow-unregistered-dialect --affine-loop-normalize --affine-simplify-structures --normalize-memrefs /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/experiment/onnx-kernels/ffn/adora.strategy.mlir -o /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/experiment/onnx-kernels/ffn/adora-cc-ir/adora-cc-ir/tempfiles/DFGs/adora.strategy_normalized.mlir
+------------------------------------------------------------------------
+
+========================================================================
+2026-07-15T03:07:55
+cwd: None
++ /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/build/bin/cgra-opt --canonicalize -reconcile-unrealized-casts --affine-loop-fusion --adora-extract-affine-for-to-kernel --arith-expand --memref-expand -cse /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/experiment/onnx-kernels/ffn/adora-cc-ir/adora-cc-ir/tempfiles/DFGs/adora.strategy_normalized.mlir -o /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/experiment/onnx-kernels/ffn/adora-cc-ir/adora-cc-ir/0_kernels/adora.strategy_kernel.mlir
+------------------------------------------------------------------------
+
+========================================================================
+2026-07-15T03:07:55
+cwd: None
++ /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/build/bin/cgra-opt --adora-simplify-affine-loop-levels --canonicalize -cse --adora-simplify-loadstore --adora-math-rewrite --adora-adjust-kernel-mem-footprint=cachesize=128 singlearraysize=8 disable-remainder-block explicit-datablock /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/experiment/onnx-kernels/ffn/adora-cc-ir/adora-cc-ir/0_kernels/adora.strategy_kernel.mlir -o /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/experiment/onnx-kernels/ffn/adora-cc-ir/adora-cc-ir/1_kernels_opt/adora.strategy_opt.mlir
+------------------------------------------------------------------------
+affine.for %arg6 = 0 to 256 {
+  %2 = affine.load %0[%arg5, %arg6] : memref<64x256xbf16>
+  %3 = arith.cmpf ugt, %2, %cst : bf16
+  %4 = arith.select %3, %2, %cst : bf16
+  %5 = arith.cmpf uno, %2, %2 : bf16
+  %6 = arith.select %5, %cst, %4 : bf16
+  affine.store %6, %alloc[%arg5, %arg6] : memref<64x256xbf16>
+}
+affine.for %arg5 = 0 to 64 {
+  affine.for %arg6 = 0 to 256 {
+    %2 = affine.load %0[%arg5, %arg6] : memref<64x256xbf16>
+    %3 = arith.cmpf ugt, %2, %cst : bf16
+    %4 = arith.select %3, %2, %cst : bf16
+    %5 = arith.cmpf uno, %2, %2 : bf16
+    %6 = arith.select %5, %cst, %4 : bf16
+    affine.store %6, %alloc[%arg5, %arg6] : memref<64x256xbf16>
+  }
+}
+affine.for %arg5 = 0 to 64 {
+  affine.for %arg6 = 0 to 256 {
+    %2 = affine.load %0[%arg5, %arg6] : memref<64x256xbf16>
+    %3 = arith.cmpf ugt, %2, %cst : bf16
+    %4 = arith.select %3, %2, %cst : bf16
+    %5 = arith.cmpf uno, %2, %2 : bf16
+    %6 = arith.select %5, %cst, %4 : bf16
+    affine.store %6, %alloc[%arg5, %arg6] : memref<64x256xbf16>
+  }
+}
+ 1: perfect, innermost
+0: outermost
+affine.for %arg6 = 0 to 256 {
+  %2 = affine.load %0[%arg5, %arg6] : memref<64x256xbf16>
+  %3 = arith.cmpf ugt, %2, %cst : bf16
+  %4 = arith.select %3, %2, %cst : bf16
+  %5 = arith.cmpf uno, %2, %2 : bf16
+  %6 = arith.select %5, %cst, %4 : bf16
+  affine.store %6, %alloc[%arg5, %arg6] : memref<64x256xbf16>
+}
+affine.for %arg5 = 0 to 64 {
+  affine.for %arg6 = 0 to 256 {
+    %2 = affine.load %0[%arg5, %arg6] : memref<64x256xbf16>
+    %3 = arith.cmpf ugt, %2, %cst : bf16
+    %4 = arith.select %3, %2, %cst : bf16
+    %5 = arith.cmpf uno, %2, %2 : bf16
+    %6 = arith.select %5, %cst, %4 : bf16
+    affine.store %6, %alloc[%arg5, %arg6] : memref<64x256xbf16>
+  }
+}
+affine.for %arg6 = 0 to 256 {
+  %2 = affine.load %0[%arg5, %arg6] : memref<64x256xbf16>
+  %3 = arith.cmpf ugt, %2, %cst : bf16
+  %4 = arith.select %3, %2, %cst : bf16
+  %5 = arith.cmpf uno, %2, %2 : bf16
+  %6 = arith.select %5, %cst, %4 : bf16
+  affine.store %6, %alloc[%arg5, %arg6] : memref<64x256xbf16>
+}
+affine.for %arg5 = 0 to 64 {
+  affine.for %arg6 = 0 to 256 {
+    %2 = affine.load %0[%arg5, %arg6] : memref<64x256xbf16>
+    %3 = arith.cmpf ugt, %2, %cst : bf16
+    %4 = arith.select %3, %2, %cst : bf16
+    %5 = arith.cmpf uno, %2, %2 : bf16
+    %6 = arith.select %5, %cst, %4 : bf16
+    affine.store %6, %alloc[%arg5, %arg6] : memref<64x256xbf16>
+  }
+}
+affine.for %arg5 = 0 to 64 {
+  affine.for %arg6 = 0 to 256 {
+    %2 = affine.load %0[%arg5, %arg6] : memref<64x256xbf16>
+    %3 = arith.cmpf ugt, %2, %cst : bf16
+    %4 = arith.select %3, %2, %cst : bf16
+    %5 = arith.cmpf uno, %2, %2 : bf16
+    %6 = arith.select %5, %cst, %4 : bf16
+    affine.store %6, %alloc[%arg5, %arg6] : memref<64x256xbf16>
+  }
+}
+ 1: perfect, innermost
+0: outermost
+NewShape Shape: 256 64 
+NewShape Shape: 256 64 
+NewShape Shape: 256 16 
+NewShape Shape: 256 16 
+NewShape Shape: 256 16 
+[debug] newMemRef: memref<16x256xbf16>
+[debug] before remove LoadExpr: d0
+[debug] BlockLoadExpr: d0
+[debug] op:%2 = ADORA.BlockLoad %0 [%arg5, 0] : memref<64x256xbf16> -> memref<16x256xbf16>  {Id = "0", KernelName = "main_graph"}
+[debug] map:(d0) -> (d0, 0)
+[debug] result:d0
+[debug] mapOperands[input]:<block argument> of type 'index' at index: 0,input:0
+[debug] op:%3 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+[debug] map:(d0, d1) -> (d0, d1)
+[debug] result:d0
+[debug] mapOperands[input]:<block argument> of type 'index' at index: 0,input:0
+[debug] after simplified LoadExpr: d0
+[debug] after remove LoadExpr: d0
+[debug] before remove LoadExpr: d1
+[debug] BlockLoadExpr: 0
+[debug] after remove LoadExpr: d1
+[debug] After replace Kernel: 
+ADORA.kernel {
+  affine.for %arg6 = affine_map<(d0) -> (d0)>(%arg5) to affine_map<(d0) -> (d0 + 16)>(%arg5) {
+    affine.for %arg7 = 0 to 256 {
+      %3 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+      %4 = arith.cmpf ugt, %3, %cst : bf16
+      %5 = arith.select %4, %3, %cst : bf16
+      %6 = arith.cmpf uno, %3, %3 : bf16
+      %7 = arith.select %6, %cst, %5 : bf16
+      affine.store %7, %alloc[%arg6, %arg7] : memref<64x256xbf16>
+    }
+  }
+  ADORA.terminator
+} {KernelName = "main_graph"}
+[debug] storeop: affine.store %7, %alloc[%arg6, %arg7] : memref<64x256xbf16>
+[debug] lbMap: (d0) -> (d0, 0) , ubMap: (d0) -> (d0 + 16, 64)
+[debug] lbMap: (d0) -> (0) , ubMap: (d0) -> (256)
+NewShape Shape: 256 16 
+[debug] before remove StoreExpr: d0
+[debug] before remove BlockStoreExpr: d0
+[debug] op:ADORA.BlockStore %3, %alloc [%arg5, 0] : memref<16x256xbf16> -> memref<64x256xbf16>  {Id = "1", KernelName = "main_graph"}
+[debug] map:(d0) -> (d0, 0)
+[debug] result:d0
+[debug] mapOperands[input]:<block argument> of type 'index' at index: 0,input:0
+[debug] op:affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+[debug] map:(d0, d1) -> (d0, d1)
+[debug] result:d0
+[debug] mapOperands[input]:<block argument> of type 'index' at index: 0,input:0
+[debug] before remove StoreExpr: d1
+[debug] before remove BlockStoreExpr: 0
+[debug] op:%4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+[debug] map:(d0, d1) -> (d0, d1)
+[debug] dimReplacements:d0
+[debug] dimReplacements:d1
+[debug] map:(d0, d1) -> (d0, d1)
+expr result:d0
+expr result:d0
+expr result:d1
+ADORA.kernel {
+  affine.for %arg6 = affine_map<(d0) -> (d0)>(%arg5) to affine_map<(d0) -> (d0 + 16)>(%arg5) {
+    affine.for %arg7 = 0 to 256 {
+      %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+      %5 = arith.cmpf ugt, %4, %cst : bf16
+      %6 = arith.select %5, %4, %cst : bf16
+      %7 = arith.cmpf uno, %4, %4 : bf16
+      %8 = arith.select %7, %cst, %6 : bf16
+      affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+    }
+  }
+  ADORA.terminator
+} {KernelName = "main_graph"}
+ADORA.kernel {
+  affine.for %arg6 = affine_map<(d0) -> (d0)>(%arg5) to affine_map<(d0) -> (d0 + 16)>(%arg5) {
+    affine.for %arg7 = 0 to 256 {
+      %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+      %5 = arith.cmpf ugt, %4, %cst : bf16
+      %6 = arith.select %5, %4, %cst : bf16
+      %7 = arith.cmpf uno, %4, %4 : bf16
+      %8 = arith.select %7, %cst, %6 : bf16
+      affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+    }
+  }
+  ADORA.terminator
+} {KernelName = "main_graph"}
+ADORA.kernel {
+  affine.for %arg6 = affine_map<(d0) -> (d0)>(%arg5) to affine_map<(d0) -> (d0 + 16)>(%arg5) {
+    affine.for %arg7 = 0 to 256 {
+      %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+      %5 = arith.cmpf ugt, %4, %cst : bf16
+      %6 = arith.select %5, %4, %cst : bf16
+      %7 = arith.cmpf uno, %4, %4 : bf16
+      %8 = arith.select %7, %cst, %6 : bf16
+      affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+    }
+  }
+  ADORA.terminator
+} {KernelName = "main_graph"}
+ADORA.kernel {
+  affine.for %arg6 = affine_map<(d0) -> (d0)>(%arg5) to affine_map<(d0) -> (d0 + 16)>(%arg5) {
+    affine.for %arg7 = 0 to 256 {
+      %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+      %5 = arith.cmpf ugt, %4, %cst : bf16
+      %6 = arith.select %5, %4, %cst : bf16
+      %7 = arith.cmpf uno, %4, %4 : bf16
+      %8 = arith.select %7, %cst, %6 : bf16
+      affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+    }
+  }
+  ADORA.terminator
+} {KernelName = "main_graph"}
+ADORA.kernel {
+  affine.for %arg6 = affine_map<(d0) -> (d0)>(%arg5) to affine_map<(d0) -> (d0 + 16)>(%arg5) {
+    affine.for %arg7 = 0 to 256 {
+      %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+      %5 = arith.cmpf ugt, %4, %cst : bf16
+      %6 = arith.select %5, %4, %cst : bf16
+      %7 = arith.cmpf uno, %4, %4 : bf16
+      %8 = arith.select %7, %cst, %6 : bf16
+      affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+    }
+  }
+  ADORA.terminator
+} {KernelName = "main_graph"}
+[debug] op:affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+[debug] map:(d0, d1) -> (d0, d1)
+[debug] dimReplacements:d0
+[debug] dimReplacements:d1
+[debug] map:(d0, d1) -> (d0, d1)
+expr result:d0
+expr result:d0
+expr result:d1
+ADORA.kernel {
+  affine.for %arg6 = affine_map<(d0) -> (d0)>(%arg5) to affine_map<(d0) -> (d0 + 16)>(%arg5) {
+    affine.for %arg7 = 0 to 256 {
+      %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+      %5 = arith.cmpf ugt, %4, %cst : bf16
+      %6 = arith.select %5, %4, %cst : bf16
+      %7 = arith.cmpf uno, %4, %4 : bf16
+      %8 = arith.select %7, %cst, %6 : bf16
+      affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+    }
+  }
+  ADORA.terminator
+} {KernelName = "main_graph"}
+ADORA.kernel {
+  affine.for %arg6 = affine_map<(d0) -> (d0)>(%arg5) to affine_map<(d0) -> (d0 + 16)>(%arg5) {
+    affine.for %arg7 = 0 to 256 {
+      %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+      %5 = arith.cmpf ugt, %4, %cst : bf16
+      %6 = arith.select %5, %4, %cst : bf16
+      %7 = arith.cmpf uno, %4, %4 : bf16
+      %8 = arith.select %7, %cst, %6 : bf16
+      affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+    }
+  }
+  ADORA.terminator
+} {KernelName = "main_graph"}
+ADORA.kernel {
+  affine.for %arg6 = affine_map<(d0) -> (d0)>(%arg5) to affine_map<(d0) -> (d0 + 16)>(%arg5) {
+    affine.for %arg7 = 0 to 256 {
+      %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+      %5 = arith.cmpf ugt, %4, %cst : bf16
+      %6 = arith.select %5, %4, %cst : bf16
+      %7 = arith.cmpf uno, %4, %4 : bf16
+      %8 = arith.select %7, %cst, %6 : bf16
+      affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+    }
+  }
+  ADORA.terminator
+} {KernelName = "main_graph"}
+ADORA.kernel {
+  affine.for %arg6 = affine_map<(d0) -> (d0)>(%arg5) to affine_map<(d0) -> (d0 + 16)>(%arg5) {
+    affine.for %arg7 = 0 to 256 {
+      %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+      %5 = arith.cmpf ugt, %4, %cst : bf16
+      %6 = arith.select %5, %4, %cst : bf16
+      %7 = arith.cmpf uno, %4, %4 : bf16
+      %8 = arith.select %7, %cst, %6 : bf16
+      affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+    }
+  }
+  ADORA.terminator
+} {KernelName = "main_graph"}
+ADORA.kernel {
+  affine.for %arg6 = affine_map<(d0) -> (d0)>(%arg5) to affine_map<(d0) -> (d0 + 16)>(%arg5) {
+    affine.for %arg7 = 0 to 256 {
+      %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+      %5 = arith.cmpf ugt, %4, %cst : bf16
+      %6 = arith.select %5, %4, %cst : bf16
+      %7 = arith.cmpf uno, %4, %4 : bf16
+      %8 = arith.select %7, %cst, %6 : bf16
+      affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+    }
+  }
+  ADORA.terminator
+} {KernelName = "main_graph"}
+ADORA.kernel {
+  affine.for %arg6 = affine_map<(d0) -> (d0)>(%arg5) to affine_map<(d0) -> (d0 + 16)>(%arg5) {
+    affine.for %arg7 = 0 to 256 {
+      %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+      %5 = arith.cmpf ugt, %4, %cst : bf16
+      %6 = arith.select %5, %4, %cst : bf16
+      %7 = arith.cmpf uno, %4, %4 : bf16
+      %8 = arith.select %7, %cst, %6 : bf16
+      affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+    }
+  }
+  ADORA.terminator
+} {KernelName = "main_graph"}
+ADORA.kernel {
+  affine.for %arg6 = affine_map<(d0) -> (d0)>(%arg5) to affine_map<(d0) -> (d0 + 16)>(%arg5) {
+    affine.for %arg7 = 0 to 256 {
+      %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+      %5 = arith.cmpf ugt, %4, %cst : bf16
+      %6 = arith.select %5, %4, %cst : bf16
+      %7 = arith.cmpf uno, %4, %4 : bf16
+      %8 = arith.select %7, %cst, %6 : bf16
+      affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+    }
+  }
+  ADORA.terminator
+} {KernelName = "main_graph"}
+IV:
+<block argument> of type 'index' at index: 0
+affine.for %arg5 = 0 to 64 step 16 {
+  %2 = ADORA.BlockLoad %0 [%arg5, 0] : memref<64x256xbf16> -> memref<16x256xbf16>  {Id = "0", KernelName = "main_graph"}
+  %3 = ADORA.LocalMemAlloc memref<16x256xbf16>  {Id = "1", KernelName = "main_graph"}
+  ADORA.kernel {
+    affine.for %arg6 = affine_map<(d0) -> (d0)>(%arg5) to affine_map<(d0) -> (d0 + 16)>(%arg5) {
+      affine.for %arg7 = 0 to 256 {
+        %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+        %5 = arith.cmpf ugt, %4, %cst : bf16
+        %6 = arith.select %5, %4, %cst : bf16
+        %7 = arith.cmpf uno, %4, %4 : bf16
+        %8 = arith.select %7, %cst, %6 : bf16
+        affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+      }
+    }
+    ADORA.terminator
+  } {KernelName = "main_graph"}
+  ADORA.BlockStore %3, %alloc [%arg5, 0] : memref<16x256xbf16> -> memref<64x256xbf16>  {Id = "1", KernelName = "main_graph"}
+}
+<block argument> of type 'index' at index: 0
+affine.for %arg5 = 0 to 64 step 16 {
+  %2 = ADORA.BlockLoad %0 [%arg5, 0] : memref<64x256xbf16> -> memref<16x256xbf16>  {Id = "0", KernelName = "main_graph"}
+  %3 = ADORA.LocalMemAlloc memref<16x256xbf16>  {Id = "1", KernelName = "main_graph"}
+  ADORA.kernel {
+    affine.for %arg6 = affine_map<(d0) -> (d0)>(%arg5) to affine_map<(d0) -> (d0 + 16)>(%arg5) {
+      affine.for %arg7 = 0 to 256 {
+        %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+        %5 = arith.cmpf ugt, %4, %cst : bf16
+        %6 = arith.select %5, %4, %cst : bf16
+        %7 = arith.cmpf uno, %4, %4 : bf16
+        %8 = arith.select %7, %cst, %6 : bf16
+        affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+      }
+    }
+    ADORA.terminator
+  } {KernelName = "main_graph"}
+  ADORA.BlockStore %3, %alloc [%arg5, 0] : memref<16x256xbf16> -> memref<64x256xbf16>  {Id = "1", KernelName = "main_graph"}
+}
+
+========================================================================
+2026-07-15T03:07:55
+cwd: /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/experiment/onnx-kernels/ffn/adora-cc-ir/adora-cc-ir/tempfiles/DFGs
++ /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/build/bin/cgra-opt --adora-kernel-dfg-gen /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/experiment/onnx-kernels/ffn/adora-cc-ir/adora-cc-ir/1_kernels_opt/adora.strategy_opt.mlir
+------------------------------------------------------------------------
+affine.for %arg7 = 0 to 256 {
+  %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+  %5 = arith.cmpf ugt, %4, %cst : bf16
+  %6 = arith.select %5, %4, %cst : bf16
+  %7 = arith.cmpf uno, %4, %4 : bf16
+  %8 = arith.select %7, %cst, %6 : bf16
+  affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+}
+affine.for %arg7 = 0 to 256 {
+  %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+  %5 = arith.cmpf ugt, %4, %cst : bf16
+  %6 = arith.select %5, %4, %cst : bf16
+  %7 = arith.cmpf uno, %4, %4 : bf16
+  %8 = arith.select %7, %cst, %6 : bf16
+  affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+}
+affine.for %arg6 = 0 to 16 {
+  affine.for %arg7 = 0 to 256 {
+    %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+    %5 = arith.cmpf ugt, %4, %cst : bf16
+    %6 = arith.select %5, %4, %cst : bf16
+    %7 = arith.cmpf uno, %4, %4 : bf16
+    %8 = arith.select %7, %cst, %6 : bf16
+    affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+  }
+}
+[ADDNodes!] %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+[ADDNodes!] %5 = arith.cmpf ugt, %4, %cst : bf16
+[ADDNodes!] %6 = arith.select %5, %4, %cst : bf16
+[ADDNodes!] %7 = arith.cmpf uno, %4, %4 : bf16
+[ADDNodes!] %8 = arith.select %7, %cst, %6 : bf16
+[ADDNodes!] affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+[ADDNodes!] affine.yield
+[ADDNodes!] affine.for %arg7 = 0 to 256 {
+  %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+  %5 = arith.cmpf ugt, %4, %cst : bf16
+  %6 = arith.select %5, %4, %cst : bf16
+  %7 = arith.cmpf uno, %4, %4 : bf16
+  %8 = arith.select %7, %cst, %6 : bf16
+  affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+}
+[ADDNodes!] affine.yield
+[ADDNodes!] affine.for %arg6 = 0 to 16 {
+  affine.for %arg7 = 0 to 256 {
+    %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+    %5 = arith.cmpf ugt, %4, %cst : bf16
+    %6 = arith.select %5, %4, %cst : bf16
+    %7 = arith.cmpf uno, %4, %4 : bf16
+    %8 = arith.select %7, %cst, %6 : bf16
+    affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+  }
+}
+[ADDNodes!] %cst = arith.constant 0.000000e+00 : bf16
+%%%%%Input0's outputlist already has FCMP3
+%%%%%FCMP3's inputlist already has Input0
+%cst = arith.constant 0.000000e+00 : bf16
+affine.for %arg7 = 0 to 256 {
+  %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+  %5 = arith.cmpf ugt, %4, %cst : bf16
+  %6 = arith.select %5, %4, %cst : bf16
+  %7 = arith.cmpf uno, %4, %4 : bf16
+  %8 = arith.select %7, %cst, %6 : bf16
+  affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+}
+affine.for %arg7 = 0 to 256 {
+  %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+  %5 = arith.cmpf ugt, %4, %cst : bf16
+  %6 = arith.select %5, %4, %cst : bf16
+  %7 = arith.cmpf uno, %4, %4 : bf16
+  %8 = arith.select %7, %cst, %6 : bf16
+  affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+}
+affine.for %arg6 = 0 to 16 {
+  affine.for %arg7 = 0 to 256 {
+    %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+    %5 = arith.cmpf ugt, %4, %cst : bf16
+    %6 = arith.select %5, %4, %cst : bf16
+    %7 = arith.cmpf uno, %4, %4 : bf16
+    %8 = arith.select %7, %cst, %6 : bf16
+    affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+  }
+}
+[ADDNodes!] %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+[ADDNodes!] %5 = arith.cmpf ugt, %4, %cst : bf16
+[ADDNodes!] %6 = arith.select %5, %4, %cst : bf16
+[ADDNodes!] %7 = arith.cmpf uno, %4, %4 : bf16
+[ADDNodes!] %8 = arith.select %7, %cst, %6 : bf16
+[ADDNodes!] affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+[ADDNodes!] affine.yield
+[ADDNodes!] affine.for %arg7 = 0 to 256 {
+  %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+  %5 = arith.cmpf ugt, %4, %cst : bf16
+  %6 = arith.select %5, %4, %cst : bf16
+  %7 = arith.cmpf uno, %4, %4 : bf16
+  %8 = arith.select %7, %cst, %6 : bf16
+  affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+}
+[ADDNodes!] affine.yield
+[ADDNodes!] affine.for %arg6 = 0 to 16 {
+  affine.for %arg7 = 0 to 256 {
+    %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+    %5 = arith.cmpf ugt, %4, %cst : bf16
+    %6 = arith.select %5, %4, %cst : bf16
+    %7 = arith.cmpf uno, %4, %4 : bf16
+    %8 = arith.select %7, %cst, %6 : bf16
+    affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+  }
+}
+[ADDNodes!] %cst = arith.constant 0.000000e+00 : bf16
+%%%%%Input0's outputlist already has FCMP3
+%%%%%FCMP3's inputlist already has Input0
+%cst = arith.constant 0.000000e+00 : bf16
+affine.for %arg7 = 0 to 256 {
+  %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+  %5 = arith.cmpf ugt, %4, %cst : bf16
+  %6 = arith.select %5, %4, %cst : bf16
+  %7 = arith.cmpf uno, %4, %4 : bf16
+  %8 = arith.select %7, %cst, %6 : bf16
+  affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+}
+affine.for %arg7 = 0 to 256 {
+  %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+  %5 = arith.cmpf ugt, %4, %cst : bf16
+  %6 = arith.select %5, %4, %cst : bf16
+  %7 = arith.cmpf uno, %4, %4 : bf16
+  %8 = arith.select %7, %cst, %6 : bf16
+  affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+}
+affine.for %arg6 = 0 to 16 {
+  affine.for %arg7 = 0 to 256 {
+    %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+    %5 = arith.cmpf ugt, %4, %cst : bf16
+    %6 = arith.select %5, %4, %cst : bf16
+    %7 = arith.cmpf uno, %4, %4 : bf16
+    %8 = arith.select %7, %cst, %6 : bf16
+    affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+  }
+}
+[ADDNodes!] %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+[ADDNodes!] %5 = arith.cmpf ugt, %4, %cst : bf16
+[ADDNodes!] %6 = arith.select %5, %4, %cst : bf16
+[ADDNodes!] %7 = arith.cmpf uno, %4, %4 : bf16
+[ADDNodes!] %8 = arith.select %7, %cst, %6 : bf16
+[ADDNodes!] affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+[ADDNodes!] affine.yield
+[ADDNodes!] affine.for %arg7 = 0 to 256 {
+  %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+  %5 = arith.cmpf ugt, %4, %cst : bf16
+  %6 = arith.select %5, %4, %cst : bf16
+  %7 = arith.cmpf uno, %4, %4 : bf16
+  %8 = arith.select %7, %cst, %6 : bf16
+  affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+}
+[ADDNodes!] affine.yield
+[ADDNodes!] affine.for %arg6 = 0 to 16 {
+  affine.for %arg7 = 0 to 256 {
+    %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+    %5 = arith.cmpf ugt, %4, %cst : bf16
+    %6 = arith.select %5, %4, %cst : bf16
+    %7 = arith.cmpf uno, %4, %4 : bf16
+    %8 = arith.select %7, %cst, %6 : bf16
+    affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+  }
+}
+[ADDNodes!] %cst = arith.constant 0.000000e+00 : bf16
+%%%%%Input0's outputlist already has FCMP3
+%%%%%FCMP3's inputlist already has Input0
+%cst = arith.constant 0.000000e+00 : bf16
+module {
+  func.func @main_graph(%arg0: memref<64x128xbf16> {onnx.name = "input"}, %arg1: memref<128x256xbf16> {onnx.name = "weight1"}, %arg2: memref<64x256xbf16> {onnx.name = "bias1"}, %arg3: memref<256x128xbf16> {onnx.name = "weight2"}, %arg4: memref<64x128xbf16> {onnx.name = "bias2"}) -> (memref<64x128xbf16> {onnx.name = "output"}) attributes {llvm.emit_c_interface, onnxEntryPoint} {
+    %cst = arith.constant 0.000000e+00 : bf16
+    %0 = call @Gemm_0(%arg0, %arg1, %arg2) : (memref<64x128xbf16>, memref<128x256xbf16>, memref<64x256xbf16>) -> memref<64x256xbf16>
+    %alloc = memref.alloc() {alignment = 16 : i64} : memref<64x256xbf16>
+    affine.for %arg5 = 0 to 64 step 16 {
+      %2 = ADORA.BlockLoad %0 [%arg5, 0] : memref<64x256xbf16> -> memref<16x256xbf16>  {Id = "0", KernelName = "main_graph"}
+      %3 = ADORA.LocalMemAlloc memref<16x256xbf16>  {Id = "1", KernelName = "main_graph"}
+      ADORA.kernel {
+        affine.for %arg6 = 0 to 16 {
+          affine.for %arg7 = 0 to 256 {
+            %4 = affine.load %2[%arg6, %arg7] : memref<16x256xbf16>
+            %5 = arith.cmpf ugt, %4, %cst : bf16
+            %6 = arith.select %5, %4, %cst : bf16
+            %7 = arith.cmpf uno, %4, %4 : bf16
+            %8 = arith.select %7, %cst, %6 : bf16
+            affine.store %8, %3[%arg6, %arg7] : memref<16x256xbf16>
+          }
+        }
+        ADORA.terminator
+      } {KernelName = "main_graph"}
+      ADORA.BlockStore %3, %alloc [%arg5, 0] : memref<16x256xbf16> -> memref<64x256xbf16>  {Id = "1", KernelName = "main_graph"}
+    }
+    %1 = call @Gemm_1(%alloc, %arg3, %arg4) : (memref<64x256xbf16>, memref<256x128xbf16>, memref<64x128xbf16>) -> memref<64x128xbf16>
+    return %1 : memref<64x128xbf16>
+  }
+  func.func @Gemm_0(%arg0: memref<64x128xbf16>, %arg1: memref<128x256xbf16>, %arg2: memref<64x256xbf16>) -> memref<64x256xbf16> attributes {adora_kernel, llvm.emit_c_interface} {
+    %0 = "ADORATensor.Gemm"(%arg0, %arg1, %arg2) {algorithm = "GEMM_Standard", stationary_kind = "InputStationary", tile_size = array<i64: 16, 256, 2, 8>} : (memref<64x128xbf16>, memref<128x256xbf16>, memref<64x256xbf16>) -> memref<64x256xbf16>
+    return %0 : memref<64x256xbf16>
+  }
+  func.func @Gemm_1(%arg0: memref<64x256xbf16>, %arg1: memref<256x128xbf16>, %arg2: memref<64x128xbf16>) -> memref<64x128xbf16> attributes {adora_kernel, llvm.emit_c_interface} {
+    %0 = "ADORATensor.Gemm"(%arg0, %arg1, %arg2) {algorithm = "GEMM_Standard", stationary_kind = "InputStationary", tile_size = array<i64: 32, 128, 2, 8>} : (memref<64x256xbf16>, memref<256x128xbf16>, memref<64x128xbf16>) -> memref<64x128xbf16>
+    return %0 : memref<64x128xbf16>
+  }
+}
+

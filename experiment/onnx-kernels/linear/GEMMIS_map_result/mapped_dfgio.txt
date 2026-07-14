@@ -1,0 +1,17 @@
+# format: DFG-IO-Tag, DFG-IO-Name, ADG-IOB-Id, ADG-IOB-Index, DFG-IO-Latency
+INPUT_0, Input1, 265, 26, 0
+INPUT_1, Input3, 189, 18, 0
+INPUT_2, Input6, 2, 1, 0
+INPUT_3, Input9, 115, 12, 0
+INPUT_4, Input12, 151, 14, 1
+INPUT_5, Input15, 40, 5, 0
+INPUT_6, Input18, 229, 24, 0
+INPUT_7, Input21, 39, 4, 1
+INPUT_8, Input39, 228, 23, 18
+OUTPUT_9, Output41, 227, 22, 30
+INPUT_10, Input42, 268, 29, 19
+OUTPUT_11, Output44, 192, 21, 36
+INPUT_12, Input47, 190, 19, 0
+INPUT_13, Input49, 191, 20, 0
+INPUT_14, Input51, 75, 6, 0
+INPUT_15, Input53, 1, 0, 0

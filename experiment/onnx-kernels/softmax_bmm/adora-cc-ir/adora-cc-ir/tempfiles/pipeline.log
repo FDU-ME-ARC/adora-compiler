@@ -1,0 +1,19 @@
+
+========================================================================
+2026-07-15T02:48:22
+cwd: None
++ /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/build/bin/cgra-opt --allow-unregistered-dialect --affine-loop-normalize --affine-simplify-structures --normalize-memrefs /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/experiment/onnx-kernels/softmax_bmm/adora.strategy.mlir -o /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/experiment/onnx-kernels/softmax_bmm/adora-cc-ir/adora-cc-ir/tempfiles/DFGs/adora.strategy_normalized.mlir
+------------------------------------------------------------------------
+
+========================================================================
+2026-07-15T02:48:22
+cwd: None
++ /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/build/bin/cgra-opt --canonicalize -reconcile-unrealized-casts --affine-loop-fusion --adora-extract-affine-for-to-kernel --arith-expand --memref-expand -cse /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/experiment/onnx-kernels/softmax_bmm/adora-cc-ir/adora-cc-ir/tempfiles/DFGs/adora.strategy_normalized.mlir -o /data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/experiment/onnx-kernels/softmax_bmm/adora-cc-ir/adora-cc-ir/0_kernels/adora.strategy_kernel.mlir
+------------------------------------------------------------------------
+/data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/experiment/onnx-kernels/softmax_bmm/adora-cc-ir/adora-cc-ir/tempfiles/DFGs/adora.strategy_normalized.mlir:25:14: error: operand #1 does not dominate this use
+        %4 = arith.divf %3, %2 : bf16
+             ^
+/data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/experiment/onnx-kernels/softmax_bmm/adora-cc-ir/adora-cc-ir/tempfiles/DFGs/adora.strategy_normalized.mlir:25:14: note: see current operation: %5 = "arith.divf"(%4, %6) <{fastmath = #arith.fastmath<none>}> : (bf16, bf16) -> bf16
+/data00/home/loujiahang/adora/adora-compiler-develop/adora-compiler/experiment/onnx-kernels/softmax_bmm/adora-cc-ir/adora-cc-ir/tempfiles/DFGs/adora.strategy_normalized.mlir:15:12: note: operand defined here (op is neither in a parent nor in a child region)
+      %2 = affine.for %arg4 = 0 to 128 iter_args(%arg5 = %cst) -> (bf16) {
+           ^
