@@ -284,6 +284,7 @@ namespace mlir
     ///             C[i, j] += A[i, k] * B[k, j]
     StationaryBodyBuilderFn TileofInputStationary(
         // OpBuilder builder,
+        std::string KernelName,
         mlir::Value A,
         mlir::Value B,
         mlir::Value C,
@@ -339,7 +340,7 @@ namespace mlir
 
               ADORA::DataBlockLoadOp BlockLoad = builder.create<ADORA::DataBlockLoadOp>(loc, A, memIVmap, ValueRange({vi, vk}), newMemRef);
 
-              BlockLoad.setKernelName("GEMMIS");
+              BlockLoad.setKernelName(KernelName);
               BlockLoad.setId(std::to_string(BlockLoadStoreOpId++));
               setPingpongAttr(BlockLoad);
 
@@ -369,7 +370,7 @@ namespace mlir
 
             ADORA::DataBlockLoadOp BlockLoad = builder.create<ADORA::DataBlockLoadOp>(loc, A, memIVmap, ValueRange({vi, vk}), newMemRef);
 
-            BlockLoad.setKernelName("GEMMIS");
+            BlockLoad.setKernelName(KernelName);
             BlockLoad.setId(std::to_string(BlockLoadStoreOpId++));
             setPingpongAttr(BlockLoad);
 
@@ -404,7 +405,7 @@ namespace mlir
 
           ADORA::DataBlockLoadOp BlockLoad = builder.create<ADORA::DataBlockLoadOp>(loc, B, memIVmap, ValueRange({vk, vj}), newMemRef);
 
-          BlockLoad.setKernelName("GEMMIS");
+          BlockLoad.setKernelName(KernelName);
           BlockLoad.setId(std::to_string(BlockLoadStoreOpId++));
           setPingpongAttr(BlockLoad);
 
@@ -434,7 +435,7 @@ namespace mlir
 
           ADORA::DataBlockLoadOp BlockLoad = builder.create<ADORA::DataBlockLoadOp>(loc, C, memIVmap, ValueRange({vi, vj}), newMemRef);
 
-          BlockLoad.setKernelName("GEMMIS");
+          BlockLoad.setKernelName(KernelName);
           BlockLoad.setId(std::to_string(BlockLoadStoreOpId++));
           setPingpongAttr(BlockLoad);
 
@@ -450,14 +451,14 @@ namespace mlir
           /// generate the store back
           ///////////
           ADORA::LocalMemAllocOp alloc = builder.create<ADORA::LocalMemAllocOp>(loc, newMemRef);
-          alloc.setKernelName("GEMMIS");
+          alloc.setKernelName(KernelName);
           alloc.setId(std::to_string(BlockLoadStoreOpId));
           C_out.push_back(alloc);
           setPingpongAttr(alloc);
 
           ADORA::DataBlockStoreOp BlockStore = builder.create<ADORA::DataBlockStoreOp>(loc, alloc, C, memIVmap, ValueRange({vi, vj}));
 
-          BlockStore.setKernelName("GEMMIS");
+          BlockStore.setKernelName(KernelName);
           BlockStore.setId(std::to_string(BlockLoadStoreOpId++));
           setPingpongAttr(BlockStore);
 
@@ -482,7 +483,7 @@ namespace mlir
             /*upper bounds*/ {temporal_count_dim_m}, //// K -> M
             /*BodyBuilder*/ BodyOfTiledWithInputStationary(A_in, B_in, C_in, C_out, tile_row_size, tile_col_size, temporal_count_dim_n));
 
-        SpecifiedAffineFortoKernel(loop, "GEMMIS");
+        SpecifiedAffineFortoKernel(loop, KernelName);
 
         affine::AffineYieldOp yield = builder.create<affine::AffineYieldOp>(loc);
 
@@ -574,13 +575,22 @@ namespace mlir
       //////////////////////////////////////
       /// Generate systolic gemm
       //////////////////////////////////////
+      // Each input-stationary GEMM must get a module-unique kernel name.
+      // Block load/store ops and the resulting KernelOp are matched by
+      // "<KernelName>:<id>" downstream (EmitUtility DataBlockOperationsToSPADInfo),
+      // and the per-Gemm block-op ids restart at 0, so a shared "GEMMIS" name
+      // makes two GEMMs' block ops collide and trips the one-store-per-output
+      // assertion in the mapper.
+      static unsigned ISGemmKernelCnt = 0;
+      std::string KernelName = "GEMMIS_" + std::to_string(ISGemmKernelCnt++);
+
       AffineForOp loop;
       loop = OffDeviceNestedLoop(
           opbuilder, op.getLoc(),
           /*level*/ 3,
           /*upper bounds*/ {ShapeB[0], ShapeA[0], ShapeB[1]}, ////  K -> M -> N
           /*steps*/ {K_step, M_step, N_step},                 ////  K -> M -> N
-          /*InnerMostBodyBuilder*/ TileofInputStationary(op.getA(), op.getB(), out, M_temporal_tile, N_temporal_tile, tilerow, tilecol));
+          /*InnerMostBodyBuilder*/ TileofInputStationary(KernelName, op.getA(), op.getB(), out, M_temporal_tile, N_temporal_tile, tilerow, tilecol));
 
       // op.getOperation()->getBlock()->push_back(loop);
       // loop.getOperation()->moveAfter(op);

@@ -14,5 +14,5 @@ source ../../../env.sh
 
 adoracc.py adora.strategy.mlir --work-dir adora-cc-ir -o opt.mlir
 
-cgra-mapper --adg=../../../test/spec/cgra_bf16/vitra_cgra_adg.json --op-file=../../../test/spec/cgra_bf16/operations.json \
- --output-type=pytest --obj-opt=true --max-iters=100 opt.mlir --output=ffn_mapping.py
+cgra-mapper --adg=../../../test/spec/cgra_bf16_8x16/spec/vitra_cgra_adg.json --op-file=../../../test/spec/cgra_bf16_8x16/spec/operations.json  \
+ --output-type=pytest --obj-opt=true --max-iters=1 opt.mlir --output=ffn_mapping.py

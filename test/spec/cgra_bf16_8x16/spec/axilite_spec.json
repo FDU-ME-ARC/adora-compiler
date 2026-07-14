@@ -1,0 +1,15 @@
+{
+  "reg_exe_tile_ens_0" : "0x14",
+  "axilite_addr_bit_with" : 10,
+  "reg_bit_width" : 32,
+  "tile_num" : 4,
+  "tile_iob_bank_num" : 8,
+  "reg_exe_iob_ens_0" : "0x10",
+  "cfgmem_baseaddr" : 262144,
+  "reg_cfg_en_tile_0" : "0x8",
+  "reg_cfg_base_addr_0" : "0x0",
+  "reg_cfg_en" : "0xC",
+  "reg_exe_start" : "0x18",
+  "reg_cfg_num_0" : "0x4",
+  "reg_exe_done_0" : "0x1C"
+}
