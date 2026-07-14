@@ -222,6 +222,10 @@ int main(int argc, char **argv) {
   MLIRContext context(registry, MLIRContext::Threading::DISABLED);
   context.getOrLoadDialect(mlir::ADORA::ADORADialect::getDialectNamespace());
   context.getOrLoadDialect(mlir::ADORA::ADORATensor::ADORATensorDialect::getDialectNamespace());
+  // The mapper *generates* affine/arith/memref ops (e.g. affine.for in the tiled
+  // GEMM lowering), not just parses them, so those dialects must be loaded even
+  // if the input IR does not reference them.
+  context.loadAllAvailableDialects();
 
   if (inputFilename == "-" &&
       sys::Process::FileDescriptorIsDisplayed(fileno(stdin)))
