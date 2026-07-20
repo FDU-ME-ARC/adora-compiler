@@ -2183,6 +2183,77 @@ static void HandleSelfCycle(LLVMCDFG* CDFG, bool verbose = true){
   }
 }
 
+// memref.load/store indices are element offsets, while CGRA load/store
+// addresses are byte offsets. Scale the address input by the element size.
+static void InsertMemrefByteOffsetMul(LLVMCDFG *CDFG, bool verbose = false) {
+  auto nodes = CDFG->nodes();
+  for (auto &elem : nodes) {
+    LLVMCDFGNode *node = elem.second;
+    llvm::StringRef typeName = node->getTypeName();
+    if (typeName != "load" && typeName != "store")
+      continue;
+
+    Operation *op = node->operation();
+    if (!op)
+      continue;
+
+    int64_t elementBytes;
+    if (typeName == "load") {
+      auto load = dyn_cast<memref::LoadOp>(op);
+      if (!load)
+        continue;
+      elementBytes = load.getMemRefType().getElementTypeBitWidth() / 8;
+    } else {
+      auto store = dyn_cast<memref::StoreOp>(op);
+      if (!store)
+        continue;
+      elementBytes = store.getMemRefType().getElementTypeBitWidth() / 8;
+    }
+
+    // Multiplication by one is redundant for one-byte elements.
+    if (elementBytes <= 1)
+      continue;
+
+    int addressPort = typeName == "load" ? 0 : 2;
+    LLVMCDFGNode *addressNode = node->getInputPort(addressPort);
+    if (!addressNode)
+      continue;
+    bool isBackEdge = node->isInputBackEdge(addressNode);
+
+    node->delInputNode(addressNode);
+    addressNode->delOutputNode(node);
+    if (LLVMCDFGEdge *edge = CDFG->edge(addressNode, node))
+      CDFG->delEdge(edge);
+
+    LLVMCDFGNode *sizeNode = CDFG->addNode("CONST");
+    sizeNode->setTypeName("CONST");
+    sizeNode->setLoopLevel(node->getLoopLevel());
+    sizeNode->setConstValHex(
+        DataBitCastToHex(static_cast<int32_t>(elementBytes)));
+    sizeNode->setDataBits(32);
+
+    LLVMCDFGNode *mulNode = CDFG->addNode("MUL");
+    mulNode->setTypeName("MUL");
+    mulNode->setLoopLevel(node->getLoopLevel());
+
+    addressNode->addOutputNode(mulNode, isBackEdge);
+    mulNode->addInputNode(addressNode, 0, isBackEdge);
+    CDFG->addEdge(addressNode, mulNode);
+
+    sizeNode->addOutputNode(mulNode, false);
+    mulNode->addInputNode(sizeNode, 1, false);
+    CDFG->addEdge(sizeNode, mulNode);
+
+    mulNode->addOutputNode(node, false);
+    node->addInputNode(mulNode, addressPort, false);
+    CDFG->addEdge(mulNode, node);
+
+    if (verbose)
+      llvm::errs() << "Inserted byte-offset MUL*" << elementBytes << " for "
+                   << typeName << " node\n";
+  }
+}
+
 
 static bool HandleCompareNode(LLVMCDFG* CDFG, bool verbose = true){
   auto nodes = CDFG->nodes();
@@ -2190,6 +2261,7 @@ static bool HandleCompareNode(LLVMCDFG* CDFG, bool verbose = true){
     // int node_id = elem.first;
     LLVMCDFGNode* node = elem.second;
     mlir::Operation* op = node->operation();
+    if(!op) continue;
     // if(verbose) {op->dump();}
     if(   op->getName().getStringRef() == "arith.cmpi"
         ||op->getName().getStringRef() == "arith.cmpf"){
@@ -2217,6 +2289,7 @@ void HandleVectorExtractNode(LLVMCDFG* CDFG, bool verbose = true){
   for(auto &elem : nodes){
     LLVMCDFGNode* node = elem.second;
     mlir::Operation* op = node->operation();
+    if(!op) continue;
     if(op->getName().getStringRef() == "vector.extract"){
       mlir::vector::ExtractOp extractop = dyn_cast<mlir::vector::ExtractOp>(op);
       mlir::Operation* vecop = extractop.getVector().getDefiningOp();
@@ -2269,6 +2342,7 @@ void FixLinearAccessOfVectorNode(LLVMCDFG* CDFG, bool verbose = true){
   for(auto &elem : nodes){
     LLVMCDFGNode* node = elem.second;
     mlir::Operation* op = node->operation();
+    if(!op) continue;
     if(op->getName().getStringRef() == "affine.vector_store"){
       mlir::affine::AffineVectorStoreOp vecstoreop = dyn_cast<mlir::affine::AffineVectorStoreOp>(op);
       mlir::Operation* vecop = vecstoreop.getValue().getDefiningOp();
@@ -3146,6 +3220,11 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
   if(verbose) { CDFG->CDFGtoDOT(CDFG->name_str()+"_0_CDFG.dot");}
 
   ////////////////////////
+  /// Convert memref element indices to byte offsets
+  ////////////////////////
+  InsertMemrefByteOffsetMul(CDFG, verbose);
+
+  ////////////////////////
   /// Extract Accumulation
   ////////////////////////
   HandleSelfCycle(CDFG, verbose);
@@ -3241,7 +3320,7 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
           CDFG->delNode(node);
           removing = 1;
         }  
-        else if(node->outputNodes().size() != 0){
+        else if(node->outputNodes().size() != 0 && node->operation() != nullptr){
           if(dyn_cast<arith::ConstantOp>(node->operation()).getValue().getType().isIndex()){
             int i = 0;
             for(i = 0; i < node->outputNodes().size(); i++){
