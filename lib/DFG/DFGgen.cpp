@@ -2560,14 +2560,25 @@ static void FuseOperators(LLVMCDFG* CDFG, bool verbose){
 /// MLIR operand order (0=cond, 1=true_value, 2=false_value). CDFG SEL expects
 /// 0=value_if_false, 1=value_if_true, 2=cond. Remap each input's idx to 2 - old_idx.
 static void fixSELOperandIndices(LLVMCDFG *CDFG, bool verbose) {
-  for (auto nodepair : CDFG->nodes()) {
-    LLVMCDFGNode *node = nodepair.second;
+  for (auto nodePair : CDFG->nodes()) {
+    LLVMCDFGNode *node = nodePair.second;
     if (node->getTypeName() != "SEL")
       continue;
-    for (LLVMCDFGNode *inputNode : node->inputNodes()) {
-      int oldIdx = node->getInputIdx(inputNode);
+
+    // Must snapshot first because setInputPort() overwrites the map.
+    LLVMCDFGNode *oldInputs[3] = {
+        node->getInputPort(0), // condition
+        node->getInputPort(1), // true value: A
+        node->getInputPort(2)  // false value: B
+    };
+
+    for (int oldIdx = 0; oldIdx < 3; ++oldIdx) {
+      LLVMCDFGNode *inputNode = oldInputs[oldIdx];
+      // assert(inputNode && "SEL must have three inputs");
+
       int newIdx = 2 - oldIdx;
       node->setInputIdx(inputNode, newIdx);
+      node->setInputPort(inputNode, newIdx);
     }
   }
 }
