@@ -437,6 +437,7 @@ bool Mapper::execute(bool dumpCallFunc, bool dumpMappedViz, std::string resultDi
         //     cfg.dumpCfgData(ofs);
         // }       
         std::cout << "Succeed to map DFG to ADG!<<<<<<\n";
+        std::cout << "Mapped II: " << _mapping->II() << ", Latency: " << _mapping->maxLat() << std::endl; 
     } else{
         std::cout << "Fail to map DFG to ADG!<<<<<<\n";
     }
