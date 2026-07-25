@@ -49,7 +49,8 @@ void Graphviz::drawDFG(){
         auto& attr = _mapping->dfgNodeAttr(node->id());
         auto name = node->name();
         std::string quoteName = "\"" + name + "\"";
-        ofs << quoteName << "[label = \"\\N\\nlat=" << attr.lat << "\"];\n";
+        ofs << quoteName << "[label = \"\\N\\nop=" << node->operation()
+            << "\\nlat=" << attr.lat << "\"];\n";
         // for(auto& input : node->inputs()){
         //     int srcNodeId = input.second.first;
         //     std::string srcName = dfg->node(srcNodeId)->name();
@@ -107,7 +108,8 @@ void Graphviz::originaldrawDFG(){
         auto& attr = _mapping->dfgNodeAttr(node->id());
         auto name = node->name();
         std::string quoteName = "\"" + name + "\"";
-        ofs << quoteName << "[label = \"\\N\\nlat=" << attr.lat << "\"];\n";
+        ofs << quoteName << "[label = \"\\N\\nop=" << node->operation()
+            << "\\nlat=" << attr.lat << "\"];\n";
         // for(auto& input : node->inputs()){
         //     int srcNodeId = input.second.first;
         //     std::string srcName = dfg->node(srcNodeId)->name();

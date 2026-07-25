@@ -65,6 +65,8 @@ struct ADGNodeAttr
     std::vector<DfgEdgePassAttr> dfgEdgePass;
     std::map<int, bool> inPortUsed;  // <port-idx, used>
     std::map<int, bool> outPortUsed; // <port-idx, used>
+    std::map<int, std::map<int, bool>> inPortUsedByWidth;
+    std::map<int, std::map<int, bool>> outPortUsedByWidth;
 };
 
 // // ADG link attributes used for mapping
@@ -111,7 +113,7 @@ private:
     // // the DFG information of each occupied ADG link
     // std::map<int, ADGLinkAttr> _adgLinkAttr;
     // status of RDU in each FU node(GPE/IOB)
-    std::map<int, FUDelayAttr> _fuDelayAttr;
+    std::map<std::pair<int, int>, FUDelayAttr> _fuDelayAttr;
 
     // DFG edges with latency violation
     std::vector<int> _vioDfgEdges;
@@ -149,8 +151,10 @@ public:
     int numNodeMapped(){ return _numNodeMapped; }
     // if this input port of this ADG node is used
     bool isAdgNodeInPortUsed(int nodeId, int portIdx);
+    bool isAdgNodeInPortUsed(int nodeId, int bitWidth, int portIdx);
     // if this output port of this ADG node is used
     bool isAdgNodeOutPortUsed(int nodeId, int portIdx);
+    bool isAdgNodeOutPortUsed(int nodeId, int bitWidth, int portIdx);
     // if the DFG node is already mapped
     bool isMapped(DFGNode* dfgNode);
     // if the ADG node is already mapped
@@ -213,7 +217,7 @@ public:
     int numVioEdges(){ return _vioDfgEdges.size(); }
     // int maxLatMis(){ return _maxLatMis; }
     // get currently available delay cycles in the FU node according to the mapped DFG node
-    int getAvailDelay(FUNode* fuNode, DFGNode* dfgNode);
+    int getAvailDelay(FUNode* fuNode, DFGNode* dfgNode, int bitWidth = 0);
     // // reset the latency bounds of each DFG node
     // void resetBound();
 

@@ -274,6 +274,7 @@ DFG* DFGIR::parseDFGJson(std::string filename){
     ifs >> dfgJson;
     DFG* dfg = new DFG();
     dfg->setId(0); // DFG id = 0, node id = 1,...,n
+    dfg->setFineGrained(false);
     // parse nodes
     for(auto& nodeJson : dfgJson["objects"]){
         std::string nodeName = nodeJson["name"].get<std::string>();
@@ -297,7 +298,9 @@ DFG* DFGIR::parseDFGJson(std::string filename){
             setConst(id, value); 
         } else{
             DFGNode* dfg_node;            
-            if(opName == "INPUT" || opName == "OUTPUT" || opName == "LOAD" || opName == "STORE" || opName == "CLOAD" || opName == "CSTORE"){
+            if(opName == "INPUT" || opName == "OUTPUT" || opName == "CINPUT" ||
+               opName == "COUTPUT" || opName == "LOAD" || opName == "STORE" ||
+               opName == "CLOAD" || opName == "CSTORE"){
                 dfg->addIONode(id);
                 DFGIONode* dfg_io_node = new DFGIONode();
                 if(nodeJson.contains("ref_name")){
@@ -354,6 +357,26 @@ DFG* DFGIR::parseDFGJson(std::string filename){
             dfg_node->setId(id);
             dfg_node->setName(nodeName);
             dfg_node->setOperation(opName);
+            if(opName == "LUT"){
+                dfg->addLUTNode(id);
+                if(nodeJson.contains("LUTsize")){
+                    auto& value = nodeJson["LUTsize"];
+                    dfg_node->setLUTsize(value.is_string() ? std::stoi(value.get<std::string>()) : value.get<int>());
+                }else if(nodeJson.contains("lut_size")){
+                    auto& value = nodeJson["lut_size"];
+                    dfg_node->setLUTsize(value.is_string() ? std::stoi(value.get<std::string>()) : value.get<int>());
+                }else if(nodeJson.contains("LUT_size")){
+                    auto& value = nodeJson["LUT_size"];
+                    dfg_node->setLUTsize(value.is_string() ? std::stoi(value.get<std::string>()) : value.get<int>());
+                }
+                if(nodeJson.contains("LUTconfig")){
+                    dfg_node->setLUTconfig(nodeJson["LUTconfig"].get<std::string>());
+                }else if(nodeJson.contains("lut_config")){
+                    dfg_node->setLUTconfig(nodeJson["lut_config"].get<std::string>());
+                }else if(nodeJson.contains("LUT_config")){
+                    dfg_node->setLUTconfig(nodeJson["LUT_config"].get<std::string>());
+                }
+            }
             dfg->addNode(dfg_node);
             // if(std::find(this->addsub.begin(), this->addsub.end(), opName) != this->addsub.end()){
 			//     this->optypecount.numaddsub +=1;
@@ -372,8 +395,25 @@ DFG* DFGIR::parseDFGJson(std::string filename){
     for(auto& edgeJson : dfgJson["edges"]){
         int srcId = edgeJson["tail"].get<int>() + 1;
         int dstId = edgeJson["head"].get<int>() + 1;
-        int dstPort;
+        int dstPort = 0;
         int srcPort; // default one output for each node
+        int bitWidth = dfg->bitWidth();
+        if(edgeJson.contains("Width")){
+            auto& value = edgeJson["Width"];
+            bitWidth = value.is_string() ? std::stoi(value.get<std::string>()) : value.get<int>();
+        }else if(edgeJson.contains("width")){
+            auto& value = edgeJson["width"];
+            bitWidth = value.is_string() ? std::stoi(value.get<std::string>()) : value.get<int>();
+        }
+        if(bitWidth <= 0){
+            std::cerr << "Invalid DFG edge width " << bitWidth << std::endl;
+            exit(1);
+        }
+        if(bitWidth == 1){
+            dfg->setFineGrained(true);
+        }else{
+            dfg->setCGWidth(bitWidth);
+        }
         if(edgeJson.contains("operand")){
             dstPort = std::stoi(edgeJson["operand"].get<std::string>());
         }else if(edgeJson.contains("headport")){
@@ -391,8 +431,14 @@ DFG* DFGIR::parseDFGJson(std::string filename){
         }
         if(isConst(srcId)){ // merge const node into the node connected to it
             DFGNode* node = dfg->node(dstId);
-            node->setImm(constValue(srcId));
-            node->setImmIdx(dstPort);
+            if(bitWidth == 1){
+                node->setFineImmediate(dstPort, static_cast<int>(constValue(srcId) & 1));
+                node->addBitWidth(1);
+                dfg->setFineGrained(true);
+            }else{
+                node->setImm(constValue(srcId));
+                node->setImmIdx(dstPort);
+            }
         } else{
             int edgeId = edgeJson["_gvid"].get<int>();
             DFGEdge* edge = new DFGEdge(edgeId);
@@ -401,7 +447,7 @@ DFG* DFGIR::parseDFGJson(std::string filename){
             // } else if(outputIdx(dstId) >= 0){ // output
             //     edge->setEdge(srcId, srcPort, 0, outputIdx(dstId));
             // } else{
-            edge->setEdge(srcId, srcPort, dstId, dstPort);
+            edge->setEdge(bitWidth, srcId, srcPort, dstId, dstPort);
             // }
             dfg->addEdge(edge);
         }         

@@ -251,15 +251,18 @@ int Mapper::getAdgNodeDist(int srcId, int dstId){
 
 // calculate supported operation count of ADG
 void Mapper::calAdgOpCnt(){
-    for(auto& elem : _adg->nodes()){       
+    for(auto& elem : _adg->nodes()){
         if(elem.second->type() != "GIB"){
             auto node = dynamic_cast<FUNode*>(elem.second);
+
             for(auto& op : node->operations()){
-                if(adgOpCnt.count(op)){
-                    adgOpCnt[op] += 1;
-                } else {
-                    adgOpCnt[op] = 1;
-                }                 
+                adgOpCnt[op] += 1;
+            }
+
+            // 补充 LUT 资源统计
+            auto* gpeNode = dynamic_cast<GPENode*>(node);
+            if(gpeNode && gpeNode->hasLUT()){
+                adgOpCnt["LUT"] += 1;
             }
         }
     }
@@ -276,10 +279,13 @@ int Mapper::calCandidatesCnt(DFGNode* dfgNode, int maxCandidates){
             continue;
         }
         GPENode* gpeNode = dynamic_cast<GPENode*>(adgNode);
-        // check if the DFG node operationis supported
-        if(gpeNode->opCapable(dfgNode->operation())){
-            candidatesCnt++;
+        bool compatible = dfgNode->operation() == "LUT"
+            ? gpeNode->hasLUT() && gpeNode->numInputLUT() >= dfgNode->LUTsize()
+            : gpeNode->opCapable(dfgNode->operation());
+        for(int bitWidth : dfgNode->bitWidths()){
+            compatible &= gpeNode->bitWidths().count(bitWidth) != 0;
         }
+        if(compatible) candidatesCnt++;
     }
     return std::min(candidatesCnt, maxCandidates);
 }

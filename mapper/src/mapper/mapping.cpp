@@ -28,6 +28,15 @@ bool Mapping::isAdgNodeInPortUsed(int nodeId, int portIdx){
     return false;
 }
 
+bool Mapping::isAdgNodeInPortUsed(int nodeId, int bitWidth, int portIdx){
+    if(_adgNodeAttr.count(nodeId)){
+        auto& status = _adgNodeAttr[nodeId].inPortUsedByWidth[bitWidth];
+        auto it = status.find(portIdx);
+        return it != status.end() && it->second;
+    }
+    return false;
+}
+
 
 // if this output port of this ADG node is used
 bool Mapping::isAdgNodeOutPortUsed(int nodeId, int portIdx){
@@ -36,6 +45,15 @@ bool Mapping::isAdgNodeOutPortUsed(int nodeId, int portIdx){
         if(status.count(portIdx)){
             return status[portIdx];
         }
+    }
+    return false;
+}
+
+bool Mapping::isAdgNodeOutPortUsed(int nodeId, int bitWidth, int portIdx){
+    if(_adgNodeAttr.count(nodeId)){
+        auto& status = _adgNodeAttr[nodeId].outPortUsedByWidth[bitWidth];
+        auto it = status.find(portIdx);
+        return it != status.end() && it->second;
     }
     return false;
 }
@@ -444,6 +462,8 @@ const std::vector<EdgeLinkAttr>& Mapping::routedEdgeLinks(DFGEdge* edge){
 // isTry: just try to route, not change the routing status
 bool Mapping::routeDfgEdgePass(DFGEdge* edge, ADGNode* passNode, int srcPort, int dstPort, bool isTry){
     assert(passNode->type() == "GIB");
+    int bitWidth = edge->bitWidth();
+    if(!passNode->bitWidths().count(bitWidth)) return false;
     GIBNode* gibNode = dynamic_cast<GIBNode*>(passNode);
     int passNodeId = passNode->id();
     int routeSrcPort = srcPort;
@@ -454,10 +474,12 @@ bool Mapping::routeDfgEdgePass(DFGEdge* edge, ADGNode* passNode, int srcPort, in
         // check if conflict with current routed edges
         for(auto& edgeLink : passNodeAttr.dfgEdgePass){
             auto passEdge = edgeLink.edge;
-            if((edgeLink.srcPort == srcPort || edgeLink.dstPort == dstPort) &&  // occupy the same port
+            if(passEdge->bitWidth() == bitWidth &&
+               (edgeLink.srcPort == srcPort || edgeLink.dstPort == dstPort) &&  // occupy the same port
                (passEdge->srcId() != edge->srcId() || passEdge->srcPortIdx() != edge->srcPortIdx())){
                 return false; 
-            } else if(edgeLink.srcPort == srcPort || edgeLink.dstPort == dstPort){ // try to route same-source edge to same internal link
+            } else if(passEdge->bitWidth() == bitWidth &&
+                      (edgeLink.srcPort == srcPort || edgeLink.dstPort == dstPort)){ // try to route same-source edge to same internal link
                 routeSrcPort = edgeLink.srcPort; // default route link
                 routeDstPort = edgeLink.dstPort;
                 hasSameSrcEdge = true;
@@ -466,26 +488,26 @@ bool Mapping::routeDfgEdgePass(DFGEdge* edge, ADGNode* passNode, int srcPort, in
         if(srcPort >= 0 && dstPort >= 0){ // manually assign srcPort and dstPort
             if(!gibNode->isInOutConnected(srcPort, dstPort)){
                 return false;
-            } else if(isAdgNodeOutPortUsed(passNodeId, dstPort) && (!hasSameSrcEdge || (routeSrcPort != srcPort) || (routeDstPort != dstPort))){
+            } else if(isAdgNodeOutPortUsed(passNodeId, bitWidth, dstPort) && (!hasSameSrcEdge || (routeSrcPort != srcPort) || (routeDstPort != dstPort))){
                 return false; // if dstPort used, must have same-source edge with same srcPort and dstPort
-            } else if(isAdgNodeInPortUsed(passNodeId, srcPort) && (!hasSameSrcEdge || (routeSrcPort != srcPort))){
+            } else if(isAdgNodeInPortUsed(passNodeId, bitWidth, srcPort) && (!hasSameSrcEdge || (routeSrcPort != srcPort))){
                 return false; // if srcPort used, must have same-source edge with same srcPort
             }   
             routeSrcPort = srcPort;
             routeDstPort = dstPort;         
         } else if(srcPort >= 0){ // auto-assign dstPort           
-            if(isAdgNodeInPortUsed(passNodeId, srcPort) && (!hasSameSrcEdge || (routeSrcPort != srcPort))){ 
+            if(isAdgNodeInPortUsed(passNodeId, bitWidth, srcPort) && (!hasSameSrcEdge || (routeSrcPort != srcPort))){
                 return false; // no same-source edge or have different srcPort
             }
-            if(!isAdgNodeInPortUsed(passNodeId, srcPort)){                    
+            if(!isAdgNodeInPortUsed(passNodeId, bitWidth, srcPort)){
                 bool flag = false;
                 for(auto port : gibNode->in2outs(srcPort)){
-                    if(isAdgNodeOutPortUsed(passNodeId, port)){ // already used
+                    if(isAdgNodeOutPortUsed(passNodeId, bitWidth, port)){ // already used
                         continue;
                     }
                     // find one available port
                     routeSrcPort = srcPort;
-                    routeDstPort == port;
+                    routeDstPort = port;
                     flag = true;
                     break;
                 }
@@ -495,17 +517,17 @@ bool Mapping::routeDfgEdgePass(DFGEdge* edge, ADGNode* passNode, int srcPort, in
             }           
             // if have same-source edge and same srcPort, select the same dstPort            
         } else if(dstPort >= 0){ // auto-assign srcPort            
-            if(isAdgNodeOutPortUsed(passNodeId, dstPort) && (!hasSameSrcEdge || (routeDstPort != dstPort))){
+            if(isAdgNodeOutPortUsed(passNodeId, bitWidth, dstPort) && (!hasSameSrcEdge || (routeDstPort != dstPort))){
                 return false;
             }
-            if(!isAdgNodeOutPortUsed(passNodeId, dstPort)){ // no same-source edge or have different dstPort
+            if(!isAdgNodeOutPortUsed(passNodeId, bitWidth, dstPort)){ // no same-source edge or have different dstPort
                 bool flag = false;
                 for(auto port : gibNode->out2ins(dstPort)){
-                    if(isAdgNodeInPortUsed(passNodeId, port)){ // already used
+                    if(isAdgNodeInPortUsed(passNodeId, bitWidth, port)){ // already used
                         continue;
                     }
                     // find one available port
-                    routeSrcPort == port;
+                    routeSrcPort = port;
                     routeDstPort = dstPort;
                     flag = true;
                     break;                    
@@ -518,18 +540,18 @@ bool Mapping::routeDfgEdgePass(DFGEdge* edge, ADGNode* passNode, int srcPort, in
         } else { // auto-assign srcPort and dstPort
             if(!hasSameSrcEdge){
                 bool outflag = false;
-                for(auto& elem : passNode->outputs()){
+                for(auto& elem : passNode->outputs(bitWidth)){
                     int outPort = elem.first;
-                    if(isAdgNodeOutPortUsed(passNodeId, outPort)){ // already used
+                    if(isAdgNodeOutPortUsed(passNodeId, bitWidth, outPort)){ // already used
                         continue;
                     }
                     bool inflag = false;
                     for(auto inPort : gibNode->out2ins(outPort)){
-                        if(isAdgNodeInPortUsed(passNodeId, inPort)){ // already used
+                        if(isAdgNodeInPortUsed(passNodeId, bitWidth, inPort)){ // already used
                             continue;
                         }
                         // find one available inport
-                        routeSrcPort == inPort;
+                        routeSrcPort = inPort;
                         routeDstPort = outPort;
                         inflag = true;
                         break;                        
@@ -546,11 +568,11 @@ bool Mapping::routeDfgEdgePass(DFGEdge* edge, ADGNode* passNode, int srcPort, in
         }
     } else { // _adgNodeAttr.count(passNodeId) = 0; this passNode has not been used
         bool outflag = false;
-        for(auto& elem : passNode->outputs()){
+        for(auto& elem : passNode->outputs(bitWidth)){
             int outPort = elem.first;
             auto inPorts = gibNode->out2ins(outPort);
             if(!inPorts.empty()){ // find one available inport
-                routeSrcPort == *(inPorts.begin());
+                routeSrcPort = *(inPorts.begin());
                 routeDstPort = outPort;
                 outflag = true;
                 break;
@@ -573,6 +595,8 @@ bool Mapping::routeDfgEdgePass(DFGEdge* edge, ADGNode* passNode, int srcPort, in
         edgePassAttr.dstPort = routeDstPort;
         _adgNodeAttr[passNodeId].inPortUsed[routeSrcPort] = true;
         _adgNodeAttr[passNodeId].outPortUsed[routeDstPort] = true;
+        _adgNodeAttr[passNodeId].inPortUsedByWidth[bitWidth][routeSrcPort] = true;
+        _adgNodeAttr[passNodeId].outPortUsedByWidth[bitWidth][routeDstPort] = true;
         _adgNodeAttr[passNodeId].dfgEdgePass.push_back(edgePassAttr);        
     }
     return true;
@@ -596,8 +620,11 @@ bool Mapping::routeDfgEdgeFromSrc(DFGEdge* edge, ADGNode* srcNode, ADGNode* dstN
     std::queue<std::pair<ADGNode*, int>> nodeQue; 
     // Breadth first search for possible routing path
     // assign the index of the output port of the srcNode
-    int srcNodePortIdx = edge->srcPortIdx();
+    int dfgSrcPortIdx = edge->srcPortIdx();
+    int srcNodePortIdx = _dfg->node(edge->srcId())->operation() == "LUT"
+        ? 1 : dfgSrcPortIdx;
     int srcNodeId = edge->srcId();
+    int bitWidth = edge->bitWidth();
     std::string dstNodeOp = _dfg->node(edge->dstId())->operation();
     // int dstNodePortIdx;
     // int mappedAdgOutPort;
@@ -623,7 +650,7 @@ bool Mapping::routeDfgEdgeFromSrc(DFGEdge* edge, ADGNode* srcNode, ADGNode* dstN
         } 
         // search this layer of nodes
         for(int outPortIdx : outPortIdxs){
-            for(auto& elem : adgNode->output(outPortIdx)){
+            for(auto& elem : adgNode->output(bitWidth, outPortIdx)){
                 int nextNodeId = elem.first;
                 int nextSrcPort = elem.second;
                 auto nextId = std::make_pair(nextNodeId, nextSrcPort);
@@ -647,13 +674,15 @@ bool Mapping::routeDfgEdgeFromSrc(DFGEdge* edge, ADGNode* srcNode, ADGNode* dstN
                           (nextNodeType == "GPE") || // not use GPE node to route
                           visitNodes.count(nextId))){ // the <node-id, inport-index> already visited
                     continue;
-                } else if(isAdgNodeInPortUsed(nextNodeId, nextSrcPort)){ // the input port is already used
+                } else if(isAdgNodeInPortUsed(nextNodeId, bitWidth, nextSrcPort)){ // the input port is already used
                     // if has the same srcId and srcPortIdx, nextId can still be used
                     auto& nextNodeAttr = _adgNodeAttr[nextNodeId];
                     bool conflict = false;
                     for(auto& edgeLink : nextNodeAttr.dfgEdgePass){
                         auto passEdge = edgeLink.edge;
-                        if(edgeLink.srcPort == nextSrcPort && (passEdge->srcId() != srcNodeId || passEdge->srcPortIdx() != srcNodePortIdx)){
+                        if(passEdge->bitWidth() == bitWidth &&
+                           edgeLink.srcPort == nextSrcPort &&
+                           (passEdge->srcId() != srcNodeId || passEdge->srcPortIdx() != dfgSrcPortIdx)){
                             conflict = true; // the edge with different srcId or srcPortIdx occupied nextSrcPort
                             break;
                         }
@@ -698,12 +727,16 @@ bool Mapping::routeDfgEdgeFromSrc(DFGEdge* edge, ADGNode* srcNode, ADGNode* dstN
         if(routeNode == finalDstNode){ // dstNode
          // std::cout << "Set ADG node " << routeNode.first << " inport " << srcPort << " used\n";
             nodeAttr.inPortUsed[srcPort] = true;  // only change the input port status
+            nodeAttr.inPortUsedByWidth[bitWidth][srcPort] = true;
         } else if(nodeId == srcNode->id()){ // srcNode
             nodeAttr.outPortUsed[dstPort] = true; // only change the output port status
+            nodeAttr.outPortUsedByWidth[bitWidth][dstPort] = true;
             break; // get to the srcNode
         } else{ // intermediate routing nodes
             nodeAttr.outPortUsed[dstPort] = true; 
             nodeAttr.inPortUsed[srcPort] = true;
+            nodeAttr.outPortUsedByWidth[bitWidth][dstPort] = true;
+            nodeAttr.inPortUsedByWidth[bitWidth][srcPort] = true;
             DfgEdgePassAttr passAttr;
             passAttr.edge = edge;
             passAttr.srcPort = srcPort;
@@ -738,8 +771,11 @@ bool Mapping::routeDfgEdgeFromDst(DFGEdge* edge, ADGNode* srcNode, ADGNode* dstN
     std::queue<std::pair<ADGNode*, int>> nodeQue; 
     // Breadth first search for possible routing path
     // assign the index of the output port of the srcNode
-    int srcNodeOutPortIdx = edge->srcPortIdx();
+    int dfgSrcPortIdx = edge->srcPortIdx();
+    int srcNodeOutPortIdx = _dfg->node(edge->srcId())->operation() == "LUT"
+        ? 1 : dfgSrcPortIdx;
     int srcNodeId = edge->srcId();
+    int bitWidth = edge->bitWidth();
     std::string srcNodeOp = _dfg->node(srcNodeId)->operation();
     // int srcNodeInPortIdx = -1;
     // int mappedAdgInPort;
@@ -765,7 +801,7 @@ bool Mapping::routeDfgEdgeFromDst(DFGEdge* edge, ADGNode* srcNode, ADGNode* dstN
         } 
         // search this layer of nodes
         for(int inPortIdx : inPortIdxs){
-            auto elem = adgNode->input(inPortIdx);
+            auto elem = adgNode->input(bitWidth, inPortIdx);
             int nextNodeId = elem.first;
             int nextDstPort = elem.second;
             auto nextId = std::make_pair(nextNodeId, nextDstPort);
@@ -792,16 +828,18 @@ bool Mapping::routeDfgEdgeFromDst(DFGEdge* edge, ADGNode* srcNode, ADGNode* dstN
                       (nextNodeType == "GPE") || // not use GPE node to route
                       visitNodes.count(nextId))){ // the <node-id, outport-index> already visited
                 continue;
-            } else if(isAdgNodeOutPortUsed(nextNodeId, nextDstPort)){ // the output port is already used
+            } else if(isAdgNodeOutPortUsed(nextNodeId, bitWidth, nextDstPort)){ // the output port is already used
                 // if has the same srcId and srcPortIdx, nextId can still be used
                 auto& nextNodeAttr = _adgNodeAttr[nextNodeId];
                 bool conflict = false;
                 for(auto& edgeLink : nextNodeAttr.dfgEdgePass){
                     auto passEdge = edgeLink.edge;
-                    if(edgeLink.dstPort == nextDstPort && (passEdge->srcId() != srcNodeId || passEdge->srcPortIdx() != srcNodeOutPortIdx)){
+                    if(passEdge->bitWidth() == bitWidth &&
+                       edgeLink.dstPort == nextDstPort &&
+                       (passEdge->srcId() != srcNodeId || passEdge->srcPortIdx() != dfgSrcPortIdx)){
                         conflict = true; // the edge with different srcId or srcPortIdx occupied nextDstPort
                         break;
-                    }else if(edgeLink.dstPort == nextDstPort){
+                    }else if(passEdge->bitWidth() == bitWidth && edgeLink.dstPort == nextDstPort){
                         sameSrcEdge = passEdge; // the edge with the same srcId and srcPortIdx
                         finalSrcNode = nextId;
                         success = true; // REUSE part of the routing path of the edge
@@ -864,13 +902,17 @@ bool Mapping::routeDfgEdgeFromDst(DFGEdge* edge, ADGNode* srcNode, ADGNode* dstN
         ADGNodeAttr& nodeAttr = _adgNodeAttr[nodeId];
         if(routeNode == finalSrcNode){ // srcNode
             nodeAttr.outPortUsed[dstPort] = true; // only change the output port status 
+            nodeAttr.outPortUsedByWidth[bitWidth][dstPort] = true;
         } else if(nodeId == dstNode->id()){ // dstNode
         // std::cout << "Set ADG node " << nodeId << " inport " << srcPort << " used\n";
             nodeAttr.inPortUsed[srcPort] = true;  // only change the input port status 
+            nodeAttr.inPortUsedByWidth[bitWidth][srcPort] = true;
             break; // get to the dstNode
         } else{
             nodeAttr.inPortUsed[srcPort] = true;
             nodeAttr.outPortUsed[dstPort] = true;
+            nodeAttr.inPortUsedByWidth[bitWidth][srcPort] = true;
+            nodeAttr.outPortUsedByWidth[bitWidth][dstPort] = true;
             DfgEdgePassAttr passAttr;
             passAttr.edge = edge;
             passAttr.srcPort = srcPort;
@@ -893,8 +935,9 @@ bool Mapping::routeDfgEdgeFromDst(DFGEdge* edge, ADGNode* srcNode, ADGNode* dstN
 // find the available input ports in the dstNode to route edge
 std::set<int> Mapping::availDstPorts(DFGEdge* edge, ADGNode* dstNode){
     DFGNode* dstDfgNode = _dfg->node(edge->dstId());
+    int bitWidth = edge->bitWidth();
     int edgeDstPort = edge->dstPortIdx();
-    int opereandNum = dstDfgNode->numInputs();
+    int opereandNum = dstDfgNode->numInputs(bitWidth);
     FUNode* dstFuNode = dynamic_cast<FUNode*>(dstNode);
     std::set<int> dstPortRange; // the input port index range of the dstNode
     std::vector<int> opIdxs; // operand indexes
@@ -903,14 +946,29 @@ std::set<int> Mapping::availDstPorts(DFGEdge* edge, ADGNode* dstNode){
             opIdxs.push_back(opIdx);
         }
     } else{ // operands are not commutative, use the edgeDstPort as the operand index
-        opIdxs.push_back(edgeDstPort);
+        int opIdx = edgeDstPort;
+        // Mixed-width I/O operations use global DFG operand indexes (for
+        // example, COUTPUT's one-bit predicate is operand B/index 1), while
+        // the ADG stores operands independently for each bit width.  An IOB
+        // with one fine-grained operand therefore exposes it as local index 0.
+        if(bitWidth == 1 &&
+           dynamic_cast<IOBNode*>(dstFuNode) &&
+           dstFuNode->numOperands(1) == 1){
+            opIdx = 0;
+        }
+        opIdxs.push_back(opIdx);
     }
     // select all the ports connected to available operand
     for(int opIdx : opIdxs){
+        if(dstDfgNode->operation() == "LUT"){
+            auto* gpeNode = dynamic_cast<GPENode*>(dstFuNode);
+            if(!gpeNode || !gpeNode->hasLUT()) continue;
+            opIdx = gpeNode->getOperandIdxLUT(opIdx);
+        }
         bool operandUsed = false; // if this operand is used
-        auto& inPorts = dstFuNode->operandInputs(opIdx);
+        auto& inPorts = dstFuNode->operandInputs(bitWidth, opIdx);
         for(int inPort : inPorts){ // input ports connected to the operand with index of opIdx
-            if(isAdgNodeInPortUsed(dstFuNode->id(), inPort)){
+            if(isAdgNodeInPortUsed(dstFuNode->id(), bitWidth, inPort)){
                 operandUsed = true;
                 break;
             }
@@ -928,15 +986,16 @@ std::set<int> Mapping::availDstPorts(DFGEdge* edge, ADGNode* dstNode){
 // route DFG edge between srcNode and dstNode
 // find a routable path from srcNode to dstNode by BFS
 bool Mapping::routeDfgEdge(DFGEdge* edge, ADGNode* srcNode, ADGNode* dstNode){
+    int bitWidth = edge->bitWidth();
+    if((srcNode && !srcNode->bitWidths().count(bitWidth)) ||
+       (dstNode && !dstNode->bitWidths().count(bitWidth))){
+        return false;
+    }
     std::set<int> dstPortRange = availDstPorts(edge, dstNode); // the input port index range of the dstNode
     if(dstPortRange.empty()){ // no available input port in the dstNode
         return false;
     }
     return routeDfgEdgeFromDst(edge, srcNode, dstNode, dstPortRange);
-    // if(!routeDfgEdgeFromDst(edge, srcNode, dstNode, dstPortRange)){
-    //     return routeDfgEdgeFromSrc(edge, srcNode, dstNode, dstPortRange);
-    // }
-    // return true;
 }
 
 
@@ -959,6 +1018,7 @@ bool Mapping::routeDfgEdge(DFGEdge* edge, ADGNode* srcNode, ADGNode* dstNode){
 // unroute DFG edge without unmapping the to-be-free input/output nodes if any
 void Mapping::unrouteDfgEdge(DFGEdge* edge){
     int eid = edge->id();
+    int bitWidth = edge->bitWidth();
     if(!_dfgEdgeAttr.count(eid)) return;
     auto& edgeAttr = _dfgEdgeAttr[eid]; 
     spdlog::debug("Unroute DFG edge {0} ({1} -> {2}) ", eid, _dfg->node(edge->srcId())->name(), _dfg->node(edge->dstId())->name());   
@@ -974,10 +1034,12 @@ void Mapping::unrouteDfgEdge(DFGEdge* edge){
         bool setInPortUnused = (edgeLink.srcPort != -1);
         bool setOutPortUnused = (edgeLink.dstPort != -1);
         for(auto& nodeEdge : nodeEdges){ // the srcPort/dstPort may be used by other edges
-            if(setInPortUnused && (nodeEdge.srcPort == edgeLink.srcPort)){
+            if(setInPortUnused && nodeEdge.edge->bitWidth() == bitWidth &&
+               (nodeEdge.srcPort == edgeLink.srcPort)){
                 setInPortUnused = false; // do not set unused
             }
-            if(setOutPortUnused && (nodeEdge.dstPort == edgeLink.dstPort)){
+            if(setOutPortUnused && nodeEdge.edge->bitWidth() == bitWidth &&
+               (nodeEdge.dstPort == edgeLink.dstPort)){
                 setOutPortUnused = false;
             }
             if(!setInPortUnused && !setOutPortUnused){
@@ -985,13 +1047,25 @@ void Mapping::unrouteDfgEdge(DFGEdge* edge){
             }
         }
         if(setInPortUnused){
-            nodeAttr.inPortUsed[edgeLink.srcPort] = false;
+            nodeAttr.inPortUsedByWidth[bitWidth][edgeLink.srcPort] = false;
+            bool usedAtAnyWidth = false;
+            for(auto& widthPorts : nodeAttr.inPortUsedByWidth){
+                auto it = widthPorts.second.find(edgeLink.srcPort);
+                usedAtAnyWidth |= it != widthPorts.second.end() && it->second;
+            }
+            nodeAttr.inPortUsed[edgeLink.srcPort] = usedAtAnyWidth;
             // if(node->type() == "GPE"){
             //     std::cout << "Set ADG node " << node->id() << " inport " << edgeLink.srcPort << " unused\n";
             // }
         }
         if(setOutPortUnused){
-            nodeAttr.outPortUsed[edgeLink.dstPort] = false;
+            nodeAttr.outPortUsedByWidth[bitWidth][edgeLink.dstPort] = false;
+            bool usedAtAnyWidth = false;
+            for(auto& widthPorts : nodeAttr.outPortUsedByWidth){
+                auto it = widthPorts.second.find(edgeLink.dstPort);
+                usedAtAnyWidth |= it != widthPorts.second.end() && it->second;
+            }
+            nodeAttr.outPortUsed[edgeLink.dstPort] = usedAtAnyWidth;
         }            
     }
     _dfgEdgeAttr.erase(eid);
@@ -1065,12 +1139,13 @@ int Mapping::getMappedAdgNodeNum(){
 // }
 
 // get currently available delay cycles in the FU node according to the mapped DFG node
-int Mapping::getAvailDelay(FUNode* fuNode, DFGNode* dfgNode){
-    if(fuNode->numOperands() < 2){
+int Mapping::getAvailDelay(FUNode* fuNode, DFGNode* dfgNode, int bitWidth){
+    if(bitWidth == 0) bitWidth = dfgNode->operation() == "LUT" ? 1 : fuNode->bitWidth();
+    if(fuNode->numOperands(bitWidth) < 2){
         return 0; // no delay unit
     }
-    int maxDelay = fuNode->maxDelay();
-    int numOp = dfgNode->inputs().size();
+    int maxDelay = fuNode->maxDelay(bitWidth);
+    int numOp = dfgNode->inputs(bitWidth).size();
 
     // int numOp = 0;
     // for(auto elem : dfgNode->inputEdges()){
@@ -1082,8 +1157,9 @@ int Mapping::getAvailDelay(FUNode* fuNode, DFGNode* dfgNode){
     int availDelay;
 
     /// already used this fu as delay unit
-    if(_fuDelayAttr.count(fuNode->id())){
-        auto& attr = _fuDelayAttr[fuNode->id()];
+    auto delayKey = std::make_pair(fuNode->id(), bitWidth);
+    if(_fuDelayAttr.count(delayKey)){
+        auto& attr = _fuDelayAttr[delayKey];
         int leftOps = numOp - attr.delayUsed.size();
         availDelay = (maxDelay - attr.totalDelayUsed) / std::max(leftOps, 1); // left delay cycles divided by the left operands
     }else{
@@ -1104,16 +1180,16 @@ void Mapping::preAssignRdu(){
                 // _fuDelayAttr[adgnodeId].delayUsed[1] = 1;
                 // _fuDelayAttr[adgnodeId].delayUsed[2] = 2;
                 // _fuDelayAttr[adgnodeId].delayUsed[2] = 3;
-                _fuDelayAttr[adgnodeId].totalDelayUsed = 6;
+                _fuDelayAttr[std::make_pair(adgnodeId, _adg->node(adgnodeId)->bitWidth())].totalDelayUsed = 6;
             }
             else if(dfgnode->operation() == "MERGE3" || dfgnode->operation() == "INTLV3"){
                 // _fuDelayAttr[adgnodeId].delayUsed[1] = 1;
                 // _fuDelayAttr[adgnodeId].delayUsed[2] = 2;
-                _fuDelayAttr[adgnodeId].totalDelayUsed = 3;
+                _fuDelayAttr[std::make_pair(adgnodeId, _adg->node(adgnodeId)->bitWidth())].totalDelayUsed = 3;
             }        
             else if(dfgnode->operation() == "MERGE2" || dfgnode->operation() == "INTLV2"){
                 // _fuDelayAttr[adgnodeId].delayUsed[1] = 1;
-                _fuDelayAttr[adgnodeId].totalDelayUsed = 1;
+                _fuDelayAttr[std::make_pair(adgnodeId, _adg->node(adgnodeId)->bitWidth())].totalDelayUsed = 1;
             }
         }    
     }
@@ -1313,6 +1389,7 @@ void Mapping::latencySchedule(){
         DFGNode* srcNode = nullptr;
         // dfgNode->printDfgNode();
         int inPort;
+        int inBitWidth = dfgNode->operation() == "LUT" ? 1 : fuNode->bitWidth();
         int delayRequired = 0;
         int maxArriveLat = -1;
         bool postrm = true;
@@ -1344,6 +1421,7 @@ void Mapping::latencySchedule(){
                 // iterEnd = std::remove(unscheduledNodes.begin(), iterEnd, srcNodeId);
                 // unscheduledNodes.erase(std::remove(unscheduledNodes.begin(), unscheduledNodes.end(), srcNode), unscheduledNodes.end());
                 inPort = elem.first;
+                inBitWidth = edge->bitWidth();
                 postrm = false;
                 break; // only find one path
             }else if(arriveLat > maxArriveLat){
@@ -1351,11 +1429,20 @@ void Mapping::latencySchedule(){
                 delayRequired = inPortLat - arriveLat;
                 srcNode = _dfg->node(srcNodeId);
                 inPort = elem.first;
+                inBitWidth = edge->bitWidth();
             }
         }
-        _fuDelayAttr[fuNode->id()].delayUsed[inPort] = std::min(delayRequired, getAvailDelay(fuNode, dfgNode));
+        if(maxArriveLat < 0 && srcNode == nullptr){
+            _dfgNodeAttr[nodeId].maxLat = inPortLat;
+            _dfgNodeAttr[nodeId].minLat = inPortLat;
+            break;
+        }
+        auto delayKey = std::make_pair(fuNode->id(), inBitWidth);
+        _fuDelayAttr[delayKey].delayUsed[inPort] =
+            std::min(delayRequired, getAvailDelay(fuNode, dfgNode, inBitWidth));
         _dfgNodeAttr[nodeId].maxLat = inPortLat; // input port max latency 
-        _dfgNodeAttr[nodeId].minLat = std::max(inPortLat - getAvailDelay(fuNode, dfgNode), 0); // input port min latency >= IOB Input latency
+        _dfgNodeAttr[nodeId].minLat =
+            std::max(inPortLat - getAvailDelay(fuNode, dfgNode, inBitWidth), 0);
         dfgNode = srcNode;
         if(postrm && srcNode != nullptr){
             scheduledNodeIds.emplace(srcNode->id()); // latency fixed
@@ -1455,9 +1542,11 @@ void Mapping::latencySchedule(){
                     int srcNodeLat = _dfgNodeAttr[srcNodeId].lat;     
                     // int delayRequired = maxInportLat - routeLat - srcNodeLat;   
                     int delayRequired = std::max(maxInportLat - routeLat - srcNodeLat, 0); 
-                    int delayUsed = std::min(delayRequired, getAvailDelay(fuNode, dfgNode));         
-                    _fuDelayAttr[fuNode->id()].delayUsed[inPort] = delayUsed;
-                    _fuDelayAttr[fuNode->id()].totalDelayUsed += delayUsed;
+                    int bitWidth = edge->bitWidth();
+                    int delayUsed = std::min(delayRequired, getAvailDelay(fuNode, dfgNode, bitWidth));
+                    auto delayKey = std::make_pair(fuNode->id(), bitWidth);
+                    _fuDelayAttr[delayKey].delayUsed[inPort] = delayUsed;
+                    _fuDelayAttr[delayKey].totalDelayUsed += delayUsed;
                 }
             }
             _dfgNodeAttr[nodeId].minLat = std::max(maxInportLat - getAvailDelay(fuNode, dfgNode), 0); // input port min latency         
@@ -1481,10 +1570,14 @@ void Mapping::latencySchedule(){
                     // int delayRequired = _dfgNodeAttr[dstNodeId].maxLat - routeLat - targetLat;   
                     int delayRequired = std::max(_dfgNodeAttr[dstNodeId].maxLat - routeLat - targetLat, 0);                                   
                     FUNode* dstFuNode = dynamic_cast<FUNode*>(_dfgNodeAttr[dstNodeId].adgNode); // mapped FU node
-                    int delayUsed = std::min(delayRequired, getAvailDelay(dstFuNode, dstNode));  
-                    _fuDelayAttr[dstFuNode->id()].delayUsed[inPort] = delayUsed;
-                    _fuDelayAttr[dstFuNode->id()].totalDelayUsed += delayUsed;
-                    _dfgNodeAttr[dstNodeId].minLat = std::max(_dfgNodeAttr[dstNodeId].maxLat - getAvailDelay(dstFuNode, dstNode), 0); // input port min latency                     
+                    int bitWidth = edge->bitWidth();
+                    int delayUsed = std::min(delayRequired, getAvailDelay(dstFuNode, dstNode, bitWidth));
+                    auto delayKey = std::make_pair(dstFuNode->id(), bitWidth);
+                    _fuDelayAttr[delayKey].delayUsed[inPort] = delayUsed;
+                    _fuDelayAttr[delayKey].totalDelayUsed += delayUsed;
+                    _dfgNodeAttr[dstNodeId].minLat = std::max(
+                        _dfgNodeAttr[dstNodeId].maxLat -
+                        getAvailDelay(dstFuNode, dstNode, bitWidth), 0);
                 }
             }
             // std::cout << "//========= after scheduling node " << nodeId << " =========// \n";
@@ -1556,11 +1649,12 @@ void Mapping::calEdgeLatVio(){
         int Nodelat = _dfgNodeAttr[nodeId].lat;
         FUNode* fuNode = dynamic_cast<FUNode*>(_dfgNodeAttr[nodeId].adgNode);
         int fuNodeId = fuNode->id();
-        auto& fuDelayAttr = _fuDelayAttr[fuNodeId];
-        auto& delayUsed = fuDelayAttr.delayUsed;
         for(auto& elem : node->inputEdges()){
             int eid = elem.second;
             DFGEdge* edge = _dfg->edge(eid);     
+            int bitWidth = edge->bitWidth();
+            auto& fuDelayAttr = _fuDelayAttr[std::make_pair(fuNodeId, bitWidth)];
+            auto& delayUsed = fuDelayAttr.delayUsed;
             int routeLat = _dfgEdgeAttr[eid].lat; // latNoDelay;
             if(edge->isBackEdge()){
                 // if(edge->isMemEdge()){ // not need to make sync for memory-dependent back-edge
@@ -1605,10 +1699,12 @@ void Mapping::calEdgeLatVio(){
             _dfgEdgeAttr[eid].delay = requiredDelay;    
             int assignedDelay; 
             if(!delayUsed.count(elem.first)){ // not assign delay for this port
-                assignedDelay = std::min(getAvailDelay(fuNode, node), requiredDelay);
+                assignedDelay = std::min(getAvailDelay(fuNode, node, bitWidth), requiredDelay);
                 delayUsed[elem.first] = assignedDelay;
                 fuDelayAttr.totalDelayUsed += assignedDelay;
-                _dfgNodeAttr[nodeId].minLat = std::max(_dfgNodeAttr[nodeId].maxLat - getAvailDelay(fuNode, node), 0); // input port min latency 
+                _dfgNodeAttr[nodeId].minLat = std::max(
+                    _dfgNodeAttr[nodeId].maxLat -
+                    getAvailDelay(fuNode, node, bitWidth), 0);
             }else{
                 assignedDelay = delayUsed[elem.first];
             }         

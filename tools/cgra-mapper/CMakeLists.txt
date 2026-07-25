@@ -56,6 +56,7 @@ set(SOURCES
 )
 
 add_llvm_executable(cgra-mapper ${SOURCES})
+target_compile_options(cgra-mapper PRIVATE -fexceptions)
 
 # llvm_update_compile_flags(cgra-mapper)
 target_link_libraries(cgra-mapper PRIVATE ${LIBS})

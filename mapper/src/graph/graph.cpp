@@ -250,31 +250,31 @@ void Graph::delOutputEdge(int index){
 
 
 void Graph::printGraph(){
-    std::cout << "======================================================================\n";
-    std::cout << "Graph(id): " << _id << std::endl;
-    std::cout << "bitWidth: " << _bitWidth << std::endl;
-    std::cout << "numInputs: " << numInputs() << std::endl;
-    std::cout << "numOutputs: " << numOutputs() << std::endl;
-    std::cout << "inputNames: " << std::endl;
-    for(auto& elem : _inputNames){
-        std::cout << "(" << elem.first << ", " << elem.second << ") ";
-    }
-    std::cout << "\noutputNames: " << std::endl;
-    for(auto& elem : _outputNames){
-        std::cout << "(" << elem.first << ": " << elem.second << ") ";
-    }
-    std::cout << "\ninputs: " << std::endl;   
-    for(auto& elem : _inputs){
-        std::cout << elem.first << ": ";
-        auto& s = elem.second;
-        for(auto it = s.begin(); it != s.end(); it++)
-            std::cout << "(" << it->first << ", " << it->second << ") ";
-        std::cout << std::endl;
-    }
-    std::cout << "outputs: " << std::endl;
-    for(auto& elem : _outputs){
-        std::cout << elem.first << ": (" << elem.second.first << ", " << elem.second.second << ")\n";
-    }
+    // std::cout << "======================================================================\n";
+    // std::cout << "Graph(id): " << _id << std::endl;
+    // std::cout << "bitWidth: " << _bitWidth << std::endl;
+    // std::cout << "numInputs: " << numInputs() << std::endl;
+    // std::cout << "numOutputs: " << numOutputs() << std::endl;
+    // std::cout << "inputNames: " << std::endl;
+    // for(auto& elem : _inputNames){
+    //     std::cout << "(" << elem.first << ", " << elem.second << ") ";
+    // }
+    // std::cout << "\noutputNames: " << std::endl;
+    // for(auto& elem : _outputNames){
+    //     std::cout << "(" << elem.first << ": " << elem.second << ") ";
+    // }
+    // std::cout << "\ninputs: " << std::endl;   
+    // for(auto& elem : _inputs){
+    //     std::cout << elem.first << ": ";
+    //     auto& s = elem.second;
+    //     for(auto it = s.begin(); it != s.end(); it++)
+    //         std::cout << "(" << it->first << ", " << it->second << ") ";
+    //     std::cout << std::endl;
+    // }
+    // std::cout << "outputs: " << std::endl;
+    // for(auto& elem : _outputs){
+    //     std::cout << elem.first << ": (" << elem.second.first << ", " << elem.second.second << ")\n";
+    // }
     // for(auto& elem : _nodes){
     //     elem.second->print();
     // }

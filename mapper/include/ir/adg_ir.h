@@ -5,6 +5,7 @@
 #include <fstream>
 #include <map>
 #include <algorithm>
+#include <tuple>
 #include "nlohmann/json.hpp"
 #include "adg/adg.h"
 
@@ -15,6 +16,7 @@ class ADGIR
 {
 private:
     ADG* _adg;
+    int _maxLUTInput = 0;
     std::map<int, std::string> _iobModeNames;
     // parse ADG json object
     ADG* parseADG(json& adgJson);
@@ -25,6 +27,9 @@ private:
     ADGNode* parseADGNode(json& nodeJson, std::map<int, std::pair<ADGNode*, bool>>& modules);
     // parse ADGEdge json object
     void parseADGEdges(ADG* adg, json& edgeJson);
+    // Normalize AuFORA's per-tile fine_grained_networks into ordinary ADG
+    // nodes and width-qualified edges.
+    void parseFineGrainedNetworks(ADG* adg, json& networksJson);
     // analyze the connections among the internal sub-modules for GPENode, fill _operandInputs 
     void analyzeIntraConnect(GPENode* node);
     // analyze the connections among the internal sub-modules for IOBNode, fill _operandInputs 

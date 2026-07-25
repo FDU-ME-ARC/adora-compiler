@@ -19,6 +19,7 @@ add_library(CGRAMapperLIB
 
   src/ir/dfg_ir.cpp
   src/ir/adg_ir.cpp
+  src/rtlil/yosys_frontend.cpp
 
   src/graph/graph_node.cpp
   src/graph/graph.cpp
@@ -39,6 +40,8 @@ target_link_libraries(CGRAMapperLIB
   CGRAEmit
   ADORAMapTensorOp
 )
+
+# add_compile_options(-fno-exceptions)
 
 add_dependencies(CGRAMapperLIB 
   GeneralCDFGGen)

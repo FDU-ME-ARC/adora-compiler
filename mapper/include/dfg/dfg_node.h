@@ -21,6 +21,9 @@ class DFGNode : public GraphNode
 {
 private:
     std::string _operation;
+    int _lutSize = 0;
+    std::string _lutConfig;
+    std::map<int, int> _fineImmediates;
     int _opLatency = 1; // operation latency
     bool _commutative;  // if the inputs(operands) are commutative
     uint64_t _imm;      // immedaite operand (not exceed 64 bits)
@@ -38,6 +41,12 @@ public:
     DFGNode(){}
     ~DFGNode(){}
     std::string operation(){ return _operation; }
+    int LUTsize(){ return _lutSize; }
+    void setLUTsize(int size){ _lutSize = size; }
+    const std::string& LUTconfig(){ return _lutConfig; }
+    void setLUTconfig(const std::string& config){ _lutConfig = config; }
+    void setFineImmediate(int operand, int value){ _fineImmediates[operand] = value & 1; }
+    const std::map<int, int>& fineImmediates(){ return _fineImmediates; }
     // set operation, latency, commutative according to operation name
     void setOperation(std::string operation);
     void setOpLatency(int opLat){ _opLatency = opLat; }
@@ -66,6 +75,7 @@ public:
     int additionalStartDelay(){ return _additionalStartDelay; } 
 
     virtual int numInputs();
+    virtual int numInputs(int bits);
     
     void printDfgNode();
     virtual void print();
@@ -79,7 +89,7 @@ private:
     std::string _memRefName; // referred memory name for binding, eg. int A[20]; array name is A
     int _memOffset = 0;          // access memory address offset to the array base address, e.g. access A[15]~A[4], offset is 4*4 
     int _reducedMemOffset = 0;   // access address offset to the reduced memory block, e.g. access A[15]~A[4], offset is (15-4)*4 
-    int _memSize;                // referred memory size in byte, e.g. size is (15+1-4)*4
+    int _memSize = 0;            // referred memory size in byte, e.g. size is (15+1-4)*4
     std::vector<std::pair<int, int>> _pattern; // memory access pattern, nested <stride, loop-cycles>
     std::vector<int> _groupNodes; // other I/O nodes in the same group where nodes access the same array
 

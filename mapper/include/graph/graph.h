@@ -8,14 +8,19 @@
 class Graph
 {
 protected:
-    int _id; // "This"(INPUT/OUTPUT) ID
-    int _bitWidth;
+    int _id = 0; // "This"(INPUT/OUTPUT) ID
+    int _bitWidth = 32;
+    std::set<int> _bitWidths;
     std::map<int, std::string> _inputNames; // <input-index, input-port-name>
     std::map<int, std::string> _outputNames; // <input-index, input-port-name>
     std::map<int, std::set<std::pair<int, int>>> _inputs; // <input-index, set<node-id, node-port-idx>>
     std::map<int, std::pair<int, int>> _outputs; // <output-index, <node-id, node-port-idx>>
     std::map<int, std::set<int>> _inputEdges; // <input-index, set<edge-id>>
     std::map<int, int> _outputEdges; // <output-index, edge-id>
+    std::map<int, std::map<int, std::set<std::pair<int, int>>>> _inputsByWidth;
+    std::map<int, std::map<int, std::pair<int, int>>> _outputsByWidth;
+    std::map<int, std::map<int, std::set<int>>> _inputEdgesByWidth;
+    std::map<int, std::map<int, int>> _outputEdgesByWidth;
     // std::map<int, GraphNode*> _nodes;   // <node-id, node>
     // std::map<int, GraphEdge*> _edges;   // <edge-id, edge>
 public:
@@ -24,7 +29,11 @@ public:
     int id(){ return _id; }
     void setId(int id){ _id = id; }
     int bitWidth(){ return _bitWidth; }
-    void setBitWidth(int bitWidth){ _bitWidth = bitWidth; }
+    void setBitWidth(int bitWidth){ _bitWidth = bitWidth; _bitWidths.insert(bitWidth); }
+    const std::set<int>& bitWidths(){ return _bitWidths; }
+    void setBitWidths(const std::set<int>& bitWidths){ _bitWidths = bitWidths; }
+    void addBitWidth(int bitWidth){ _bitWidths.insert(bitWidth); }
+    void delBitWidth(int bitWidth){ _bitWidths.erase(bitWidth); }
     int numInputs(){ return _inputs.size(); }
     int numOutputs(){ return _outputs.size(); }
     void setInputName(int index, std::string name);

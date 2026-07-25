@@ -9,10 +9,22 @@
 #include <memory>
 #include "graph/graph_node.h"
 
+#define TYPE_ALU  0
+#define TYPE_LUT  1
+#define TYPE_IOC  2
+
 // configuration data location
 struct CfgDataLoc{
-    int low;  // lowest bit index 
-    int high; // highest bit index
+    int low = -1;  // lowest bit index
+    int high = -1; // highest bit index
+};
+
+struct FineGrainedCfgInfo{
+    CfgDataLoc delay;
+    CfgDataLoc mux;
+    CfgDataLoc lut;
+    std::vector<int> muxWidths;
+    bool valid = false;
 };
 
 
@@ -77,6 +89,10 @@ protected:
     std::set<std::string> _operations; 
     // indexes of input ports connected to each operand, vector<set<input-port>>
     std::vector<std::set<int>> _operandInputs;
+    std::map<int, int> _maxDelayByWidth;
+    std::map<int, int> _numOperandsByWidth;
+    std::map<int, std::vector<std::set<int>>> _operandInputsByWidth;
+    FineGrainedCfgInfo _fineGrainedCfg;
     void printFU();
 public:
     using ADGNode::ADGNode; // C++11, inherit parent constructors
@@ -86,6 +102,10 @@ public:
     void setMaxDelay(int maxDelay){ _maxDelay = maxDelay; }
     int numOperands(){ return _numOperands; }
     void setNumOperands(int numOperands); // set numOperands and resize _operandInputs 
+    int maxDelay(int bitWidth);
+    void setMaxDelay(int bitWidth, int maxDelay);
+    int numOperands(int bitWidth);
+    void setNumOperands(int bitWidth, int numOperands);
     const std::set<std::string>& operations(){ return _operations; }
     void addOperation(std::string op); // add supported operation
     void delOperation(std::string op); // delete supported operation
@@ -95,6 +115,12 @@ public:
     void delOperandInputs(int opeIdx, int inputIdx);
     void addOperandInputs(int opeIdx, std::set<int> inputIdxs); // add input ports connected to this operand
     int getOperandIdx(int inputIdx); // get which operand this input is connected
+    const std::set<int>& operandInputs(int bitWidth, int operandIdx);
+    void addOperandInput(int bitWidth, int operandIdx, int inputIdx);
+    void setOperandInputs(int bitWidth, int operandIdx, const std::set<int>& inputIdxs);
+    int getOperandIdx(int bitWidth, int inputIdx);
+    const FineGrainedCfgInfo& fineGrainedCfg(){ return _fineGrainedCfg; }
+    void setFineGrainedCfg(const FineGrainedCfgInfo& cfg){ _fineGrainedCfg = cfg; }
     virtual void print();
 };
 
@@ -103,10 +129,17 @@ class GPENode : public FUNode
 {
 private:
     int _numRfReg; // number of registers in RegFile 
+    int _numInputLUT = 0;
+    bool _hasLUT = false;
 public:
     using FUNode::FUNode; // C++11, inherit parent constructors
     int numRfReg(){ return _numRfReg; } 
     void setNumRfReg(int numRfReg){ _numRfReg = numRfReg; }
+    void sethasLUT(bool hasLUT){ _hasLUT = hasLUT; }
+    bool hasLUT(){ return _hasLUT; }
+    int numInputLUT(){ return _numInputLUT; }
+    void setNumInputLUT(int num){ _numInputLUT = num; }
+    int getOperandIdxLUT(int lutOperandIdx);
     virtual void print();
 };
 
@@ -122,6 +155,7 @@ public:
 
     int index(){ return _index; }
     void setIndex(int index){ _index = index; }
+    int getOperandIdxIOB(int idxIOB){ return idxIOB; }
     virtual void print();
 };
 

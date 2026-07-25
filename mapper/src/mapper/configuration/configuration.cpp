@@ -1,5 +1,6 @@
 
 #include "mapper/configuration.h"
+#include <cctype>
 
 void Configuration::addCfgData(std::map<int, CfgData> &cfg, const CfgDataLoc &loc, uint32_t data){
     CfgData loc_data(loc.high - loc.low + 1, data);
@@ -87,6 +88,81 @@ std::set<int> Configuration::getConfiguredTiles(){
     return results;
 }
 
+void Configuration::addFineGrainedFuCfgData(
+    FUNode* node, DFGNode* dfgNode, std::map<int, CfgData>& cfg){
+    const auto& fgCfg = node->fineGrainedCfg();
+    if(!fgCfg.valid || !node->bitWidths().count(1)) return;
+
+    std::map<int, int> muxSelect;
+    std::map<int, int> delayUsed;
+    for(auto& immediate : dfgNode->fineImmediates()){
+        int operand = immediate.first;
+        if(dfgNode->operation() == "LUT"){
+            auto* gpe = dynamic_cast<GPENode*>(node);
+            if(gpe) operand = gpe->getOperandIdxLUT(operand);
+        }
+        muxSelect[operand] = immediate.second ? 1 : 0;
+    }
+    for(auto& inputEdge : dfgNode->inputEdges(1)){
+        int eid = inputEdge.second;
+        DFGEdge* edge = _mapping->getDFG()->edge(eid);
+        if(!edge || !_mapping->isRouted(eid)) continue;
+        auto& edgeAttr = _mapping->dfgEdgeAttr(eid);
+        if(edgeAttr.edgeLinks.empty()) continue;
+        int inputIdx = edgeAttr.edgeLinks.back().srcPort;
+        int operand = node->getOperandIdx(1, inputIdx);
+        if(dfgNode->operation() == "LUT"){
+            auto* gpe = dynamic_cast<GPENode*>(node);
+            if(gpe) operand = gpe->getOperandIdxLUT(edge->dstPortIdx());
+        }
+        if(operand < 0) continue;
+        const auto& routedPorts = node->operandInputs(1, operand);
+        auto it = routedPorts.find(inputIdx);
+        if(it == routedPorts.end()) continue;
+        muxSelect[operand] = 2 + std::distance(routedPorts.begin(), it);
+        delayUsed[operand] = edgeAttr.delay;
+    }
+
+    if(fgCfg.delay.low >= 0 && fgCfg.delay.high >= fgCfg.delay.low &&
+       node->numOperands(1) > 0){
+        int totalWidth = fgCfg.delay.high - fgCfg.delay.low + 1;
+        int eachWidth = totalWidth / node->numOperands(1);
+        uint64_t packed = 0;
+        for(auto& item : delayUsed){
+            if(eachWidth > 0 && item.first * eachWidth < 64){
+                uint64_t mask = eachWidth >= 64 ? ~uint64_t(0)
+                    : ((uint64_t(1) << eachWidth) - 1);
+                packed |= (uint64_t(item.second) & mask) << (item.first * eachWidth);
+            }
+        }
+        addCfgData(cfg, fgCfg.delay, packed);
+    }
+
+    int muxLow = fgCfg.mux.low;
+    for(int operand = 0; operand < static_cast<int>(fgCfg.muxWidths.size()); ++operand){
+        int width = fgCfg.muxWidths[operand];
+        if(width <= 0) continue;
+        CfgDataLoc loc{muxLow, muxLow + width - 1};
+        addCfgData(cfg, loc, static_cast<uint32_t>(muxSelect[operand]));
+        muxLow += width;
+    }
+
+    if(dfgNode->operation() == "LUT" &&
+       fgCfg.lut.low >= 0 && fgCfg.lut.high >= fgCfg.lut.low){
+        int bitCount = fgCfg.lut.high - fgCfg.lut.low + 1;
+        std::vector<uint32_t> words((bitCount + 31) / 32, 0);
+        std::string bits;
+        for(char c : dfgNode->LUTconfig()){
+            if(c == '0' || c == '1') bits.push_back(c);
+        }
+        int outputBit = 0;
+        for(auto it = bits.rbegin(); it != bits.rend() && outputBit < bitCount; ++it, ++outputBit){
+            if(*it == '1') words[outputBit / 32] |= uint32_t(1) << (outputBit % 32);
+        }
+        addCfgData(cfg, fgCfg.lut, words);
+    }
+}
+
 // get config data for GPE, return<LSB-location, CfgData>
 std::map<int, CfgData> Configuration::getGpeCfgData(GPENode* node){
     if(!_mapping->isMapped(node)){
@@ -98,6 +174,10 @@ std::map<int, CfgData> Configuration::getGpeCfgData(GPENode* node){
     DFGNode* dfgNode = adgNodeAttr.dfgNode;
     dfgNode->printDfgNode(); /// @jhlou 
     std::map<int, CfgData> cfg;
+    if(dfgNode->operation() == "LUT"){
+        addFineGrainedFuCfgData(node, dfgNode, cfg);
+        return cfg;
+    }
     // operation
     int opc = Operations::OPC(dfgNode->operation());
     int aluId = -1;
@@ -114,6 +194,7 @@ std::map<int, CfgData> Configuration::getGpeCfgData(GPENode* node){
 
     for(auto& elem : dfgNode->inputEdges()){
         int eid = elem.second;
+        if(_mapping->getDFG()->edge(eid)->bitWidth() != node->bitWidth()) continue;
         auto& edgeAttr = _mapping->dfgEdgeAttr(eid);
         int inputIdx = edgeAttr.edgeLinks.rbegin()->srcPort; // last edgeLInk, dst port
         auto muxPair = subAdg->input(inputIdx).begin(); // one input only connected to one Mux
@@ -288,6 +369,7 @@ std::map<int, CfgData> Configuration::getGpeCfgData(GPENode* node){
             }
         }  
     }
+    addFineGrainedFuCfgData(node, dfgNode, cfg);
     return cfg;
 }
 
@@ -444,6 +526,23 @@ std::map<int, CfgData> Configuration::getIobCfgData(IOBNode* node){
         // CfgData useEnCfg(useEnCfgLen);
         // useEnCfg.data.push_back((uint32_t)useEn); 
         // cfg[useEnCfgLoc.low] = useEnCfg;
+    }
+    if(dfgNode->hasImm() && !node->cfgIdMap.count("UseImm")){
+        throw std::runtime_error(
+            "mapped IOB does not expose coarse immediate configuration");
+    }
+    if(node->cfgIdMap.count("UseImm")){
+        int useImmId = node->cfgIdMap["UseImm"];
+        int immOperandId = node->cfgIdMap["ImmOperand"];
+        int immValueId = node->cfgIdMap["ImmValue"];
+        addCfgData(
+            cfg, node->configInfo(useImmId), (uint32_t)dfgNode->hasImm());
+        addCfgData(
+            cfg, node->configInfo(immOperandId),
+            (uint32_t)(dfgNode->hasImm() ? dfgNode->immIdx() : 0));
+        addCfgData(
+            cfg, node->configInfo(immValueId),
+            (uint64_t)(dfgNode->hasImm() ? dfgNode->imm() : 0));
     }
     if(op != "INPUT"){ // only INPUT node donot use Mux     
         int rduId;

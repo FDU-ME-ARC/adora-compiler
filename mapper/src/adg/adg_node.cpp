@@ -20,13 +20,13 @@ void ADGNode::addConfigInfo(int id, CfgDataLoc subModuleCfg){
 
 
 void ADGNode::printADGNode(){
-    printGraphNode();
-    std::cout << "cfgBlkIdx: " << _cfgBlkIdx << std::endl;
+    // printGraphNode();
+    // std::cout << "cfgBlkIdx: " << _cfgBlkIdx << std::endl;
 }
 
 
 void ADGNode::print(){
-    printADGNode();
+    // printADGNode();
 }
 
 
@@ -54,6 +54,27 @@ bool FUNode::opCapable(std::string op){
 void FUNode::setNumOperands(int numOperands){ 
     _numOperands = numOperands; 
     _operandInputs.resize(numOperands);
+}
+
+int FUNode::numOperands(int bitWidth){
+    auto it = _numOperandsByWidth.find(bitWidth);
+    return it == _numOperandsByWidth.end() ? 0 : it->second;
+}
+
+void FUNode::setNumOperands(int bitWidth, int numOperands){
+    _numOperandsByWidth[bitWidth] = numOperands;
+    _operandInputsByWidth[bitWidth].resize(numOperands);
+    addBitWidth(bitWidth);
+}
+
+int FUNode::maxDelay(int bitWidth){
+    auto it = _maxDelayByWidth.find(bitWidth);
+    return it == _maxDelayByWidth.end() ? 0 : it->second;
+}
+
+void FUNode::setMaxDelay(int bitWidth, int maxDelay){
+    _maxDelayByWidth[bitWidth] = maxDelay;
+    addBitWidth(bitWidth);
 }
 
 // get input ports connected to this operand
@@ -97,29 +118,60 @@ int FUNode::getOperandIdx(int inputIdx){
     return -1;
 }
 
+const std::set<int>& FUNode::operandInputs(int bitWidth, int operandIdx){
+    static const std::set<int> empty;
+    auto it = _operandInputsByWidth.find(bitWidth);
+    if(it == _operandInputsByWidth.end() || operandIdx < 0 ||
+       operandIdx >= static_cast<int>(it->second.size())) return empty;
+    return it->second[operandIdx];
+}
+
+void FUNode::addOperandInput(int bitWidth, int operandIdx, int inputIdx){
+    auto it = _operandInputsByWidth.find(bitWidth);
+    assert(it != _operandInputsByWidth.end());
+    assert(operandIdx >= 0 && operandIdx < static_cast<int>(it->second.size()));
+    it->second[operandIdx].emplace(inputIdx);
+}
+
+void FUNode::setOperandInputs(int bitWidth, int operandIdx, const std::set<int>& inputIdxs){
+    auto it = _operandInputsByWidth.find(bitWidth);
+    assert(it != _operandInputsByWidth.end());
+    assert(operandIdx >= 0 && operandIdx < static_cast<int>(it->second.size()));
+    it->second[operandIdx] = inputIdxs;
+}
+
+int FUNode::getOperandIdx(int bitWidth, int inputIdx){
+    auto it = _operandInputsByWidth.find(bitWidth);
+    if(it == _operandInputsByWidth.end()) return -1;
+    for(int i = 0; i < static_cast<int>(it->second.size()); ++i){
+        if(it->second[i].count(inputIdx)) return i;
+    }
+    return -1;
+}
+
 
 void FUNode::printFU(){
-    printADGNode();
-    std::cout << "operations: ";
-    for(auto& elem : _operations){
-        std::cout << elem << ", ";        
-    }
-    std::cout << "\nmaxDelay: " << _maxDelay << std::endl;
-    std::cout << "numOperands: " << _numOperands << std::endl;
-    std::cout << "operandInputs: " << std::endl;
-    int i = 0;
-    for(auto& elem : _operandInputs){
-        std::cout << i++ << ": ";
-        for(auto in : elem){
-            std::cout << in << " ";
-        }
-        std::cout << std::endl;
-    }
-    std::cout << "cfgIdMap: ";
-    for(auto& elem : cfgIdMap){
-        std::cout << elem.first << ", " << elem.second << "; ";      
-    }
-    std::cout << std::endl;
+    // printADGNode();
+    // std::cout << "operations: ";
+    // for(auto& elem : _operations){
+    //     std::cout << elem << ", ";        
+    // }
+    // std::cout << "\nmaxDelay: " << _maxDelay << std::endl;
+    // std::cout << "numOperands: " << _numOperands << std::endl;
+    // std::cout << "operandInputs: " << std::endl;
+    // int i = 0;
+    // for(auto& elem : _operandInputs){
+    //     std::cout << i++ << ": ";
+    //     for(auto in : elem){
+    //         std::cout << in << " ";
+    //     }
+    //     std::cout << std::endl;
+    // }
+    // std::cout << "cfgIdMap: ";
+    // for(auto& elem : cfgIdMap){
+    //     std::cout << elem.first << ", " << elem.second << "; ";      
+    // }
+    // std::cout << std::endl;
 }
 
 void FUNode::print(){
@@ -133,8 +185,15 @@ void FUNode::print(){
 // ===================================================
 
 void GPENode::print(){
-    printFU();
-    std::cout << "numRfReg: " << _numRfReg << std::endl;
+    // printFU();
+    // std::cout << "numRfReg: " << _numRfReg << std::endl;
+}
+
+int GPENode::getOperandIdxLUT(int lutOperandIdx){
+    int fineOperands = numOperands(1);
+    return fineOperands > _numInputLUT
+        ? lutOperandIdx + fineOperands - _numInputLUT
+        : lutOperandIdx;
 }
 
 
@@ -143,8 +202,8 @@ void GPENode::print(){
 // ===================================================
 
 void IOBNode::print(){
-    printFU();
-    std::cout << "index: " << _index << std::endl;
+    // printFU();
+    // std::cout << "index: " << _index << std::endl;
     // std::cout << "iocCfgIdMap: ";
     // for(auto& elem : cfgIdMap){
     //     std::cout << elem.first << ", " << elem.second << "; ";      
@@ -215,21 +274,21 @@ bool GIBNode::isInOutConnected(int inPort, int outPort){
 
 
 void GIBNode::print(){
-    printADGNode();
-    std::cout << "trackReged: " << _trackReged << std::endl;
-    std::cout << "outReged: " << std::endl;
-    for(auto& elem : _outReged){
-        std::cout << elem.first << ": " << elem.second << std::endl;
-    }
-    std::cout << "out2ins: " << std::endl;
-    for(auto& elem : _out2ins){
-        for(auto sec : elem.second)
-            std::cout << elem.first << ", " << sec << std::endl;
-    }
-    std::cout << "in2outs: " << std::endl;
-    for(auto& elem : _in2outs){
-        for(auto sec : elem.second)
-            std::cout << elem.first << ", " << sec << std::endl;
-    }
+    // printADGNode();
+    // std::cout << "trackReged: " << _trackReged << std::endl;
+    // std::cout << "outReged: " << std::endl;
+    // for(auto& elem : _outReged){
+    //     std::cout << elem.first << ": " << elem.second << std::endl;
+    // }
+    // std::cout << "out2ins: " << std::endl;
+    // for(auto& elem : _out2ins){
+    //     for(auto sec : elem.second)
+    //         std::cout << elem.first << ", " << sec << std::endl;
+    // }
+    // std::cout << "in2outs: " << std::endl;
+    // for(auto& elem : _in2outs){
+    //     for(auto sec : elem.second)
+    //         std::cout << elem.first << ", " << sec << std::endl;
+    // }
 }
 

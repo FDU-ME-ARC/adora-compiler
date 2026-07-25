@@ -162,11 +162,35 @@ std::map<int, CfgData> Configuration::getIobPingpongCfgData(IOBNode* node, bool 
         // useEnCfg.data.push_back((uint32_t)useEn); 
         // cfg[useEnCfgLoc.low] = useEnCfg;
     }
+    if(node->cfgIdMap.count("UsePredicate")){
+        int usePredicate = op == "CINPUT" || op == "COUTPUT" ||
+                           op == "CLOAD" || op == "CSTORE";
+        int usePredicateId = node->cfgIdMap["UsePredicate"];
+        addCfgData(cfg, node->configInfo(usePredicateId), (uint32_t)usePredicate);
+    }
+    if(dfgNode->hasImm() && !node->cfgIdMap.count("UseImm")){
+        throw std::runtime_error(
+            "mapped IOB does not expose coarse immediate configuration");
+    }
+    if(node->cfgIdMap.count("UseImm")){
+        int useImmId = node->cfgIdMap["UseImm"];
+        int immOperandId = node->cfgIdMap["ImmOperand"];
+        int immValueId = node->cfgIdMap["ImmValue"];
+        addCfgData(
+            cfg, node->configInfo(useImmId), (uint32_t)dfgNode->hasImm());
+        addCfgData(
+            cfg, node->configInfo(immOperandId),
+            (uint32_t)(dfgNode->hasImm() ? dfgNode->immIdx() : 0));
+        addCfgData(
+            cfg, node->configInfo(immValueId),
+            (uint64_t)(dfgNode->hasImm() ? dfgNode->imm() : 0));
+    }
     if(op != "INPUT"){ // only INPUT node donot use Mux     
         int rduId;
         std::map<int, int> delayUsed;
         for(auto& elem : dfgNode->inputEdges()){
             int eid = elem.second;
+            if(_mapping->getDFG()->edge(eid)->bitWidth() != node->bitWidth()) continue;
             // auto edge = dfg->edge(eid);
             // std::cout << "eid: " << eid << ", " << dfg->node(edge->srcId())->name() << " -> " << dfg->node(edge->dstId())->name() << std::endl;
             auto& edgeAttr = _mapping->dfgEdgeAttr(eid);
@@ -206,6 +230,7 @@ std::map<int, CfgData> Configuration::getIobPingpongCfgData(IOBNode* node, bool 
         }
     }
     // dumpCfgData(std::cout);
+    addFineGrainedFuCfgData(node, dfgNode, cfg);
     return cfg;
 }
 

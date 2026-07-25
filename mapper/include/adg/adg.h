@@ -10,17 +10,20 @@
 class ADG : public Graph
 {
 private:
-    int _numGpeNodes;
-    int _numIobNodes;
-    int _cfgDataWidth;
-    int _cfgAddrWidth;
-    int _cfgBlkOffset;
-    int _cfgSpadDataWidth; // data width of the config spad
+    int _numGpeNodes = 0;
+    int _numIobNodes = 0;
+    int _cfgDataWidth = 32;
+    int _cfgAddrWidth = 0;
+    int _cfgBlkOffset = 0;
+    int _cfgSpadDataWidth = 0; // data width of the config spad
+    int _maxLUTInput = 0;
+    int _fgCfgBaseBlock = -1;
+    int _fgCfgBlockCount = 0;
     // int _loadLatency;
     // int _storeLatency;
-    int _cfgSpadSize; // size of scratchpad for config
-    int _iobAgNestLevels; // AG nested levels in IOB
-    int _iobSpadBankSize; // size of each scratchpad bank for IOB
+    int _cfgSpadSize = 0; // size of scratchpad for config
+    int _iobAgNestLevels = 0; // AG nested levels in IOB
+    int _iobSpadBankSize = 0; // size of each scratchpad bank for IOB
     std::map<int, std::vector<int>> _iobToSpadBanks; // the scratchpad banks connected to each IOB, <iob-index, <banks>>
     std::vector<uint64_t> _cfgBits;
 
@@ -48,6 +51,12 @@ public:
     void setCfgBlkOffset(int cfgBlkOffset){ _cfgBlkOffset = cfgBlkOffset; }
     int cfgSpadDataWidth(){ return _cfgSpadDataWidth; }
     void setCfgSpadDataWidth(int cfgSpadDataWidth){ _cfgSpadDataWidth = cfgSpadDataWidth; }
+    int maxLUTInput(){ return _maxLUTInput; }
+    void setMaxLUTInput(int value){ _maxLUTInput = value; }
+    int fgCfgBaseBlock(){ return _fgCfgBaseBlock; }
+    void setFgCfgBaseBlock(int value){ _fgCfgBaseBlock = value; }
+    int fgCfgBlockCount(){ return _fgCfgBlockCount; }
+    void setFgCfgBlockCount(int value){ _fgCfgBlockCount = value; }
     // int loadLatency(){ return _loadLatency; }
     // void setLoadLatency(int lat){ _loadLatency = lat; }
     // int storeLatency(){ return _storeLatency; }

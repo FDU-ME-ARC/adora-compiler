@@ -56,6 +56,7 @@ public:
     // modify: if the DFG is a modified one
     void setDFG(DFG* dfg, bool modify = false);
     DFG* getDFG(){ return _dfg; }
+    Mapping* getMapping(){ return _mapping; }
     // set modified DFG and delete the old one
     void setDfgModified(DFG* dfg);
     // if DFG is inserted passthrough nodes 

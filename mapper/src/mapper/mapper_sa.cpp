@@ -103,6 +103,13 @@ int MapperSA::pnrSync(float T0, int maxItersPerTemp, int maxItersNoImprv, bool m
     int res = 1;
     ADG* adg = _mapping->getADG();
     while(!pnrSyncSameDfg(T0, maxItersPerTemp, maxItersNoImprv)){
+
+        if(runningTimeMS() > getTimeOut()){
+        res = 0;
+        break;
+        }
+
+
         int II = _mapping->II();
         if(_mapping->evaluateII() > II || (_mapping->backViolation() == 1)){
             spdlog::warn("Increase II from {0} to {1}", II, II+1); 
@@ -464,36 +471,55 @@ int MapperSA::tryCandidates(Mapping* mapping, DFGNode* dfgNode, const std::vecto
 // find candidates for one DFG node based on current mapping status
 std::vector<ADGNode*> MapperSA::findCandidates(Mapping* mapping, DFGNode* dfgNode, int range, int maxCandidates){
     std::vector<ADGNode*> candidates;
+    auto isCompatible = [dfgNode, mapping](ADGNode* adgNode){
+        if(adgNode->type() == "GIB") return false;
+        auto* fuNode = dynamic_cast<FUNode*>(adgNode);
+        if(!fuNode) return false;
+        if(dfgNode->operation() == "LUT"){
+            auto* gpeNode = dynamic_cast<GPENode*>(fuNode);
+            if(!gpeNode || !gpeNode->hasLUT() ||
+               gpeNode->numInputLUT() < dfgNode->LUTsize()){
+                return false;
+            }
+        }else if(!fuNode->opCapable(dfgNode->operation())){
+            return false;
+        }
+        for(int bitWidth : dfgNode->bitWidths()){
+            if(!fuNode->bitWidths().count(bitWidth)) return false;
+        }
+        // The exported fine-grained routing networks are tile-local.  A node
+        // connected to an already placed one-bit neighbour must therefore be
+        // placed in the same tile; coarse-network distance is not a valid
+        // ranking metric for this constraint.
+        DFG* dfg = mapping->getDFG();
+        for(auto& input : dfgNode->inputEdges(1)){
+            DFGEdge* edge = dfg->edge(input.second);
+            ADGNode* src = edge ? mapping->mappedNode(dfg->node(edge->srcId())) : nullptr;
+            if(src && src->tile() != adgNode->tile()) return false;
+        }
+        for(auto& output : dfgNode->outputEdges(1)){
+            for(int edgeId : output.second){
+                DFGEdge* edge = dfg->edge(edgeId);
+                ADGNode* dst = edge ? mapping->mappedNode(dfg->node(edge->dstId())) : nullptr;
+                if(dst && dst->tile() != adgNode->tile()) return false;
+            }
+        }
+        return true;
+    };
     if(!getPlacementConstraints(dfgNode).empty()){
         for(auto& adgNode : getPlacementConstraints(dfgNode)){
-            //select FU node
-            if(adgNode->type() == "GIB"){  
-                continue;
-            }
-            FUNode* fuNode = dynamic_cast<FUNode*>(adgNode);
-            // check if the DFG node operationis supported
-            if(!fuNode->opCapable(dfgNode->operation())){
-                continue;
-            }
-            if(!mapping->isMapped(fuNode)){
-                candidates.push_back(fuNode);
+            if(!isCompatible(adgNode)) continue;
+            if(!mapping->isMapped(adgNode)){
+                candidates.push_back(adgNode);
             }
         }
     }
     else{
         for(auto& elem : mapping->getADG()->nodes()){
             auto adgNode = elem.second;
-            //select FU node
-            if(adgNode->type() == "GIB"){  
-                continue;
-            }
-            FUNode* fuNode = dynamic_cast<FUNode*>(adgNode);
-            // check if the DFG node operationis supported
-            if(!fuNode->opCapable(dfgNode->operation())){
-                continue;
-            }
-            if(!mapping->isMapped(fuNode)){
-                candidates.push_back(fuNode);
+            if(!isCompatible(adgNode)) continue;
+            if(!mapping->isMapped(adgNode)){
+                candidates.push_back(adgNode);
             }
         }
     }

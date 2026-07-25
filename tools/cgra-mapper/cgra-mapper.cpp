@@ -37,15 +37,18 @@
 #include <getopt.h>
 #include <atomic>
 #include <algorithm>
+#include <filesystem>
 
 #include "op/operations.h"
 #include "ir/adg_ir.h"
 #include "ir/dfg_ir.h"
+#include "rtlil/yosys_frontend.h"
 #include "mapper/mapper_sa.h"
 #include "spdlog/spdlog.h"
 #include "spdlog/cfg/argv.h"
 #include "emit/EmitCGRACall.h"
 #include "emit/EmitPytest.h"
+#include "emit/EmitMixedJsonPytest.h"
 #include "emit/EmitVitisSDK.h"
 #include "tensorop/TensorOp.h"
 
@@ -107,6 +110,31 @@ int main(int argc, char **argv) {
     cl::Positional, 
     cl::desc("<input file>"), 
     cl::init("-"));
+
+  static cl::opt<std::string> dfgFilename(
+    "dfg-input",
+    cl::Optional,
+    cl::desc("Graphviz dot -Tjson DFG input; bypass the MLIR frontend"),
+    cl::value_desc("dfg json filename"),
+    cl::init(""));
+
+  static cl::opt<bool> noYosys(
+    "no-yosys",
+    cl::Optional,
+    cl::desc("Do not technology-map one-bit logic before mapping"),
+    cl::init(false));
+
+  static cl::opt<std::string> yosysExecutable(
+    "yosys-exe",
+    cl::Optional,
+    cl::desc("Yosys executable used for fine-grained LUT mapping"),
+    cl::init("yosys"));
+
+  static cl::opt<std::string> yosysCellLibrary(
+    "yosys-lib",
+    cl::Optional,
+    cl::desc("Optional coarse-cell black-box library (generated automatically when omitted)"),
+    cl::init(""));
 
   // static cl::opt<bool> dumpCallFunc(
   //   "dump-call-func",
@@ -222,6 +250,98 @@ int main(int argc, char **argv) {
   MLIRContext context(registry, MLIRContext::Threading::DISABLED);
   context.getOrLoadDialect(mlir::ADORA::ADORADialect::getDialectNamespace());
   context.getOrLoadDialect(mlir::ADORA::ADORATensor::ADORATensorDialect::getDialectNamespace());
+
+  // File-DFG entry used for FGRA compatibility and mixed-grained bring-up.
+  // It intentionally bypasses MLIR parsing and the MLIR-specific emitters.
+  if(!dfgFilename.empty()){
+    spdlog::set_level(verbose ? spdlog::level::debug : spdlog::level::off);
+    unsigned seed = time(0);
+    srand(seed);
+    std::cout << "Parse Operations: " << op_fn << std::endl;
+    Operations::Instance(op_fn);
+    std::cout << "Parse ADG: " << adg_fn << std::endl;
+    ADGIR adg_ir(adg_fn);
+    ADG* adg = adg_ir.getADG();
+    ADG* mappingAdg = specifictilenum < adg->tileNum()
+        ? adg->inducedSubgraphByFirstNTiles(specifictilenum)
+        : adg;
+
+    std::cout << "Parse DFG: " << dfgFilename << std::endl;
+    DFGIR dfg_ir(dfgFilename);
+    DFG* dfg = dfg_ir.getDFG();
+    std::cout << "DFG nodes: " << dfg->nodes().size()
+              << ", edges: " << dfg->edges().size()
+              << ", CG width: " << dfg->CGWidth()
+              << ", fine-grained: " << (dfg->hasFineGrained() ? "yes" : "no")
+              << std::endl;
+
+    std::filesystem::path inputPath(dfgFilename.getValue());
+    std::string resultDir = inputPath.stem().string() + "_map_result";
+    std::filesystem::create_directories(resultDir);
+    DFG* synthesizedDfg = nullptr;
+    bool needsYosys = false;
+    for(auto& nodeItem : dfg->nodes()){
+      DFGNode* node = nodeItem.second;
+      std::string op = node->operation();
+      needsYosys |= node->bitWidths().size() == 1 && node->bitWidths().count(1) &&
+                    (op == "AND" || op == "OR" || op == "XOR" ||
+                     op == "EQ" || op == "NOT");
+    }
+    if(needsYosys && noYosys){
+      std::cerr << "The DFG still contains one-bit Boolean operators. "
+                   "--no-yosys is only valid for an already LUT-mapped DFG."
+                << std::endl;
+      return 2;
+    }
+    if(needsYosys && !noYosys){
+      std::cout << "Run Yosys fine-grained technology mapping (LUT"
+                << adg->maxLUTInput() << ")" << std::endl;
+      try {
+        synthesizedDfg = YosysFrontend::synthesize(
+            dfg,
+            (std::filesystem::path(resultDir) / "yosys").string(),
+            inputPath.stem().string(),
+            adg->maxLUTInput(),
+            yosysExecutable,
+            yosysCellLibrary);
+        dfg = synthesizedDfg;
+        std::cout << "Yosys-mapped DFG nodes: " << dfg->nodes().size()
+                  << ", edges: " << dfg->edges().size() << std::endl;
+      } catch(const std::exception& error) {
+        std::cerr << "Yosys preprocessing failed: " << error.what() << std::endl;
+        return 2;
+      }
+    }
+    MapperSA mapper(mappingAdg, timeout_ms, max_iters, objOpt);
+    mapper.setDFG(dfg);
+    bool succeed = mapper.execute(/*dumpCallFunc=*/false, dumpMappedViz, resultDir);
+    if(succeed && emit_type == "pytest"){
+      try {
+        MixedJsonPytestEmitter emitter;
+        if(outputFilename == "-"){
+          emitter.emit(llvm::outs(), mapper.getMapping(), inputPath.stem().string());
+        }else{
+          std::error_code ec;
+          llvm::raw_fd_ostream outputFile(outputFilename, ec, sys::fs::FA_Write);
+          if(ec){
+            std::cerr << "Cannot open mixed-DFG pytest output "
+                      << outputFilename << ": " << ec.message() << std::endl;
+            delete synthesizedDfg;
+            return 2;
+          }
+          emitter.emit(outputFile, mapper.getMapping(), inputPath.stem().string());
+        }
+      } catch(const std::exception& error) {
+        std::cerr << "Mixed-DFG pytest emission failed: "
+                  << error.what() << std::endl;
+        delete synthesizedDfg;
+        return 2;
+      }
+    }
+    std::cout << (succeed ? "DFG mapping succeeded." : "DFG mapping failed.") << std::endl;
+    delete synthesizedDfg;
+    return succeed ? 0 : 1;
+  }
 
   if (inputFilename == "-" &&
       sys::Process::FileDescriptorIsDisplayed(fileno(stdin)))

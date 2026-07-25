@@ -12,6 +12,7 @@ ADGIR::ADGIR(std::string filename)
     json adgJson;
     ifs >> adgJson;
     _adg = parseADG(adgJson);
+    _adg->setMaxLUTInput(_maxLUTInput);
 }
 
 ADGIR::~ADGIR()
@@ -27,6 +28,15 @@ ADG* ADGIR::parseADG(json& adgJson){
     // std::cout << "Parse ADG..." << std::endl;
     ADG* adg = new ADG();
     adg->setBitWidth(adgJson["data_width"].get<int>());    
+    if(adgJson.contains("fine_grained") && adgJson["fine_grained"].get<bool>()){
+        adg->addBitWidth(1);
+    }
+    if(adgJson.contains("fg_cfg_base_block")){
+        adg->setFgCfgBaseBlock(adgJson["fg_cfg_base_block"].get<int>());
+    }
+    if(adgJson.contains("fg_cfg_block_count")){
+        adg->setFgCfgBlockCount(adgJson["fg_cfg_block_count"].get<int>());
+    }
     // adg->setNumInputs(adgJson["num_input"].get<int>());
     // adg->setNumOutputs(adgJson["num_output"].get<int>()); 
     if(adgJson.contains("cgra_tile_num")){
@@ -81,6 +91,9 @@ ADG* ADGIR::parseADG(json& adgJson){
         }
     }
     parseADGEdges(adg, adgJson["connections"]);
+    if(adgJson.contains("fine_grained_networks")){
+        parseFineGrainedNetworks(adg, adgJson["fine_grained_networks"]);
+    }
     postProcess(adg);  
     return adg; 
 }
@@ -95,13 +108,16 @@ ADGNode* ADGIR::parseADGNode(json& nodeJson){
     // }
     int nodeId = nodeJson["id"].get<int>();
     ADGNode* adg_node;
-    if(type == "GPE" || type == "GIB" || type == "IOB"){
+    if(type == "GPE" || type == "GIB" || type == "CGGIB" || type == "FGGIB" || type == "IOB"){
         auto& attrs = nodeJson["attributes"];
         if(type == "GPE" || type == "IOB"){
             FUNode *fu_node;
             if(type == "GPE"){
                 GPENode* node = new GPENode(nodeId);
-                // node->setNumRfReg(attrs["num_rf_reg"].get<int>());                
+                int numInputLUT = attrs.value("num_input_lut", 0);
+                node->setNumInputLUT(numInputLUT);
+                node->sethasLUT(numInputLUT > 0);
+                _maxLUTInput = std::max(_maxLUTInput, numInputLUT);
                 for(auto& op : attrs["operations"]){
                     node->addOperation(op.get<std::string>());
                 }
@@ -128,6 +144,17 @@ ADGNode* ADGIR::parseADGNode(json& nodeJson){
                 if(iocCfgId.contains("UseEn")){
                     node->cfgIdMap["UseEn"] = iocCfgId["UseEn"].get<int>();
                 }
+                if(iocCfgId.contains("UsePredicate")){
+                    node->cfgIdMap["UsePredicate"] = iocCfgId["UsePredicate"].get<int>();
+                }
+                if(attrs.contains("iob_immediate_cfg_id")){
+                    auto& immCfgId = attrs["iob_immediate_cfg_id"];
+                    node->cfgIdMap["UseImm"] = immCfgId["UseImm"].get<int>();
+                    node->cfgIdMap["ImmOperand"] =
+                        immCfgId["ImmOperand"].get<int>();
+                    node->cfgIdMap["ImmValue"] =
+                        immCfgId["ImmValue"].get<int>();
+                }
                 int agNestLevels = attrs["ag_nest_levels"].get<int>();
                 for(int i = 0; i < agNestLevels; i++){
                     std::string strideName = "Stride" + std::to_string(i);
@@ -153,18 +180,78 @@ ADGNode* ADGIR::parseADGNode(json& nodeJson){
                     node->addOperation("CLOAD");
                     node->addOperation("CSTORE");
                 }
+                if(iocCfgId.contains("UsePredicate")){
+                    node->addOperation("CINPUT");
+                    node->addOperation("COUTPUT");
+                    node->addOperation("CLOAD");
+                    node->addOperation("CSTORE");
+                }
                 fu_node = node;
             }
-            if(attrs.contains("max_delay")){
-                fu_node->setMaxDelay(attrs["max_delay"].get<int>());
-            }else{
-                fu_node->setMaxDelay(0);
+            int cgWidth = attrs.value("data_width", 32);
+            int cgMaxDelay = attrs.value("max_delay_cg", attrs.value("max_delay", 0));
+            int fgMaxDelay = attrs.value("max_delay_fg", cgMaxDelay);
+            int cgOperands = attrs.value("num_operand_cg", attrs.value("num_operands", 0));
+            int fgInputs = attrs.value("num_input_fg", 0);
+            int fgOperands = attrs.value("num_operand_fg", 0);
+            if(fgOperands == 0 && fgInputs > 0){
+                if(type == "GPE"){
+                    auto* gpe = dynamic_cast<GPENode*>(fu_node);
+                    fgOperands = std::max(2, gpe->numInputLUT());
+                }else{
+                    fgOperands = 1;
+                }
             }
-            fu_node->setNumOperands(attrs["num_operands"].get<int>());
+            fu_node->setMaxDelay(cgMaxDelay);
+            fu_node->setNumOperands(cgOperands);
+            fu_node->setMaxDelay(cgWidth, cgMaxDelay);
+            fu_node->setNumOperands(cgWidth, cgOperands);
+            fu_node->setBitWidth(cgWidth);
+            if(fgInputs > 0 || attrs.value("num_output_fg", 0) > 0){
+                fu_node->addBitWidth(1);
+                fu_node->setMaxDelay(1, fgMaxDelay);
+                fu_node->setNumOperands(1, fgOperands);
+                int fgInputPort = 0;
+                if(attrs.contains("num_input_per_fg")){
+                    int operand = 0;
+                    for(auto& countJson : attrs["num_input_per_fg"]){
+                        int count = countJson.get<int>();
+                        for(int i = 0; i < count; ++i){
+                            fu_node->addOperandInput(1, operand, fgInputPort++);
+                        }
+                        ++operand;
+                    }
+                }else if(fgOperands > 0){
+                    int inputsPerOperand = fgInputs / fgOperands;
+                    for(int operand = 0; operand < fgOperands; ++operand){
+                        for(int i = 0; i < inputsPerOperand; ++i){
+                            fu_node->addOperandInput(1, operand, fgInputPort++);
+                        }
+                    }
+                }
+            }
+            if(attrs.contains("fine_grained_configuration_ranges")){
+                auto& ranges = attrs["fine_grained_configuration_ranges"];
+                FineGrainedCfgInfo fgCfg;
+                fgCfg.delay.low = ranges.value("delay_low", -1);
+                fgCfg.delay.high = ranges.value("delay_high", -1);
+                fgCfg.mux.low = ranges.value("mux_low", -1);
+                fgCfg.mux.high = ranges.value("mux_high", -1);
+                fgCfg.lut.low = ranges.value("lut_low", -1);
+                fgCfg.lut.high = ranges.value("lut_high", -1);
+                if(ranges.contains("mux_widths")){
+                    for(auto& width : ranges["mux_widths"]){
+                        fgCfg.muxWidths.push_back(width.get<int>());
+                    }
+                }
+                fgCfg.valid = true;
+                fu_node->setFineGrainedCfg(fgCfg);
+            }
             adg_node = fu_node;
-        }else if(type == "GIB"){
+        }else if(type == "GIB" || type == "CGGIB" || type == "FGGIB"){
             GIBNode* node  = new GIBNode(nodeId);            
             adg_node = node;
+            adg_node->setBitWidth(attrs.value("data_width", 32));
         }
         // adg_node->setType(type);
         // adg_node->setBitWidth(bitWidth);
@@ -267,14 +354,129 @@ void ADGIR::parseADGEdges(ADG* adg, json& edgeJson){
         int dstId = edge[3].get<int>();
         // std::string dstType = edge[4].get<std::string>();
         int dstPort = edge[5].get<int>();
+        int bitWidth = edge.size() > 6 ? edge[6].get<int>() : adg->bitWidth();
         ADGEdge* adg_edge = new ADGEdge(srcId, dstId);
         adg_edge->setId(edgeId);
         adg_edge->setSrcId(srcId);
         adg_edge->setDstId(dstId);
         adg_edge->setSrcPortIdx(srcPort);
         adg_edge->setDstPortIdx(dstPort);
+        adg_edge->setBitWidth(bitWidth);
         adg->addEdge(edgeId, adg_edge);
     }
+}
+
+void ADGIR::parseFineGrainedNetworks(ADG* adg, json& networksJson){
+    if(networksJson.empty()) return;
+
+    int nextNodeId = 1;
+    int nextEdgeId = 0;
+    for(auto& elem : adg->nodes()) nextNodeId = std::max(nextNodeId, elem.first + 1);
+    for(auto& elem : adg->edges()) nextEdgeId = std::max(nextEdgeId, elem.first + 1);
+
+    std::map<int, std::vector<int>> tileGpes;
+    std::map<int, std::vector<std::pair<int, int>>> tileIobs;
+    for(auto& elem : adg->nodes()){
+        ADGNode* node = elem.second;
+        if(node->type() == "GPE"){
+            tileGpes[node->tile()].push_back(elem.first);
+        }else if(node->type() == "IOB"){
+            auto* iob = dynamic_cast<IOBNode*>(node);
+            tileIobs[node->tile()].push_back({iob->index(), elem.first});
+        }
+    }
+    for(auto& elem : tileGpes){
+        std::sort(elem.second.begin(), elem.second.end(), [adg](int lhs, int rhs){
+            ADGNode* a = adg->node(lhs);
+            ADGNode* b = adg->node(rhs);
+            return std::make_tuple(a->x(), a->y(), lhs) <
+                   std::make_tuple(b->x(), b->y(), rhs);
+        });
+    }
+    for(auto& elem : tileIobs) std::sort(elem.second.begin(), elem.second.end());
+
+    std::map<std::pair<int, int>, int> fgGibIds;
+    for(auto& networkItem : networksJson.items()){
+        int tile = std::stoi(networkItem.key());
+        json& network = networkItem.value();
+        if(!network.contains("gibs") || !network.contains("connections")){
+            std::cerr << "Warning: fine_grained_networks[" << tile
+                      << "] has no explicit connections; regenerate the ADG "
+                         "with the FG topology exporter." << std::endl;
+            continue;
+        }
+        for(auto& gibItem : network["gibs"].items()){
+            int localId = std::stoi(gibItem.key());
+            json wrapper = {
+                {"id", nextNodeId},
+                {"type", "GIB"},
+                {"attributes", gibItem.value()}
+            };
+            ADGNode* node = parseADGNode(wrapper);
+            node->setId(nextNodeId);
+            node->setName("FGGIB" + std::to_string(nextNodeId));
+            // Keep the legacy node type for existing AuFORA mapper paths; the
+            // one-bit edge/node width distinguishes this as an FGGIB.
+            node->setType("GIB");
+            node->setTile(tile);
+            auto& attrs = gibItem.value();
+            if(attrs.contains("x")) node->setX(attrs["x"].get<int>());
+            if(attrs.contains("y")) node->setY(attrs["y"].get<int>());
+            dynamic_cast<GIBNode*>(node)->setTrackReged(attrs.value("track_reged", false));
+            adg->addNode(nextNodeId, node);
+            fgGibIds[{tile, localId}] = nextNodeId++;
+        }
+    }
+
+    auto resolveNode = [&](int tile, const std::string& type, int localId) -> int {
+        if(type == "FGGIB"){
+            auto it = fgGibIds.find({tile, localId});
+            return it == fgGibIds.end() ? -1 : it->second;
+        }
+        if(type == "GPE"){
+            auto it = tileGpes.find(tile);
+            return it != tileGpes.end() && localId >= 0 &&
+                   localId < static_cast<int>(it->second.size())
+                ? it->second[localId] : -1;
+        }
+        if(type == "IOB"){
+            auto it = tileIobs.find(tile);
+            return it != tileIobs.end() && localId >= 0 &&
+                   localId < static_cast<int>(it->second.size())
+                ? it->second[localId].second : -1;
+        }
+        return -1;
+    };
+
+    for(auto& networkItem : networksJson.items()){
+        int tile = std::stoi(networkItem.key());
+        if(!networkItem.value().contains("connections")) continue;
+        json& connections = networkItem.value()["connections"];
+        for(auto& edgeItem : connections.items()){
+            auto& edge = edgeItem.value();
+            if(edge.size() != 7){
+                std::cerr << "Invalid FG edge in tile " << tile << std::endl;
+                exit(1);
+            }
+            std::string srcType = edge[0].get<std::string>();
+            int srcId = resolveNode(tile, srcType, edge[1].get<int>());
+            int srcPort = edge[2].get<int>();
+            std::string dstType = edge[3].get<std::string>();
+            int dstId = resolveNode(tile, dstType, edge[4].get<int>());
+            int dstPort = edge[5].get<int>();
+            int bitWidth = edge[6].get<int>();
+            if(srcId < 0 || dstId < 0 || bitWidth != 1){
+                std::cerr << "Cannot resolve FG edge " << edge.dump()
+                          << " in tile " << tile << std::endl;
+                exit(1);
+            }
+            ADGEdge* adgEdge = new ADGEdge(srcId, dstId);
+            adgEdge->setId(nextEdgeId);
+            adgEdge->setEdge(bitWidth, srcId, srcPort, dstId, dstPort);
+            adg->addEdge(nextEdgeId++, adgEdge);
+        }
+    }
+    adg->addBitWidth(1);
 }
 
 
@@ -295,6 +497,7 @@ void ADGIR::analyzeIntraConnect(GPENode* node){
         }
         // opeIdx is ALU operand index now
         node->addOperandInputs(opeIdx, elem.first);
+        node->addOperandInput(node->bitWidth(), opeIdx, elem.first);
     }
 }
 
@@ -316,6 +519,7 @@ void ADGIR::analyzeIntraConnect(IOBNode* node){
         }
         // opeIdx is ALU operand index now
         node->addOperandInputs(opeIdx, elem.first);
+        node->addOperandInput(node->bitWidth(), opeIdx, elem.first);
     }
 }
 

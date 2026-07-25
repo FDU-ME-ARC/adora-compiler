@@ -4,9 +4,9 @@ ADG::ADG(){}
 
 ADG::~ADG()
 {
-    std::cout << "delete adg" << std::endl;
-    std::cout << "numGpeNodes: " << _numGpeNodes << std::endl;
-    std::cout << "numIobNodes: " << _numIobNodes << std::endl;
+    // std::cout << "delete adg" << std::endl;
+    // std::cout << "numGpeNodes: " << _numGpeNodes << std::endl;
+    // std::cout << "numIobNodes: " << _numIobNodes << std::endl;
     for(auto& elem : _nodes){
         auto node = elem.second;
         node->print();
@@ -51,12 +51,15 @@ void ADG::addEdge(int id, ADGEdge* edge){
     int dstId = edge->dstId();
     int srcPort = edge->srcPortIdx();
     int dstPort = edge->dstPortIdx();
+    int bitWidth = edge->bitWidth();
+    addBitWidth(bitWidth);
     if(srcId == _id){ // source is input port
         addInput(srcPort, std::make_pair(dstId, dstPort));
     } else {
         ADGNode* src = node(srcId);
         assert(src);
         src->addOutput(srcPort, std::make_pair(dstId, dstPort));
+        src->addOutput(bitWidth, srcPort, std::make_pair(dstId, dstPort));
     }
     if(dstId == _id){ // destination is output port
         addOutput(dstPort, std::make_pair(srcId, srcPort));
@@ -64,6 +67,7 @@ void ADG::addEdge(int id, ADGEdge* edge){
         ADGNode* dst = node(dstId);
         assert(dst);
         dst->addInput(dstPort, std::make_pair(srcId, srcPort));
+        dst->addInput(bitWidth, dstPort, std::make_pair(srcId, srcPort));
     }
 }
 
@@ -86,11 +90,15 @@ ADG& ADG::operator=(const ADG& that){
     if(this == &that) return *this;
     this->_id = that._id;
     this->_bitWidth = that._bitWidth;
+    this->_bitWidths = that._bitWidths;
     this->_numGpeNodes = that._numGpeNodes;
     this->_numIobNodes = that._numIobNodes;
     this->_cfgDataWidth = that._cfgDataWidth;
     this->_cfgAddrWidth = that._cfgAddrWidth;
     this->_cfgBlkOffset = that._cfgBlkOffset;
+    this->_maxLUTInput = that._maxLUTInput;
+    this->_fgCfgBaseBlock = that._fgCfgBaseBlock;
+    this->_fgCfgBlockCount = that._fgCfgBlockCount;
     // this->_loadLatency = that._loadLatency;
     // this->_storeLatency = that._storeLatency;
     this->_cfgSpadSize = that._cfgSpadSize;
@@ -100,6 +108,8 @@ ADG& ADG::operator=(const ADG& that){
     this->_cfgBits = that._cfgBits;
     this->_inputs = that._inputs;
     this->_outputs = that._outputs;
+    this->_inputsByWidth = that._inputsByWidth;
+    this->_outputsByWidth = that._outputsByWidth;
     // this->_input_used = that._input_used;
     // this->_output_used = that._output_used;
     for(auto& elem : that._nodes){
@@ -130,8 +140,7 @@ ADGNode* subADGNodeClone(ADGNode* from) {
         auto bTo   = new GIBNode();
         auto bFrom = dynamic_cast<GIBNode*>(from);
         assert(bFrom);
-
-        bTo->setTrackReged(bFrom->trackReged());
+        *bTo = *bFrom;
 
         for (int o = 0; o < bFrom->numOutputs(); ++o) {
             bTo->setOutReged(o, bFrom->outReged(o));
@@ -151,7 +160,7 @@ ADGNode* subADGNodeClone(ADGNode* from) {
             auto gFrom = dynamic_cast<GPENode*>(from);
             GPENode* gTo = new GPENode();
             assert(gFrom && gTo);
-            gTo->setNumRfReg(gFrom->numRfReg());
+            *gTo = *gFrom;
 
             fTo = dynamic_cast<FUNode*>(gTo);
         }
@@ -161,7 +170,7 @@ ADGNode* subADGNodeClone(ADGNode* from) {
             auto iFrom = dynamic_cast<IOBNode*>(from);
             IOBNode* iTo = new IOBNode();
             assert(iFrom && iTo);
-            iTo->setIndex(iFrom->index());
+            *iTo = *iFrom;
 
             fTo = dynamic_cast<FUNode*>(iTo);
         }
@@ -210,7 +219,8 @@ ADGNode* subADGNodeClone(ADGNode* from) {
 
 void subADGEdgeCopy(ADGEdge* from, ADGEdge* to){
     to->setId(from->id());
-    to->setEdge(from->srcId(), from->srcPortIdx(), from->dstId(), from->dstPortIdx());
+    to->setEdge(from->bitWidth(), from->srcId(), from->srcPortIdx(),
+                from->dstId(), from->dstPortIdx());
 }
 
 ADG* ADG::inducedSubgraphByFirstNTiles(size_t n) {
@@ -225,6 +235,7 @@ ADG* ADG::inducedSubgraphByFirstNTiles(size_t n) {
 
     auto sub = new ADG();
     sub->_bitWidth       = this->_bitWidth;
+    sub->_bitWidths      = this->_bitWidths;
     sub->_cfgDataWidth   = this->_cfgDataWidth;
     sub->_cfgAddrWidth   = this->_cfgAddrWidth;
     sub->_cfgBlkOffset   = this->_cfgBlkOffset;
@@ -235,6 +246,9 @@ ADG* ADG::inducedSubgraphByFirstNTiles(size_t n) {
     sub->_iobToSpadBanks = this->_iobToSpadBanks;
     sub->_cfgBits        = this->_cfgBits;
     sub->_tileNum        = n;
+    sub->_maxLUTInput    = this->_maxLUTInput;
+    sub->_fgCfgBaseBlock = this->_fgCfgBaseBlock;
+    sub->_fgCfgBlockCount= this->_fgCfgBlockCount;
 
 
     std::unordered_set<int> keep; 
@@ -293,6 +307,19 @@ ADG* ADG::inducedSubgraphByFirstNTiles(size_t n) {
                 if(keep.count(out_node.first) == 0){
                     // do not belong to needed tile
                     nd->delOutput(out_idx, /*std::pair*/out_node);
+                }
+            }
+        }
+        for(int bitWidth : nd->bitWidths()){
+            auto widthInputs = nd->inputs(bitWidth);
+            for(auto pair : widthInputs){
+                if(!keep.count(pair.second.first)) nd->delInput(bitWidth, pair.first);
+            }
+            auto widthOutputs = nd->outputs(bitWidth);
+            for(auto pair : widthOutputs){
+                for(auto outNode : pair.second){
+                    if(!keep.count(outNode.first))
+                        nd->delOutput(bitWidth, pair.first, outNode);
                 }
             }
         }

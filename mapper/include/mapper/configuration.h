@@ -123,6 +123,8 @@ public:
     std::map<int, CfgData> getGpeCfgData(GPENode* node);
     // get config data for GIB, return<LSB-location, CfgData>
     std::map<int, CfgData> getGibCfgData(GIBNode* node);
+    // append the direct 1-bit delay/mux/LUT fields exported by AuFORA
+    void addFineGrainedFuCfgData(FUNode* node, DFGNode* dfgNode, std::map<int, CfgData>& cfg);
     // get config data for IOB, return<LSB-location, CfgData>
     std::map<int, CfgData> getIobCfgData(IOBNode* node);
     // get config data for ADG node

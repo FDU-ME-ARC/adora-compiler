@@ -45,14 +45,19 @@ void DFG::addEdge(DFGEdge* edge){
     int dstId = edge->dstId();
     int srcPort = edge->srcPortIdx();
     int dstPort = edge->dstPortIdx();
+    int bitWidth = edge->bitWidth();
+    addBitWidth(bitWidth);
     if(srcId == _id){ // source is input port
         addInput(srcPort, std::make_pair(dstId, dstPort));
         addInputEdge(srcPort, id);
     } else {
         DFGNode* src = node(srcId);
         assert(src);
+        src->addBitWidth(bitWidth);
         src->addOutput(srcPort, std::make_pair(dstId, dstPort));
         src->addOutputEdge(srcPort, id);
+        src->addOutput(bitWidth, srcPort, std::make_pair(dstId, dstPort));
+        src->addOutputEdge(bitWidth, srcPort, id);
     }
     if(dstId == _id){ // destination is output port
         addOutput(dstPort, std::make_pair(srcId, srcPort));
@@ -60,8 +65,11 @@ void DFG::addEdge(DFGEdge* edge){
     } else{        
         DFGNode* dst = node(dstId);
         assert(dst);
+        dst->addBitWidth(bitWidth);
         dst->addInput(dstPort, std::make_pair(srcId, srcPort));
         dst->addInputEdge(dstPort, id);
+        dst->addInput(bitWidth, dstPort, std::make_pair(srcId, srcPort));
+        dst->addInputEdge(bitWidth, dstPort, id);
     }
 }
 
@@ -94,6 +102,8 @@ void DFG::delEdge(int id){
         DFGNode* srcNode = node(srcId);       
         srcNode->delOutputEdge(srcPortIdx, id);
         srcNode->delOutput(srcPortIdx, std::make_pair(dstId, dstPortIdx));
+        srcNode->delOutputEdgefg(e->bitWidth(), srcPortIdx, id);
+        srcNode->delOutput(e->bitWidth(), srcPortIdx, std::make_pair(dstId, dstPortIdx));
     }
     if(dstId == _id){
         delOutputEdge(dstPortIdx);
@@ -102,6 +112,8 @@ void DFG::delEdge(int id){
         DFGNode* dstNode = node(dstId);
         dstNode->delInputEdge(dstPortIdx);
         dstNode->delInput(dstPortIdx);
+        dstNode->delInputEdge(e->bitWidth(), dstPortIdx);
+        dstNode->delInput(e->bitWidth(), dstPortIdx);
     }
     _edges.erase(id);
     delete e;
@@ -115,7 +127,8 @@ std::set<int> DFG::getInNodes(){
         DFGNode *ioNode = _nodes[ioNodeId];
         std::string opName = ioNode->operation();
         // if((opName == "INPUT") || (opName == "LOAD" && (ioNode->inputs().size() == 0))){
-        if((opName == "INPUT") || (opName == "LOAD") || (opName == "CLOAD")){
+        if((opName == "INPUT") || (opName == "CINPUT") ||
+           (opName == "LOAD") || (opName == "CLOAD")){
             inNodes.insert(ioNodeId);
         }
     }
@@ -128,7 +141,8 @@ std::set<int> DFG::getOutNodes(){
     for(int ioNodeId : _ioNodes){
         DFGNode *ioNode = _nodes[ioNodeId];
         std::string opName = ioNode->operation();
-        if((opName == "OUTPUT") || (opName == "STORE") || (opName == "CSTORE")){
+        if((opName == "OUTPUT") || (opName == "COUTPUT") ||
+           (opName == "STORE") || (opName == "CSTORE")){
             outNodes.insert(ioNodeId);
         }
     }
@@ -181,6 +195,7 @@ DFG& DFG::operator=(const DFG& that){
     if(this == &that) return *this;
     this->_id = that._id;
     this->_bitWidth = that._bitWidth;
+    this->_bitWidths = that._bitWidths;
     this->_inputNames = that._inputNames;
     this->_outputNames = that._outputNames;
     this->_inputs = that._inputs;
@@ -188,6 +203,9 @@ DFG& DFG::operator=(const DFG& that){
     this->_inputEdges = that._inputEdges;
     this->_outputEdges = that._outputEdges;
     this->_ioNodes = that._ioNodes;
+    this->_lutNodes = that._lutNodes;
+    this->_hasFineGrained = that._hasFineGrained;
+    this->_cgWidth = that._cgWidth;
     this->_topoNodes = that._topoNodes;
     this->VariableConfigNodes = that.VariableConfigNodes;
     this->_backEdges = that._backEdges;

@@ -7,15 +7,21 @@
 
 // set operation, latency, commutative according to operation name
 void DFGNode::setOperation(std::string operation){ 
-    if(!Operations::opCapable(operation)){
+    bool fineIoOp = operation == "CINPUT" || operation == "COUTPUT";
+    if(!Operations::opCapable(operation) && operation != "LUT" && !fineIoOp){
         std::cout << operation << " is not supported!" << std::endl;
         exit(1);
     }
-    // TODO: add bitwidth check
     _operation = operation; 
-    setOpLatency(Operations::latency(operation));
-    setCommutative(Operations::isCommutative(operation));
-    setAccumulative(Operations::isAccumulative(operation));
+    if(operation == "LUT" || fineIoOp){
+        setOpLatency(1);
+        setCommutative(false);
+        setAccumulative(false);
+    }else{
+        setOpLatency(Operations::latency(operation));
+        setCommutative(Operations::isCommutative(operation));
+        setAccumulative(Operations::isAccumulative(operation));
+    }
 
     // if(operation == "ISEL" || operation == "CISEL"){
     //     setInitSelection(true);
@@ -26,6 +32,12 @@ void DFGNode::setOperation(std::string operation){
 
 int DFGNode::numInputs(){ 
     return (hasImm())? (_inputs.size()+1) : _inputs.size(); 
+}
+
+
+int DFGNode::numInputs(int bits) {
+    return GraphNode::numInputs(bits)
+        + ((hasImm() && bitWidth() == bits) ? 1 : 0);
 }
 
 void DFGNode::printDfgNode(){
