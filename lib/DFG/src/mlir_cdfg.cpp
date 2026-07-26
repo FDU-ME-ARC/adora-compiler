@@ -228,7 +228,7 @@ void LLVMCDFG::CDFGtoDOT(std::string fileName) {
             ofs << "\", acc_first=1";
         } 
         else if(node->hasConst()){
-            node->operation()->dump();
+            if(node->operation()) node->operation()->dump(); // [hjy] guard null
             // std::cout << node->constValHex_str() << std::endl;
             ofs << ", value=\"0x";
             ofs << node->constValHex_str() << "\"";

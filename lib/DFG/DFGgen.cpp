@@ -1373,6 +1373,10 @@ bool isInteger(const std::string& str) {
   std::string funcname (const int& LHS, const std::string& RHS){  \
     return funcname(std::to_string(LHS), RHS); }
 
+
+
+// trisolv
+
 ////
 /// Multiply two parameters from affine for op
 ///   three situations:
@@ -1380,16 +1384,25 @@ bool isInteger(const std::string& str) {
 ///   2 arg * int = arg
 ///   3 arg * arg = arg
 std::string MulAsStr (const std::string& LHS, const std::string& RHS){
-  if(isInteger(LHS) && isInteger(RHS)){
+  bool lhsInt = isInteger(LHS);
+  bool rhsInt = isInteger(RHS);
+  if(lhsInt && rhsInt){
     return std::to_string(std::stoi(LHS) * std::stoi(RHS));
   }
+  else if(lhsInt && !rhsInt){
+    int lval = std::stoi(LHS);
+    if(lval == 0) return "0";
+    if(lval == 1) return RHS;
+    return LHS + "*" + RHS;
+  }
+  else if(!lhsInt && rhsInt){
+    int rval = std::stoi(RHS);
+    if(rval == 0) return "0";
+    if(rval == 1) return LHS;
+    return LHS + "*" + RHS;
+  }
   else{
-    if(std::stoi(LHS) == 1)
-      return RHS;
-    else if(std::stoi(RHS) == 1)
-      return LHS;
-    else
-      return LHS + "*" + RHS;
+    return LHS + "*" + RHS;
   }
 }
 Define_Polymorphism_Of_StringIntArith(MulAsStr)
@@ -1401,43 +1414,58 @@ Define_Polymorphism_Of_StringIntArith(MulAsStr)
 ///   2 arg + int = arg
 ///   3 arg + arg = arg
 std::string AddAsStr (const std::string& LHS, const std::string& RHS){
-  if(isInteger(LHS) && isInteger(RHS)){
+  bool lhsInt = isInteger(LHS);
+  bool rhsInt = isInteger(RHS);
+  if(lhsInt && rhsInt){
     return std::to_string(std::stoi(LHS) + std::stoi(RHS));
   }
+  else if(lhsInt && !rhsInt){
+    int lval = std::stoi(LHS);
+    if(lval == 0) return RHS;
+    return LHS + "+" + RHS;
+  }
+  else if(!lhsInt && rhsInt){
+    int rval = std::stoi(RHS);
+    if(rval == 0) return LHS;
+    return LHS + "+" + RHS;
+  }
   else{
-    if(std::stoi(LHS) == 0)
-      return RHS;
-    else if(std::stoi(RHS) == 0)
-      return LHS;
-    else
-      return LHS + "+" + RHS;
+    return LHS + "+" + RHS;
   }
 }
 Define_Polymorphism_Of_StringIntArith(AddAsStr)
 
 ////
-/// Add two parameters from affine for op
+/// Subtract two parameters from affine for op
 ///   four situations:
 ///   1 int - int = int
 ///   2 arg - int = arg
 ///   3 int - arg = arg
 ///   4 arg - arg = arg
 std::string SubAsStr (const std::string& LHS, const std::string& RHS){
-  if(isInteger(LHS) && isInteger(RHS)){
+  bool lhsInt = isInteger(LHS);
+  bool rhsInt = isInteger(RHS);
+  if(lhsInt && rhsInt){
     return std::to_string(std::stoi(LHS) - std::stoi(RHS));
   }
+  else if(lhsInt && !rhsInt){
+    int lval = std::stoi(LHS);
+    if(lval == 0) return "-(" + RHS + ")";
+    return LHS + "-(" + RHS + ")";
+  }
+  else if(!lhsInt && rhsInt){
+    int rval = std::stoi(RHS);
+    if(rval == 0) return LHS;
+    return LHS + "-" + RHS;
+  }
   else{
-    if(std::stoi(LHS) == 0)
-      return "-" + RHS;
-    else if(std::stoi(RHS) == 0)
-      return LHS;
-    else
-      return LHS + "-" + RHS;
+    if(LHS == RHS) return "0";
+    return LHS + "-(" + RHS + ")";
   }
 }
 Define_Polymorphism_Of_StringIntArith(SubAsStr)
 
-
+// trisolv
 
 
 //// Get the outter level of one operation in one kernel
@@ -1467,6 +1495,11 @@ std::string getOuterLoopTotalTripcountUntilKernel(mlir::Operation* op){
 ///     for nonconstant for op, we can only handle following 2 types:
 ///       affine.for %arg1 = 0 to %arg2
 ///       affine.for %arg1 = 0 to 2000 - %arg2
+
+
+
+// trisolv
+
 static std::string getTripCountAsStr(affine::AffineForOp forop){
   OpBuilder b(forop);
   int tripcount = getConstantTripCount(forop).value_or(0); 
@@ -1492,33 +1525,26 @@ static std::string getTripCountAsStr(affine::AffineForOp forop){
       case AffineExprKind::DimId : 
       case AffineExprKind::SymbolId : {
         mlir::Value arg_v = operands[0]; ///operands.size() == 1
-        // assert(!IsInKernel(arg_v.getOperation()));
-        
-        Location loc = _kernel_toDFG->getLoc(); ////// Fix this
-        // loc.dump();
-        // LLVM_DEBUG(_kernel_toDFG->dump(););
-        b.setInsertionPointToStart(_kernel_toDFG->getOperation()->getBlock());
+
+        // 修复：将 VARCFG 节点插入到 forop 所在的 block 中，forop 之前
+        // 而不是插入到 KernelOp 外面，避免 dominance 违反
+        // arg_v 是 forop 所在 block 的某个 block argument（外层 for 的 IV）
+        // forop 本身就在 arg_v 的 dominate 范围内，所以在 forop 前插入是安全的
+        b.setInsertionPoint(forop); // 在 forop 之前插入，位于同一 block
+        Location loc = forop.getLoc();
+
         arith::ConstantOp cst = b.create<arith::ConstantOp>(loc, b.getIntegerAttr(b.getIndexType(), 0));
         arith::AddIOp newadd = b.create<arith::AddIOp>(loc, arg_v, cst);
-        LLVM_DEBUG(newadd.getOperation()->getBlock()->dump(););
 
-        newadd.getOperation()->moveBefore(_kernel_toDFG->getOperation());
-        LLVM_DEBUG(newadd.getOperation()->getBlock()->dump(););
-        
-        cst.getOperation()->moveBefore(newadd.getOperation());
         LLVM_DEBUG(newadd.getOperation()->getBlock()->dump(););
 
         //// denote the name of the generated operation
         StringAttr strattr = StringAttr::get(newadd.getOperation()->getContext(),
                                               "VARCFG_" + std::to_string(_variable_config_cnt));
         newadd.getOperation()->setAttr("VAR_CONFIG", strattr);
-        // _variable_config_cnt++;
-        LLVM_DEBUG(forop.dump(););
         
         return "VARCFG_" + std::to_string(_variable_config_cnt++);
       }
-
-      // case AffineExprKind::Add : ///TODO: FIX THIS
 
       default :{
         assert(false && "Unsupported trip count!");
@@ -1531,6 +1557,10 @@ static std::string getTripCountAsStr(affine::AffineForOp forop){
   }
 }
 
+// trisolv
+
+
+// trisolv
 
 ////
 // get linear access from load or store op
@@ -1540,42 +1570,40 @@ template <typename LoadOrStoreOp>
   Operation::operand_range loadIndices = lsop.getIndices();
   ::mlir::AffineMap map = lsop.getAffineMapAttr().getValue();
   MemRefType memRefType = lsop.getMemref().getType().template cast<MemRefType>();
+  ArrayRef<int64_t> Shape = memRefType.getShape();
+  int64_t ElementBytes = memRefType.getElementTypeBitWidth()/8;
+
   // map.dump();
-  SmallDenseMap<AffineForOp, SmallVector<int64_t>> ForToRanks;
-  // SmallVector<AffineForOp> forVec;
+  // For each for-loop, accumulate contributions across all ranks
+  // ForToStride[forop] = total stride in bytes when this loop var increments by 1
+  SmallDenseMap<AffineForOp, int64_t> ForToStride;
+
   for(unsigned d = 0; d < loadIndices.size(); d++){
     if(!loadIndices[d].isa<BlockArgument>() && isa<arith::ConstantOp>(loadIndices[d].getDefiningOp())){
       /// Constant index bias doesn't contribute to linear access.
       continue;
     }
-    // llvm::errs() << "[test] loadIndice[i]: " ; loadIndices[d].dump() ; 
     AffineForOp forop = dyn_cast<AffineForOp>(loadIndices[d].getParentBlock()->getParentOp());
     assert(isa<AffineForOp>(forop) && "AffineLoadOp or StoreOp 's parent op should be AffineForOp!");
-    // AffineForOp parentFor = dyn_cast<AffineForOp>(*forop);
-    // llvm::errs() << "[test] forop: " ; forop.dump();
 
-    /// For every dim of the affine map,  add the corresponding Multiplicator to ForToRanks
+    /// For every rank of the affine map, accumulate stride contribution
     for(unsigned r = 0; r < map.getResults().size(); r++ ){
       AffineExpr expr = map.getResult(r);
-      // expr.dump();
       if(expr.isFunctionOfDim(d)){
-        // find the corresponding rank
-        ForToRanks[forop].push_back(ADORA::MultiplicatorOfDim(expr, d));
-        // llvm::errs() << d <<": " << ADORA::MultiplicatorOfDim(expr, d) << ",";
-      } 
-      else {
-        ForToRanks[forop].push_back(0);
+        int64_t multiplicator = ADORA::MultiplicatorOfDim(expr, d);
+        // Compute row-major stride for rank r
+        int64_t rank_stride = multiplicator;
+        for (unsigned i = r + 1; i < Shape.size(); i++){
+          rank_stride *= Shape[i];
+        }
+        // step contribution: step * rank_stride * ElementBytes
+        ForToStride[forop] += forop.getStep().getSExtValue() * rank_stride * ElementBytes;
       }
     }
-    // assert(findElement(forVec, forop)==-1 && "For op should only be in the indices for one time.");
-    // forVec.push_back(forop);
   }
-  // forVec = SortForVec_InToOutLevels(forVec);
 
   mlir::SmallVector<std::pair<std::string, std::string>> LinearAccess;
   for(unsigned level = 0; level < For_loop_level.size(); level ++){
-    /// For a new recursion of this level,
-    ///   elements_each_step = RM * STEP * RANK_SHAPE
     affine::AffineForOp forop;
     for(auto loop_level : For_loop_level){
       if(loop_level.second == level){
@@ -1584,84 +1612,49 @@ template <typename LoadOrStoreOp>
         break;
       }
     }
-    SmallVector<int64_t> RankMultiplicators = ForToRanks[forop];
-    int64_t ElementBytes = memRefType.getElementTypeBitWidth()/8;
-    // std::string tripcount = getConstantTripCount(forop).value_or(0); 
+
     std::string tripcount = getTripCountAsStr(forop);
-    // LLVM_DEBUG(_kernel_toDFG->dump(););
-    // total_count_str = MulAsStr(total_count_str, tripcount);
-    // LLVM_DEBUG(_kernel_toDFG->dump(););
 
-    int64_t elements_each_step = 0;
-    bool RM_flag = false;
-    for(unsigned r = 0; r < RankMultiplicators.size(); r++){
-      if(RankMultiplicators[r] == 0){
-        continue;
-      }
-      else{
-        assert(RM_flag == false && "This for loop should only be corresponding to one rank.");
-        elements_each_step = forop.getStep().getSExtValue() * RankMultiplicators[r];
-        ArrayRef<int64_t>  Shape = memRefType.getShape();
-        for (unsigned i = r + 1; i < Shape.size(); i++){
-          elements_each_step *= Shape[i];
-        }
-        RM_flag = true;
-      }
-    }
+    // elements_each_step is the byte stride when this loop advances by one step
+    int64_t elements_each_step = ForToStride.count(forop) ? ForToStride[forop] : 0;
 
-    /// For the last old recursion ,
-    //   end_position = lb0 + (tripcount0-1) * step0 * rm0 * rank0 + lb1 + (tripcount1-1) * step1 * rm1 * rank1 + ...
+    /// Compute end_position: accumulated byte offset after all inner loops finish
     std::string end_position = "0";
     for(unsigned innerlevel = 0; innerlevel < level; innerlevel++){
       affine::AffineForOp innerforop;
       for(auto loop_level : For_loop_level){
         if(loop_level.second == innerlevel){
-          assert(isa<affine::AffineForOp>(loop_level.first) && "We can only handle affine for now.");
+          assert(isa<affine::AffineForOp>(loop_level.first));
           innerforop = dyn_cast<affine::AffineForOp>(loop_level.first);
           break;
         }
       }
-      // int64_t innertripcount = getConstantTripCount(innerforop).value_or(0); 
       std::string innertripcount = getTripCountAsStr(innerforop);
-      SmallVector<int64_t> innerRMs = ForToRanks[innerforop];
-      
-      // get lower bound of this dim
+
+      // get lower bound
       assert(innerforop.getLowerBoundMap().getResults().size() == 1);
       AffineExpr lbExpr = innerforop.getLowerBoundMap().getResult(0);
       assert(lbExpr.getKind() == AffineExprKind::Constant);
       int64_t lb = lbExpr.dyn_cast<AffineConstantExpr>().getValue();
-      // llvm::errs()<< "lbmap: " << lbmap << "\n"; 
 
-      bool innerRM_flag = false;
-      int64_t elements_each_step_inner = 0;
-      for(unsigned r = 0; r < innerRMs.size(); r++){
-        if(innerRMs[r] == 0){
-          continue;
-        }
-        else{
-          assert(innerRM_flag == false && "This for loop should only be corresponding to one rank.");
-          elements_each_step_inner = innerforop.getStep().getSExtValue() * innerRMs[r];
-          ArrayRef<int64_t>  Shape = memRefType.getShape();
-          for (unsigned i = r + 1; i < Shape.size(); i++){
-            // llvm::errs()<<"Shape[i]: " << Shape[i] << "\n";
-            elements_each_step_inner *= Shape[i];
-          }
-          innerRM_flag = true;
-        }
-      }
-      //// end_position += lb + elements_each_step_inner * innertripcount;
-      end_position = AddAsStr(end_position, 
-                      AddAsStr(lb, 
-                        MulAsStr(elements_each_step_inner, 
-                          SubAsStr(innertripcount, 1)))); 
-      // llvm::errs()<<"end_position: " << end_position 
-      //           << ", elements_each_step_inner:" << elements_each_step_inner
-      //           << ", lb:" << lb
-      //           <<"\n";
+      int64_t elements_each_step_inner = ForToStride.count(innerforop) ? ForToStride[innerforop] : 0;
+
+      // end_position += lb * ElementBytes_per_step + elements_each_step_inner * (innertripcount - 1)
+      // Note: lb offset is already in bytes in elements_each_step_inner
+      // Actually lb contributes: lb * (elements_each_step_inner / step)
+      // But lb is in loop index units, and elements_each_step_inner already includes step.
+      // So lb offset in bytes = lb * (elements_each_step_inner / innerforop.getStep())
+      int64_t step = innerforop.getStep().getSExtValue();
+      int64_t stride_per_index = (step != 0) ? (elements_each_step_inner / step) : 0;
+      int64_t lb_offset = lb * stride_per_index;
+
+      end_position = AddAsStr(end_position,
+                      AddAsStr(lb_offset,
+                        MulAsStr(elements_each_step_inner,
+                          SubAsStr(innertripcount, 1))));
     }
 
-    /// addr for new recursion
-    std::string addrstep = MulAsStr(SubAsStr(elements_each_step, end_position), ElementBytes);
+    std::string addrstep = SubAsStr(std::to_string(elements_each_step), end_position);
     LLVM_DEBUG(llvm::errs()<<"addrstep: " << addrstep
                 << ", ElementBytes:" << ElementBytes
                 << ", elements_each_step:" << elements_each_step
@@ -1670,12 +1663,12 @@ template <typename LoadOrStoreOp>
 
     LinearAccess.push_back(std::pair(addrstep, tripcount));
   }
-  
+
   LLVM_DEBUG(llvm::errs()<<"\n" << LinearAccessToStr(LinearAccess)<<"\n";);
   return LinearAccess;
 }
 
-
+// trisolv
 
 ////
 // Get accumulation information from a yield-for-yield-for.... chain in a recursive method.
@@ -2017,34 +2010,189 @@ uint32_t ConstantOpToHex(arith::ConstantOp constop){
 //////////////////////////////
 // Handle self-cycles in CDFG. Extract Acc operators and ISEL operators.
 //////////////////////////////
+// static void HandleSelfCycle(LLVMCDFG* CDFG, bool verbose = true){
+//   auto nodes = CDFG->nodes();
+//   SmallVector<LLVMCDFGNode*> YieldsToBeDelete;
+//   for(auto &elem : nodes){
+//     // int node_id = elem.first;
+//     LLVMCDFGNode* node = elem.second;
+//     if(node->getTypeName() == "yield"){
+//       /// Get the operand of yield op.
+//       AffineYieldOp yieldop = dyn_cast<AffineYieldOp>(node->operation());
+//       if(yieldop.getOperands().size() != 0){
+//         // yieldop.dump();
+//         mlir::Operation* forop = node->operation()->getParentOp();
+//         // forop->dump();
+
+//         LLVMCDFGNode* fornode = CDFG->node(forop);
+//         // fornode->addOutputNode(node, /*isBackEdge=*/false);
+//         // node->addInputNode(fornode,  /*operand_idx=*/ 1, /*isBackEdge=*/false);
+
+//         fornode->addInputNode(node,  /*edgeidx=*/0, /*isBackEdge=*/true);
+//         node->addOutputNode(fornode, /*isBackEdge=*/true);
+//         CDFG->addEdge(node, fornode); //To fix: Edge Type
+//         // for(auto &elem : CDFG->edges()){
+//         //   auto edge = elem.second;
+//         //   auto srcName = edge->src()->getName();
+//         //   auto dstName = edge->dst()->getName();
+//         //   llvm::errs() << srcName << " -> " << dstName << "\n";
+//         // }
+//         // CDFG->delNode();
+//         YieldsToBeDelete.push_back(node);
+//       } 
+//       else{
+//         CDFG->delNode(node);
+//       }
+//     }
+//   }
+//   if(verbose) { CDFG->CDFGtoDOT(CDFG->name_str()+"_1_CDFG.dot");}
+  
+//   nodes = CDFG->nodes();
+//   for(auto &elem : nodes){
+//     // int node_id = elem.first;
+//     LLVMCDFGNode* node = elem.second;
+//     if(node->getTypeName() == "yield"){
+//       /// Get the operand of yield op.
+//       AffineYieldOp yieldop = dyn_cast<AffineYieldOp>(node->operation());
+//       AffineForOp forop = dyn_cast<AffineForOp>(yieldop.getOperation()->getParentOp());
+//       assert(yieldop.getOperands().size() == forop.getOperands().size());
+
+//       for(int OperandIdx = 0; OperandIdx < yieldop.getOperands().size(); OperandIdx++){
+//         LLVMCDFGNode* ComputeNode;
+//         // mlir::Value init_mlir_value;
+//         std::string accTypeName;
+//         uint32_t init_value;
+//         // if(isa<BlockArgument>(yieldop.getOperand(OperandIdx))){
+//         //   /// Create a ISEL node
+//         //   init_mlir_value = getInitialValueFromYieldIndex(yieldop, OperandIdx); 
+//         //   // ComputeNode = CDFG->addNode("ISEL");
+//         //   accTypeName = "ISEL";
+//         // }
+//         // else{
+//           mlir::Operation* ComputeOp = yieldop.getOperand(OperandIdx).getDefiningOp();
+//           if(verbose) llvm::errs() << "[debug]ComputeOp: ";
+//           if(verbose) ComputeOp->dump();
+//           ComputeNode = CDFG->node(ComputeOp);
+//           mlir::Value init_mlir_value = getInitialValueFromYieldIndex(yieldop, OperandIdx);   
+//           if(verbose) llvm::errs() << "[debug]init_mlir_value: " << init_mlir_value << "\n";
+          
+//           /// set acc type
+//           if(ComputeNode->getTypeName() == "ADD" 
+//             && checkAccumulationChain<arith::AddIOp>(forop, OperandIdx)){
+//             /// ACC
+//             accTypeName = "ACC";
+//           }
+//           else if(ComputeNode->getTypeName() == "FADD"
+//             && checkAccumulationChain<arith::AddFOp>(forop, OperandIdx)){
+//             /// FACC32
+//             accTypeName = "FACC";
+//           }
+//           // else if(ComputeNode->getTypeName() == "MUL"
+//           //   && checkAccumulationChain<arith::MulIOp>(forop, OperandIdx)){
+//           //   /// MACC
+//           //   accTypeName = "MACC";
+//           // }
+//           // else if(ComputeNode->getTypeName() == "FMUL"
+//           //   && checkAccumulationChain<arith::MulFOp>(forop, OperandIdx)){
+//           //  /// FMACC32
+//           //   accTypeName = "FMACC";
+//           // }
+//           else if(ComputeNode->getTypeName() == "SEL"
+//             && checkAccumulationChain<arith::SelectOp>(forop, OperandIdx)){
+//             /// SEL can be extracted as accumulation mode as well.
+//             accTypeName = "ISEL";
+//           }
+//           else if(!checkAccumulationChain<ADORA::IselOp>(forop, OperandIdx)
+//           // && ComputeNode->getTypeName() == "ISEL"
+//           ){
+//             accTypeName = "ISEL";
+//             //// connect init node ------> ISEL <- - - - - - loop carry node 
+//             ///////// Get ISEL node
+//             SmallVector<mlir::Operation*> uses = getAllUsesInBlock(forop.getRegionIterArgs()[OperandIdx], forop.getBody());
+//             assert(uses.size()==1);
+//             if(!isa<ADORA::IselOp>(uses[0])){
+//               continue;
+//             }
+//             // assert(isa<ADORA::IselOp>(uses[0]));
+//             ADORA::IselOp iselop = dyn_cast<ADORA::IselOp>(uses[0]);
+//             auto IselNode = CDFG->node(iselop.getOperation());
+
+//             ///////// Connect init node 
+//             // auto InitNode = CDFG->node(init_mlir_value.getDefiningOp());
+//             // bool isBackEdge = false;
+//             // InitNode->addOutputNode(IselNode, isBackEdge);
+//             // IselNode->addInputNode(InitNode, /*edgeidx=*/1, isBackEdge);
+//             // CDFG->addEdge(InitNode, IselNode); //To fix: Edge Type
+
+//             ///////// connect loop carry node 
+//             bool isBackEdge = true;
+//             ComputeNode->addOutputNode(IselNode, isBackEdge);
+//             IselNode->addInputNode(ComputeNode, /*edgeidx=*/0, isBackEdge);
+//             LLVMCDFGEdge* backedge = CDFG->addEdge(ComputeNode, IselNode); //To fix: Edge Type
+//             backedge->setIterDist(1);
+
+//             // DependInfo DI;
+//             // DI.type = 
+//             // continue;
+//             ComputeNode = IselNode;
+//           }
+//           else{
+//             continue;
+//           }
+//         // }
+
+//         //// init value
+//         if(isa<arith::ConstantOp>(init_mlir_value.getDefiningOp())){
+//           arith::ConstantOp constop = dyn_cast<arith::ConstantOp>(init_mlir_value.getDefiningOp());
+//           init_value = ConstantOpToHex(constop);
+//         }
+//         else if(isa<affine::AffineLoadOp>(init_mlir_value.getDefiningOp())){
+//           init_value = 0x00000000;
+//         } else{
+//           /// TODO: What to do if it is not constant op
+//           assert(0);
+//         }
+
+//         SmallVector<std::string, 3> count_interval_repeat = {"1", "1", "1"};///count/interval/repeat
+//         count_interval_repeat = GetACCInfoFromYieldNode(node, count_interval_repeat);
+//         ComputeNode->setTypeName(accTypeName);
+//         ComputeNode->setAcc();
+//         ComputeNode->setACCinit(std::to_string(init_value));
+//         ComputeNode->setACCcount(count_interval_repeat[0]);
+//         ComputeNode->setACCinterval(count_interval_repeat[1]);
+//         ComputeNode->setACCrepeat(count_interval_repeat[2]);    
+
+//         //// Change operand idx of acc op
+//         SetACCOperandIdx(ComputeNode);
+//       }
+//     }
+//   }
+  
+
+//   /// Thirdly, delete yield-for nodes
+//   // unsigned k = 55;
+//   for(auto ynode : YieldsToBeDelete){
+//     DeleteYield(CDFG, ynode);
+//   }
+// }
+
+// trisolv
+
 static void HandleSelfCycle(LLVMCDFG* CDFG, bool verbose = true){
   auto nodes = CDFG->nodes();
   SmallVector<LLVMCDFGNode*> YieldsToBeDelete;
   for(auto &elem : nodes){
-    // int node_id = elem.first;
     LLVMCDFGNode* node = elem.second;
     if(node->getTypeName() == "yield"){
-      /// Get the operand of yield op.
       AffineYieldOp yieldop = dyn_cast<AffineYieldOp>(node->operation());
       if(yieldop.getOperands().size() != 0){
-        // yieldop.dump();
         mlir::Operation* forop = node->operation()->getParentOp();
-        // forop->dump();
 
         LLVMCDFGNode* fornode = CDFG->node(forop);
-        // fornode->addOutputNode(node, /*isBackEdge=*/false);
-        // node->addInputNode(fornode,  /*operand_idx=*/ 1, /*isBackEdge=*/false);
 
         fornode->addInputNode(node,  /*edgeidx=*/0, /*isBackEdge=*/true);
         node->addOutputNode(fornode, /*isBackEdge=*/true);
-        CDFG->addEdge(node, fornode); //To fix: Edge Type
-        // for(auto &elem : CDFG->edges()){
-        //   auto edge = elem.second;
-        //   auto srcName = edge->src()->getName();
-        //   auto dstName = edge->dst()->getName();
-        //   llvm::errs() << srcName << " -> " << dstName << "\n";
-        // }
-        // CDFG->delNode();
+        CDFG->addEdge(node, fornode);
         YieldsToBeDelete.push_back(node);
       } 
       else{
@@ -2056,97 +2204,75 @@ static void HandleSelfCycle(LLVMCDFG* CDFG, bool verbose = true){
   
   nodes = CDFG->nodes();
   for(auto &elem : nodes){
-    // int node_id = elem.first;
     LLVMCDFGNode* node = elem.second;
     if(node->getTypeName() == "yield"){
-      /// Get the operand of yield op.
       AffineYieldOp yieldop = dyn_cast<AffineYieldOp>(node->operation());
       AffineForOp forop = dyn_cast<AffineForOp>(yieldop.getOperation()->getParentOp());
-      assert(yieldop.getOperands().size() == forop.getOperands().size());
+      
+      // 修复断言：应比较 yieldop 操作数数量与 forop 的 iter_args 数量，
+      // 而不是 forop.getOperands()（后者包含上下界操作数）
+      assert(yieldop.getOperands().size() == forop.getNumRegionIterArgs() &&
+             "yield operand count must match forop iter_args count");
 
       for(int OperandIdx = 0; OperandIdx < yieldop.getOperands().size(); OperandIdx++){
         LLVMCDFGNode* ComputeNode;
-        // mlir::Value init_mlir_value;
         std::string accTypeName;
         uint32_t init_value;
-        // if(isa<BlockArgument>(yieldop.getOperand(OperandIdx))){
-        //   /// Create a ISEL node
-        //   init_mlir_value = getInitialValueFromYieldIndex(yieldop, OperandIdx); 
-        //   // ComputeNode = CDFG->addNode("ISEL");
-        //   accTypeName = "ISEL";
-        // }
-        // else{
-          mlir::Operation* ComputeOp = yieldop.getOperand(OperandIdx).getDefiningOp();
-          if(verbose) llvm::errs() << "[debug]ComputeOp: ";
-          if(verbose) ComputeOp->dump();
-          ComputeNode = CDFG->node(ComputeOp);
-          mlir::Value init_mlir_value = getInitialValueFromYieldIndex(yieldop, OperandIdx);   
-          if(verbose) llvm::errs() << "[debug]init_mlir_value: " << init_mlir_value << "\n";
-          
-          /// set acc type
-          if(ComputeNode->getTypeName() == "ADD" 
-            && checkAccumulationChain<arith::AddIOp>(forop, OperandIdx)){
-            /// ACC
-            accTypeName = "ACC";
-          }
-          else if(ComputeNode->getTypeName() == "FADD"
-            && checkAccumulationChain<arith::AddFOp>(forop, OperandIdx)){
-            /// FACC32
-            accTypeName = "FACC";
-          }
-          // else if(ComputeNode->getTypeName() == "MUL"
-          //   && checkAccumulationChain<arith::MulIOp>(forop, OperandIdx)){
-          //   /// MACC
-          //   accTypeName = "MACC";
-          // }
-          // else if(ComputeNode->getTypeName() == "FMUL"
-          //   && checkAccumulationChain<arith::MulFOp>(forop, OperandIdx)){
-          //  /// FMACC32
-          //   accTypeName = "FMACC";
-          // }
-          else if(ComputeNode->getTypeName() == "SEL"
-            && checkAccumulationChain<arith::SelectOp>(forop, OperandIdx)){
-            /// SEL can be extracted as accumulation mode as well.
-            accTypeName = "ISEL";
-          }
-          else if(!checkAccumulationChain<ADORA::IselOp>(forop, OperandIdx)
-          // && ComputeNode->getTypeName() == "ISEL"
-          ){
-            accTypeName = "ISEL";
-            //// connect init node ------> ISEL <- - - - - - loop carry node 
-            ///////// Get ISEL node
-            SmallVector<mlir::Operation*> uses = getAllUsesInBlock(forop.getRegionIterArgs()[OperandIdx], forop.getBody());
-            assert(uses.size()==1);
-            if(!isa<ADORA::IselOp>(uses[0])){
-              continue;
-            }
-            // assert(isa<ADORA::IselOp>(uses[0]));
-            ADORA::IselOp iselop = dyn_cast<ADORA::IselOp>(uses[0]);
-            auto IselNode = CDFG->node(iselop.getOperation());
 
-            ///////// Connect init node 
-            // auto InitNode = CDFG->node(init_mlir_value.getDefiningOp());
-            // bool isBackEdge = false;
-            // InitNode->addOutputNode(IselNode, isBackEdge);
-            // IselNode->addInputNode(InitNode, /*edgeidx=*/1, isBackEdge);
-            // CDFG->addEdge(InitNode, IselNode); //To fix: Edge Type
+        mlir::Operation* ComputeOp = yieldop.getOperand(OperandIdx).getDefiningOp();
+        if(verbose) llvm::errs() << "[debug]ComputeOp: ";
+        if(verbose) ComputeOp->dump();
+        ComputeNode = CDFG->node(ComputeOp);
+        mlir::Value init_mlir_value = getInitialValueFromYieldIndex(yieldop, OperandIdx);   
+        if(verbose) llvm::errs() << "[debug]init_mlir_value: " << init_mlir_value << "\n";
+        
+        if(ComputeNode->getTypeName() == "ADD" 
+          && checkAccumulationChain<arith::AddIOp>(forop, OperandIdx)){
+          accTypeName = "ACC";
+        }
+        else if(ComputeNode->getTypeName() == "FADD"
+          && checkAccumulationChain<arith::AddFOp>(forop, OperandIdx)){
+          accTypeName = "FACC";
+        }
+        else if(ComputeNode->getTypeName() == "SEL"
+          && checkAccumulationChain<arith::SelectOp>(forop, OperandIdx)){
+          accTypeName = "ISEL";
+        }
+        else if(ComputeNode->getTypeName() == "SUB"
+          && checkAccumulationChain<arith::SubIOp>(forop, OperandIdx)){
+          /// SACC (subtraction accumulation)
+          accTypeName = "SACC";
+        }
+        else if(ComputeNode->getTypeName() == "FSUB"
+          && checkAccumulationChain<arith::SubFOp>(forop, OperandIdx)){
+          accTypeName = "FSACC";
+        }
+        else if(!checkAccumulationChain<ADORA::IselOp>(forop, OperandIdx)){
+          // ISEL 模式：loop-carried value 通过 ADORA.isel 传递
+          accTypeName = "ISEL";
 
-            ///////// connect loop carry node 
-            bool isBackEdge = true;
-            ComputeNode->addOutputNode(IselNode, isBackEdge);
-            IselNode->addInputNode(ComputeNode, /*edgeidx=*/0, isBackEdge);
-            LLVMCDFGEdge* backedge = CDFG->addEdge(ComputeNode, IselNode); //To fix: Edge Type
-            backedge->setIterDist(1);
-
-            // DependInfo DI;
-            // DI.type = 
-            // continue;
-            ComputeNode = IselNode;
-          }
-          else{
+          // 找到 isel 节点
+          SmallVector<mlir::Operation*> uses = getAllUsesInBlock(
+              forop.getRegionIterArgs()[OperandIdx], forop.getBody());
+          assert(uses.size() == 1);
+          if(!isa<ADORA::IselOp>(uses[0])){
             continue;
           }
-        // }
+          ADORA::IselOp iselop = dyn_cast<ADORA::IselOp>(uses[0]);
+          auto IselNode = CDFG->node(iselop.getOperation());
+
+          // 连接 loop carry 反向边：ComputeNode -> IselNode (back edge)
+          bool isBackEdge = true;
+          ComputeNode->addOutputNode(IselNode, isBackEdge);
+          IselNode->addInputNode(ComputeNode, /*edgeidx=*/0, isBackEdge);
+          LLVMCDFGEdge* backedge = CDFG->addEdge(ComputeNode, IselNode);
+          backedge->setIterDist(1);
+
+          ComputeNode = IselNode;
+        }
+        else{
+          continue;
+        }
 
         //// init value
         if(isa<arith::ConstantOp>(init_mlir_value.getDefiningOp())){
@@ -2156,11 +2282,10 @@ static void HandleSelfCycle(LLVMCDFG* CDFG, bool verbose = true){
         else if(isa<affine::AffineLoadOp>(init_mlir_value.getDefiningOp())){
           init_value = 0x00000000;
         } else{
-          /// TODO: What to do if it is not constant op
           assert(0);
         }
 
-        SmallVector<std::string, 3> count_interval_repeat = {"1", "1", "1"};///count/interval/repeat
+        SmallVector<std::string, 3> count_interval_repeat = {"1", "1", "1"};
         count_interval_repeat = GetACCInfoFromYieldNode(node, count_interval_repeat);
         ComputeNode->setTypeName(accTypeName);
         ComputeNode->setAcc();
@@ -2169,17 +2294,96 @@ static void HandleSelfCycle(LLVMCDFG* CDFG, bool verbose = true){
         ComputeNode->setACCinterval(count_interval_repeat[1]);
         ComputeNode->setACCrepeat(count_interval_repeat[2]);    
 
-        //// Change operand idx of acc op
         SetACCOperandIdx(ComputeNode);
       }
     }
   }
-  
 
-  /// Thirdly, delete yield-for nodes
-  // unsigned k = 55;
   for(auto ynode : YieldsToBeDelete){
     DeleteYield(CDFG, ynode);
+  }
+}
+
+// trisolv
+
+// [hjy] For memref.load/store, the CGRA addresses in bytes, but MLIR indices are
+// element-based. Insert a MUL node (index * sizeof(element)) on each address
+// input edge of every memref load/store node so the DFG carries byte offsets.
+static void InsertMemrefByteOffsetMul(LLVMCDFG* CDFG, bool verbose = false){
+  auto nodes = CDFG->nodes();
+  for(auto &elem : nodes){
+    LLVMCDFGNode* node = elem.second;
+    std::string tn = node->getTypeName();
+    if(tn != "load" && tn != "store")
+      continue;
+
+    mlir::Operation* op = node->operation();
+    if(op == nullptr) continue;
+
+    // Determine element byte width from the memref type
+    int64_t elementBytes = 0;
+    if(tn == "load"){
+      memref::LoadOp loadOp = dyn_cast<memref::LoadOp>(op);
+      if(!loadOp) continue;
+      elementBytes = loadOp.getMemRefType().getElementTypeBitWidth() / 8;
+    } else {
+      memref::StoreOp storeOp = dyn_cast<memref::StoreOp>(op);
+      if(!storeOp) continue;
+      elementBytes = storeOp.getMemRefType().getElementTypeBitWidth() / 8;
+    }
+
+    if(elementBytes <= 1) continue;
+
+    // Collect address-input edges: for load, CDFG operand 0 is the address;
+    // for store, CDFG operand 2 is the address (Op=0 is data, Op=1 is unused/memref)
+    // Actually in the current CDFG scheme, load has address at operand 0,
+    // store has address at operand 2 (see edgeidx logic in edge building).
+    // We look at all input nodes and pick the ones that serve as address inputs.
+    // For load: the address input is at inputIdx == 0
+    // For store: the address input is at inputIdx == 2
+    int addrIdx = (tn == "load") ? 0 : 2;
+
+    LLVMCDFGNode* addrInputNode = node->getInputPort(addrIdx);
+    if(addrInputNode == nullptr) continue;
+
+    bool isBack = node->isInputBackEdge(addrInputNode);
+
+    // Remove old edge: addrInputNode -> node
+    int oldIdx = node->delInputNode(addrInputNode);
+    addrInputNode->delOutputNode(node);
+    LLVMCDFGEdge* oldEdge = CDFG->edge(addrInputNode, node);
+    if(oldEdge) CDFG->delEdge(oldEdge);
+
+    LLVMCDFGNode* constNode = CDFG->addNode("CONST");
+    constNode->setTypeName("CONST");
+    constNode->setLoopLevel(node->getLoopLevel());
+    int32_t eb32 = (int32_t)elementBytes;
+    std::vector<unsigned char> hex = DataBitCastToHex(eb32);
+    constNode->setConstValHex(hex);
+    constNode->setDataBits(32);
+
+    LLVMCDFGNode* mulNode = CDFG->addNode("MUL");
+    mulNode->setTypeName("MUL");
+    mulNode->setLoopLevel(node->getLoopLevel());
+
+    // Wire: addrInputNode -> MUL (operand 0)
+    addrInputNode->addOutputNode(mulNode, isBack);
+    mulNode->addInputNode(addrInputNode, 0, isBack);
+    CDFG->addEdge(addrInputNode, mulNode);
+
+    // Wire: CONST -> MUL (operand 1)
+    constNode->addOutputNode(mulNode, false);
+    mulNode->addInputNode(constNode, 1, false);
+    CDFG->addEdge(constNode, mulNode);
+
+    // Wire: MUL -> load/store (at the original address operand index)
+    mulNode->addOutputNode(node, false);
+    node->addInputNode(mulNode, addrIdx, false);
+    CDFG->addEdge(mulNode, node);
+
+    if(verbose)
+      llvm::errs() << "[hjy] Inserted MUL*" << elementBytes
+                    << " for byte-offset on " << tn << " node\n";
   }
 }
 
@@ -2190,6 +2394,7 @@ static bool HandleCompareNode(LLVMCDFG* CDFG, bool verbose = true){
     // int node_id = elem.first;
     LLVMCDFGNode* node = elem.second;
     mlir::Operation* op = node->operation();
+    if(op == nullptr) continue; // [hjy] skip synthetic nodes (no MLIR op)
     // if(verbose) {op->dump();}
     if(   op->getName().getStringRef() == "arith.cmpi"
         ||op->getName().getStringRef() == "arith.cmpf"){
@@ -2217,6 +2422,7 @@ void HandleVectorExtractNode(LLVMCDFG* CDFG, bool verbose = true){
   for(auto &elem : nodes){
     LLVMCDFGNode* node = elem.second;
     mlir::Operation* op = node->operation();
+    if(op == nullptr) continue; // [hjy] skip synthetic nodes
     if(op->getName().getStringRef() == "vector.extract"){
       mlir::vector::ExtractOp extractop = dyn_cast<mlir::vector::ExtractOp>(op);
       mlir::Operation* vecop = extractop.getVector().getDefiningOp();
@@ -2269,6 +2475,7 @@ void FixLinearAccessOfVectorNode(LLVMCDFG* CDFG, bool verbose = true){
   for(auto &elem : nodes){
     LLVMCDFGNode* node = elem.second;
     mlir::Operation* op = node->operation();
+    if(op == nullptr) continue; // [hjy] skip synthetic nodes
     if(op->getName().getStringRef() == "affine.vector_store"){
       mlir::affine::AffineVectorStoreOp vecstoreop = dyn_cast<mlir::affine::AffineVectorStoreOp>(op);
       mlir::Operation* vecop = vecstoreop.getValue().getDefiningOp();
@@ -2683,6 +2890,16 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
         else
           AddedOps.push_back(op);
 
+        // fix-trisolv: skip VAR_CONFIG op, which is used to configure the kernel and not part of the CDFG
+        if(op->hasAttr("VAR_CONFIG"))
+            return WalkResult::advance();
+        // end-fix-trisolv
+
+        // [Fix-hjy] 彻底跳过为 index_cast 创建 CDFG 节点
+        if(op->getName().getStringRef() == "arith.index_cast") {
+            return WalkResult::advance();
+        }
+
         if(op->getName().getStringRef() == "affine.for"){
           LLVMCDFGNode* node = CDFG->addNode(op); 
           node->setLoopLevel(level);
@@ -2696,8 +2913,8 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
           // return WalkResult::advance();
         } 
         else if(op->getName().getStringRef() == "affine.apply"){
-          // LLVMCDFGNode* node = CDFG->addNode(op); 
-          // node->setLoopLevel(level);
+          LLVMCDFGNode* node = CDFG->addNode(op); 
+          node->setLoopLevel(level);
           // // TODO: settle this
           return WalkResult::advance();
         } 
@@ -2949,6 +3166,12 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
     }
 
     mlir::Operation *op = SuccNode->operation();
+
+    // [Fix-hjy 1] VARCFG 节点只是配置标记，不参与 CDFG 数据流，跳过其边建立
+    if(op->hasAttr("VAR_CONFIG")){
+      continue;
+    }
+    // end [Fix-hjy 1]
     if(verbose) {errs() << nodepair.first << ".Node:";}
     if(verbose) {op->dump();}
     for (unsigned operand_idx = 0; operand_idx < op->getNumOperands(); operand_idx++)
@@ -2957,6 +3180,15 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
       bool isBackEdge = false;
       mlir::Value _v = op->getOperand(operand_idx);
 
+      // [Fix-hjy] 穿过被我们跳过不建图的操作（index_cast），直接找到它背后真正的数值来源
+      while (mlir::Operation *def_op = _v.getDefiningOp()) {
+        if (def_op->getName().getStringRef() == "arith.index_cast") {
+          _v = def_op->getOperand(0);
+        } else {
+          break;
+        }
+      }
+
       int edgeidx;
       if (SuccNode->getTypeName() == "load")
         // memref.load: MLIR operand 0 = memref, 1+ = address indices; CDFG address = first operand (0)
@@ -2964,6 +3196,7 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
       else
         edgeidx = operand_idx;
       
+
       if (_v.isa<BlockArgument>()) {
         /// Operands is a loop index or loop arg
         mlir::BlockArgument arg = _v.cast<BlockArgument>();
@@ -2985,7 +3218,15 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
               continue;      
             }       
             else{
+              // [Fix-hjy 2] 只有当 parentop 在 For_loop_level 中（即被记录为 innermost for）
+              // 才建立边，否则跳过（外层 for 不在 CDFG 中作为有效计算节点）
+              if(For_loop_level.count(parentop) == 0){
+                // 外层 for 不是最内层 for，不在 CDFG 计算图中，跳过
+                continue;
+              }
+              // end [Fix-hjy 2]
               AnceNode = CDFG->node(parentop);
+              if(AnceNode == NULL) continue; // [Fix-hjy 3] 防止空指针
               AnceNode->addOutputNode(SuccNode, isBackEdge);
               SuccNode->addInputNode(AnceNode, edgeidx, isBackEdge);
               CDFG->addEdge(AnceNode, SuccNode); //To fix: Edge Type
@@ -2997,6 +3238,7 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
           parentop = _v.getParentBlock()->getParentOp();
           if(isa<affine::AffineForOp>(parentop)){
             AnceNode = CDFG->node(parentop);
+            if(AnceNode == NULL) continue; // [Fix-hjy 3] 防止空指针
             AnceNode->addOutputNode(SuccNode, isBackEdge);
             SuccNode->addInputNode(AnceNode, edgeidx, isBackEdge);
             CDFG->addEdge(AnceNode, SuccNode); //To fix: Edge Type            
@@ -3040,8 +3282,16 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
       }
 
       else{
-        mlir::Operation *ance_op = op->getOperand(operand_idx).getDefiningOp();
+        // [Fix-hjy] 这里必须换成追溯过后的 _v，而不是原 op 的直属 operand
+        mlir::Operation *ance_op = _v.getDefiningOp();
+        // mlir::Operation *ance_op = op->getOperand(operand_idx).getDefiningOp();
         if(verbose) {errs() << "   Operands:";ance_op->dump();}
+
+        // [Fix-hjy 4] VARCFG 节点的操作数也不建边（arith.addi with VAR_CONFIG attr）
+        if(ance_op->hasAttr("VAR_CONFIG")){
+          continue;
+        }
+        // end [Fix-hjy 4]
 
         AnceNode = CDFG->node(ance_op);
         if(AnceNode == NULL){ /// AnceNode is outside loop
@@ -3055,7 +3305,7 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
             continue;
           }
           else if(ance_op->getName().getStringRef() == "affine.apply"){
-            continue;
+            //continue;
           }
           else if(ance_op->getName().getStringRef() == "ADORA.BlockLoad"
                 ||ance_op->getName().getStringRef() == "ADORA.LocalMemAlloc"){
@@ -3066,7 +3316,11 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
                 ||SuccNode->operation()->getName().getStringRef() == "memref.store")
               continue;
             else 
-              assert(0); /// Todo: fix this jhlou
+              //assert(0); /// Todo: fix this jhlou
+            // [Fix-hjy 5] 对于找不到的节点（如外层 for 产生的结果），跳过而不是 assert
+            if(verbose) llvm::errs() << "[Warning] AnceNode not found for op: " << *ance_op << "\n";
+            continue;
+            // end [Fix-hjy 5]
           }
           //hjy
           else if(ance_op->getName().getStringRef() == "memref.alloca"){
@@ -3125,6 +3379,11 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
   if(verbose) { CDFG->CDFGtoDOT(CDFG->name_str()+"_0_CDFG.dot");}
 
   ////////////////////////
+  // [hjy] Insert MUL nodes for memref.load/store byte-offset computation
+  ////////////////////////
+  InsertMemrefByteOffsetMul(CDFG, verbose);
+
+  ////////////////////////
   /// Extract Accumulation
   ////////////////////////
   HandleSelfCycle(CDFG, verbose);
@@ -3163,6 +3422,17 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
       // int node_id = elem.first;
       LLVMCDFGNode* node = elem.second;
       if(node->getTypeName() == "bitcast" || node->getTypeName() == "index_cast" ){
+        //fix-hjy
+        if (node->inputNodes().size() == 0) {
+          // 如果因为前面的前驱（如 affine.apply）被跳过导致没有输入节点，直接删除并断开后继
+          for(LLVMCDFGNode* outputnode : node->outputNodes()) {
+            outputnode->delInputNode(node);
+          }
+          CDFG->delNode(node);
+          removing = 1;
+          continue;
+        }
+        //fix
         assert(node->inputNodes().size() == 1);
         LLVMCDFGNode* AnceNode = node->getInputPort(0);
         for(int edgeid : node->outputEdges())
@@ -3191,23 +3461,52 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
         removing = 1;
       }
       else if(node->getTypeName() == "for"){
-        ////// for to input/output
-        const std::vector<LLVMCDFGNode *>& sinknodes = node->outputNodes();
-        // for(LLVMCDFGNode* sinknode : sinknodes){
-        //   if( ( sinknode->getTypeName()=="Input" || sinknode->getTypeName()=="INPUT"
-        //       ||sinknode->getTypeName()=="Output" || sinknode->getTypeName()=="OUTPUT" )
-        //     && sinknode->isLSaffine() ) {
-        //       CDFG->delEdge(CDFG->edge(node, sinknode));
-        //       node->delOutputNode(sinknode);
-        //       sinknode->delInputNode(node); 
-        //       LLVM_DEBUG( llvm::errs()<< node->inputNodes().size()<< " " << node->outputNodes().size()<< " ");
-        //   }
-        // }
-        // LLVM_DEBUG( llvm::errs()<< node->inputNodes().size()<< " " << node->outputNodes().size()<< " ");
-        // if(verbose) { CDFG->CDFGtoDOT(CDFG->name_str()+"_3_CDFG.dot");}
+        // 
+        // ////// for to input/output
+        // const std::vector<LLVMCDFGNode *>& sinknodes = node->outputNodes();
+        // // for(LLVMCDFGNode* sinknode : sinknodes){
+        // //   if( ( sinknode->getTypeName()=="Input" || sinknode->getTypeName()=="INPUT"
+        // //       ||sinknode->getTypeName()=="Output" || sinknode->getTypeName()=="OUTPUT" )
+        // //     && sinknode->isLSaffine() ) {
+        // //       CDFG->delEdge(CDFG->edge(node, sinknode));
+        // //       node->delOutputNode(sinknode);
+        // //       sinknode->delInputNode(node); 
+        // //       LLVM_DEBUG( llvm::errs()<< node->inputNodes().size()<< " " << node->outputNodes().size()<< " ");
+        // //   }
+        // // }
+        // // LLVM_DEBUG( llvm::errs()<< node->inputNodes().size()<< " " << node->outputNodes().size()<< " ");
+        // // if(verbose) { CDFG->CDFGtoDOT(CDFG->name_str()+"_3_CDFG.dot");}
+        // assert(node->inputNodes().size() == 0 && node->outputNodes().size() == 0);
+        // CDFG->delNode(node);
+        // removing = 1;
+        // [Fix-hjy 6] 处理可能残留边的 for 节点：打印警告后强制清理
+        if(node->inputNodes().size() != 0 || node->outputNodes().size() != 0){
+          if(verbose){
+            llvm::errs() << "[Warning] for node has residual edges, force cleaning:\n";
+            node->operation()->dump();
+            llvm::errs() << "  inputNodes: " << node->inputNodes().size() 
+                         << ", outputNodes: " << node->outputNodes().size() << "\n";
+          }
+          // 强制断开所有边再删除
+          SmallVector<LLVMCDFGNode*> innodes(node->inputNodes().begin(), node->inputNodes().end());
+          SmallVector<LLVMCDFGNode*> outnodes(node->outputNodes().begin(), node->outputNodes().end());
+          for(LLVMCDFGNode* innode : innodes){
+            innode->delOutputNode(node);
+            node->delInputNode(innode);
+            auto e = CDFG->edge(innode, node);
+            if(e) CDFG->delEdge(e);
+          }
+          for(LLVMCDFGNode* outnode : outnodes){
+            node->delOutputNode(outnode);
+            outnode->delInputNode(node);
+            auto e = CDFG->edge(node, outnode);
+            if(e) CDFG->delEdge(e);
+          }
+        }
         assert(node->inputNodes().size() == 0 && node->outputNodes().size() == 0);
         CDFG->delNode(node);
         removing = 1;
+      // end [Fix-hjy 6]
       }
       else if(node->getTypeName() == "truncf"){
         assert(node->inputNodes().size() == 1 && node->outputNodes().size() == 0);
@@ -3220,7 +3519,8 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
           CDFG->delNode(node);
           removing = 1;
         }  
-        else if(node->outputNodes().size() != 0){
+        else if(node->outputNodes().size() != 0 && node->operation() != nullptr){
+          // [hjy] guard: only check isIndex for CONST nodes that have a real MLIR op
           if(dyn_cast<arith::ConstantOp>(node->operation()).getValue().getType().isIndex()){
             int i = 0;
             for(i = 0; i < node->outputNodes().size(); i++){

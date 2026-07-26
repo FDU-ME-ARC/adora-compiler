@@ -7,7 +7,11 @@
 // DOT0-DAG: Input{{[0-9]+}}[opcode = "Input"
 // DOT0-DAG: load{{[0-9]+}}[opcode = "load"
 // DOT0-DAG: Output{{[0-9]+}}[opcode = "Output"
-// DOT0-DAG: Input{{[0-9]+}} -> load{{[0-9]+}}
+// DOT0-DAG: CONST{{[0-9]+}}[opcode = "CONST", value="0x00000004"
+// DOT0-DAG: MUL{{[0-9]+}}[opcode = "MUL"
+// DOT0-DAG: Input{{[0-9]+}} -> MUL{{[0-9]+}}
+// DOT0-DAG: CONST{{[0-9]+}} -> MUL{{[0-9]+}}
+// DOT0-DAG: MUL{{[0-9]+}} -> load{{[0-9]+}}
 // DOT0-DAG: load{{[0-9]+}} -> Output
 // DOT0-DAG: operand = 0, label = "Op=0"
 // DOT0: }
