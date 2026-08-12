@@ -192,8 +192,8 @@ nested if
 
 ### 2.1 明确内部控制条件表示
 
-* [ ] 梳理现有代码如何表示 branch condition。
-* [ ] 判断能否复用现有结构，不优先新建新的复杂 Dialect。
+* [x] 梳理现有代码如何表示 branch condition。
+* [x] 判断能否复用现有结构，不优先新建新的复杂 Dialect。
 * [ ] 为每个 branch/body operation 能够获取对应的 path predicate。
 
 例如：
@@ -234,12 +234,12 @@ S → a && b
 
 ### 2.2 扩展简单 if-else 实现
 
-* [ ] 先保证单层 `if` 行为不回归。
-* [ ] 保证普通 `if-else` 行为不回归。
-* [ ] 支持连续 `if / else if / else`。
-* [ ] 支持至少两层 nested if。
+* [x] 先保证单层 `if` 行为不回归。
+* [x] 保证普通 `if-else` 行为不回归。
+* [x] 支持连续 `if / else if / else`。
+* [x] 支持至少两层 nested if。
 * [ ] 对 predicate 取反逻辑统一处理，不在多个代码位置重复手写。
-* [ ] 避免将 mutually-exclusive branch 错误视为同时执行。
+* [x] 避免将 mutually-exclusive branch 错误视为同时执行。
 * [ ] 暂不扩展到：
 
   * `switch`
@@ -256,17 +256,17 @@ S → a && b
 
 已经稳定且属于编译器正式行为的部分，需要增加正式测试。
 
-* [ ] 为简单 `if-else` 保留或补充 lit 测试。
-* [ ] 新增 `if-else if-else` 测试。
-* [ ] 新增 nested if 测试。
-* [ ] 测试重点检查：
+* [x] 为简单 `if-else` 保留或补充 lit 测试。
+* [x] 新增 `if-else if-else` 测试。
+* [x] 新增 nested if 测试。
+* [x] 测试重点检查：
 
   * condition 节点
   * select / isel / control node
   * branch 对应关系
   * CDFG edge
   * 不出现错误的多余节点
-* [ ] 测试名称能够反映功能，不使用个人名称。
+* [x] 测试名称能够反映功能，不使用个人名称。
 
 ## 预期成果
 
@@ -289,10 +289,10 @@ test/...
 
 ### 完成标准
 
-* [ ] `if`
-* [ ] `if-else`
-* [ ] `if-else if-else`
-* [ ] 两层 nested if
+* [x] `if`
+* [x] `if-else`
+* [x] `if-else if-else`
+* [x] 两层 nested if
 
 至少以上四类能够获得正确 path condition，并通过对应 regression test。
 
