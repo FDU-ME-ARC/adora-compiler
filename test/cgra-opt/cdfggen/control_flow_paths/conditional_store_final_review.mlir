@@ -1,10 +1,11 @@
-// RUN: rm -f cf_memory_before_CDFG.dot cf_memory_after_loop_CDFG.dot cf_affine_apply_CDFG.dot cf_memory_loop_boundary_CDFG.dot
+// RUN: rm -f cf_memory_before_CDFG.dot cf_memory_after_loop_CDFG.dot cf_affine_apply_CDFG.dot cf_memory_loop_boundary_CDFG.dot cf_cstore_hoist_barrier_CDFG.dot
 // RUN: %cgra-opt --adora-kernel-dfg-gen %s | %FileCheck %s
 // RUN: %FileCheck %s --check-prefix=BEFORE-DOT --input-file=cf_memory_before_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=AFTER-DOT --input-file=cf_memory_after_loop_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=APPLY-DOT --input-file=cf_affine_apply_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=BOUNDARY-DOT --input-file=cf_memory_loop_boundary_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
-// RUN: rm -f cf_memory_before_CDFG.dot cf_memory_after_loop_CDFG.dot cf_affine_apply_CDFG.dot cf_memory_loop_boundary_CDFG.dot
+// RUN: %FileCheck %s --check-prefix=HOIST-DOT --input-file=cf_cstore_hoist_barrier_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
+// RUN: rm -f cf_memory_before_CDFG.dot cf_memory_after_loop_CDFG.dot cf_affine_apply_CDFG.dot cf_memory_loop_boundary_CDFG.dot cf_cstore_hoist_barrier_CDFG.dot
 
 // CHECK-LABEL: func.func @memory_before_cstore
 // CHECK: ADORA.kernel
@@ -78,6 +79,28 @@
 // BOUNDARY-DOT-NOT: Output[[AFTER_STORE]] -> Output[[BEFORE_STORE]]
 // BOUNDARY-DOT: }
 
+// CHECK-LABEL: func.func @cstore_blocks_load_store_hoist
+// CHECK: affine.for
+// CHECK-NEXT: %[[INITIAL:.*]] = affine.load %{{.*}}[0]
+// CHECK-NEXT: %[[UPDATED:.*]] = arith.addi %[[INITIAL]], %{{.*}}
+// CHECK-NEXT: ADORA.cond_store
+// CHECK-NEXT: affine.store %[[UPDATED]], %{{.*}}[0]
+// CHECK-NEXT: %[[OBSERVED:.*]] = affine.load %{{.*}}[0]
+// CHECK-NEXT: affine.store %[[OBSERVED]], %{{.*}}[%{{.*}}]
+
+// HOIST-DOT: Digraph G {
+// HOIST-DOT-DAG: Input[[INITIAL_LOAD:[0-9]+]][opcode = "Input", ref_name="cf_cstore_hoist_barrier:arg2", size="4"
+// HOIST-DOT-DAG: CSTORE[[CONDITIONAL:[0-9]+]][opcode = "CSTORE", ref_name="cf_cstore_hoist_barrier:arg3", size="32"
+// HOIST-DOT-DAG: Output[[MATCHED_STORE:[0-9]+]][opcode = "Output"
+// HOIST-DOT-DAG: Input[[OBSERVED_LOAD:[0-9]+]][opcode = "Input", ref_name="cf_cstore_hoist_barrier:arg2", size="4"
+// HOIST-DOT-DAG: Output[[OBSERVED_STORE:[0-9]+]][opcode = "Output"
+// HOIST-DOT-DAG: Input[[INITIAL_LOAD]] -> CSTORE[[CONDITIONAL]][color = blue{{.*}}operand = -1, label = "Op=-1, DepDist = 0"
+// HOIST-DOT-DAG: CSTORE[[CONDITIONAL]] -> Output[[MATCHED_STORE]][color = blue{{.*}}operand = -1, label = "Op=-1, DepDist = 0"
+// HOIST-DOT-DAG: Output[[MATCHED_STORE]] -> Input[[OBSERVED_LOAD]][color = blue{{.*}}operand = -1, label = "Op=-1, DepDist = 0"
+// HOIST-DOT-DAG: Input[[OBSERVED_LOAD]] -> Output[[OBSERVED_STORE]][color = black{{.*}}operand = 0, label = "Op=0"
+// HOIST-DOT-NOT: Input[[OBSERVED_LOAD]] -> Output[[MATCHED_STORE]]
+// HOIST-DOT: }
+
 #plus_one = affine_map<(d0) -> (d0 + 1)>
 #twice = affine_map<(d0) -> (d0 * 2)>
 
@@ -140,6 +163,25 @@ module {
       affine.store %value, %after_store[0] : memref<8xi32>
       ADORA.terminator
     } {KernelName = "cf_memory_loop_boundary"}
+    return
+  }
+
+  func.func @cstore_blocks_load_store_hoist(
+      %cond: i1, %delta: i32, %state: memref<1xi32>,
+      %conditional: memref<8xi32>, %observed: memref<8xi32>) {
+    ADORA.kernel {
+      affine.for %i = 0 to 8 {
+        %initial = affine.load %state[0] : memref<1xi32>
+        %updated = arith.addi %initial, %delta : i32
+        scf.if %cond {
+          affine.store %delta, %conditional[%i] : memref<8xi32>
+        }
+        affine.store %updated, %state[0] : memref<1xi32>
+        %observed_value = affine.load %state[0] : memref<1xi32>
+        affine.store %observed_value, %observed[%i] : memref<8xi32>
+      }
+      ADORA.terminator
+    } {KernelName = "cf_cstore_hoist_barrier"}
     return
   }
 }

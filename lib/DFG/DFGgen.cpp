@@ -3953,7 +3953,12 @@ LogicalResult mlir::ADORA::generateCDFGfromKernel(LLVMCDFG* &CDFG,
 
   /// Hoist load store op
   /// FIX: We should judge whether to use hoist
-  HoistLoadStoreInKernelOp(optimizedKernel);
+  bool containsCondStore =
+      optimizedKernel
+          .walk([&](ADORA::CondStoreOp) { return WalkResult::interrupt(); })
+          .wasInterrupted();
+  if (!containsCondStore)
+    HoistLoadStoreInKernelOp(optimizedKernel);
   if(verbose) optimizedKernel.dump();
 
   
