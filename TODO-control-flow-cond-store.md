@@ -347,7 +347,7 @@ conditional store
 
 ### 待办
 
-* [ ] 全局搜索以下关键字：
+* [x] 全局搜索以下关键字：
 
 ```text
 CSTORE
@@ -360,7 +360,7 @@ Operations::opCapable
 Operations::OPC
 ```
 
-* [ ] 重点检查：
+* [x] 重点检查：
 
 ```text
 mapper/include/dfg/
@@ -372,15 +372,15 @@ test/spec/
 lib/DFG/Documents/
 ```
 
-* [ ] 确认 Mapper 是否已经将 `CSTORE` 识别为合法 DFG operation。
-* [ ] 确认 `CSTORE` 是否作为 `DFGIONode` 处理。
-* [ ] 确认 `CSTORE` 是否被视为输出/store node。
-* [ ] 确认 IOB 配置中：
+* [x] 确认 Mapper 是否已经将 `CSTORE` 识别为合法 DFG operation。
+* [x] 确认 `CSTORE` 是否作为 `DFGIONode` 处理。
+* [x] 确认 `CSTORE` 是否被视为输出/store node。
+* [x] 确认 IOB 配置中：
 
   * `UseAddr` 对 `CSTORE` 的处理。
   * `UseEn` 对 `CSTORE` 的处理。
   * `IsStore` 对 `CSTORE` 的处理。
-* [ ] 确认 CSTORE 的逻辑输入语义：
+* [x] 确认 CSTORE 的逻辑输入语义：
 
 ```text
 data
@@ -388,18 +388,18 @@ address
 enable / condition
 ```
 
-* [ ] **查明三个输入在 CDFG 中的确切 operand port 编号。**
-* [ ] 不根据 `STORE` 的端口布局自行推断 `CSTORE` 端口布局。
-* [ ] 检查实际使用的 operations JSON / operation spec 中是否存在 `CSTORE`：
+* [x] **查明三个输入在 CDFG 中的确切 operand port 编号。**
+* [x] 不根据 `STORE` 的端口布局自行推断 `CSTORE` 端口布局。
+* [x] 检查实际使用的 operations JSON / operation spec 中是否存在 `CSTORE`：
 
   * operation name
   * OPC
   * numOperands
   * numRes
   * latency
-* [ ] 检查实际使用的 ADG / IOB 配置中是否存在 `UseEn`。
-* [ ] 搜索是否已有 CSTORE / CLOAD testcase、旧 benchmark 或历史实现可作为参考。
-* [ ] 确认 `ISEL` 的用途，但不要用 `ISEL` 替代 `CSTORE`，除非现有后端明确如此设计。
+* [x] 检查实际使用的 ADG / IOB 配置中是否存在 `UseEn`。
+* [x] 搜索是否已有 CSTORE / CLOAD testcase、旧 benchmark 或历史实现可作为参考。
+* [x] 确认 `ISEL` 的用途，但不要用 `ISEL` 替代 `CSTORE`，除非现有后端明确如此设计。
 
 ### 输出文档
 
@@ -455,11 +455,11 @@ docs/development/cstore-backend-audit.md
 
 只有能够明确回答下面的问题后，才能最终确定 `ADORA.cond_store` → `CSTORE` 的 lowering 接口：
 
-* [ ] CSTORE 的三个输入分别是什么。
-* [ ] 三个输入的 CDFG port 编号是什么。
-* [ ] 当前 Mapper 是否无需修改即可识别 CSTORE。
-* [ ] 当前使用的 operation spec 是否支持 CSTORE。
-* [ ] 当前 ADG / IOB 是否真正支持 enable。
+* [x] CSTORE 的三个输入分别是什么。
+* [x] 三个输入的 CDFG port 编号是什么。
+* [x] 当前 Mapper 是否无需修改即可识别 CSTORE。
+* [x] 当前使用的 operation spec 是否支持 CSTORE（审计结论：不支持）。
+* [x] 当前 ADG / IOB 是否真正支持 enable（审计结论：不支持）。
 
 ---
 
@@ -501,8 +501,8 @@ CSTORE(
 )
 ```
 
-* [ ] 应优先转换为 `cond_store / CSTORE`。
-* [ ] 不再为了保持原值额外生成：
+* [x] 应优先转换为 `cond_store / CSTORE`。
+* [x] 不再为了保持原值额外生成：
 
 ```text
 LOAD old_value
@@ -540,8 +540,8 @@ y ─────┘
 SELECT + 普通 STORE
 ```
 
-* [ ] 不强制生成两个 CSTORE。
-* [ ] 避免增加不必要的 I/O node 和条件 store。
+* [x] 不强制生成两个 CSTORE。
+* [x] 避免增加不必要的 I/O node 和条件 store。
 
 ---
 
@@ -564,8 +564,8 @@ CSTORE A[i], x,  cond
 CSTORE B[j], y, !cond
 ```
 
-* [ ] 两个 store 分别保留自己的条件。
-* [ ] 不错误合并为普通 STORE。
+* [x] 两个 store 分别保留自己的条件。
+* [x] 不错误合并为普通 STORE。
 
 ---
 
@@ -591,8 +591,8 @@ B store → !a && b
 C store → !a && !b
 ```
 
-* [ ] `cond_store` 必须使用完整 path predicate。
-* [ ] 不允许只使用当前局部 `if` 的 condition。
+* [x] `cond_store` 必须使用完整 path predicate。
+* [x] 不允许只使用当前局部 `if` 的 condition。
 
 ---
 
@@ -614,7 +614,7 @@ if (a) {
 enable = a && b
 ```
 
-* [ ] 必须正确传播父级 predicate。
+* [x] 必须正确传播父级 predicate。
 
 ---
 
@@ -626,7 +626,7 @@ enable = a && b
 
 ### 待办
 
-* [ ] 在：
+* [x] 在：
 
 ```text
 include/ADORA/Dialect/ADORA/IR/ADORAOps.td
@@ -638,8 +638,8 @@ include/ADORA/Dialect/ADORA/IR/ADORAOps.td
 ADORA.cond_store
 ```
 
-* [ ] 设计时参考 MLIR `memref.store`，但遵循 ADORA 现有 Dialect 风格。
-* [ ] 基本语义保持：
+* [x] 设计时参考 MLIR `memref.store`，但遵循 ADORA 现有 Dialect 风格。
+* [x] 基本语义保持：
 
 ```text
 value
@@ -658,16 +658,16 @@ condition = false
 → 不产生 memory write
 ```
 
-* [ ] condition 优先采用 `i1`，除非现有 backend contract 明确要求其他类型。
-* [ ] `cond_store` 不产生普通数据 result。
-* [ ] 正确声明 memory write side effect。
-* [ ] 必要时实现：
+* [x] condition 优先采用 `i1`，除非现有 backend contract 明确要求其他类型。
+* [x] `cond_store` 不产生普通数据 result。
+* [x] 正确声明 memory write side effect。
+* [x] 必要时实现：
 
   * builder
   * verifier
   * parser / printer
   * canonicalization
-* [ ] 在：
+* [x] 在：
 
 ```text
 lib/Dialect/ADORA/IR/ADORAOps.cpp
@@ -677,8 +677,8 @@ lib/Dialect/ADORA/IR/ADORAOps.cpp
 
 ### 设计限制
 
-* [ ] 不把 `!ADORA.token` 当成 predicate。
-* [ ] 保持：
+* [x] 不把 `!ADORA.token` 当成 predicate。
+* [x] 保持：
 
 ```text
 token
@@ -688,13 +688,13 @@ condition
 = predicate / 是否应该执行
 ```
 
-* [ ] 当前 `cond_store` 只针对 **kernel 内部的条件 memory store**。
-* [ ] 暂不扩展：
+* [x] 当前 `cond_store` 只针对 **kernel 内部的条件 memory store**。
+* [x] 暂不扩展：
 
   * `ADORA.BlockStore`
   * `ADORA.BlockLoad`
   * task-level conditional issue
-* [ ] `cond_load` 暂不实现，除非后续需求明确。
+* [x] `cond_load` 暂不实现，除非后续需求明确。
 
 ---
 
@@ -732,23 +732,23 @@ LOAD old value
 
 ### 待办
 
-* [ ] 梳理当前 `lowerSCFIfToSelect()` 的 store sinking 实现。
-* [ ] 保持已有纯计算 if-conversion 行为不变。
-* [ ] 对“双方写相同地址”的情况继续优先使用：
+* [x] 梳理当前 `lowerSCFIfToSelect()` 的 store sinking 实现。
+* [x] 保持已有纯计算 if-conversion 行为不变。
+* [x] 对“双方写相同地址”的情况继续优先使用：
 
 ```text
 select + store
 ```
 
-* [ ] 对单侧 store 生成 `ADORA.cond_store`。
-* [ ] 对双方写不同地址的情况生成两个不同 predicate 的 `ADORA.cond_store`。
-* [ ] 对 `else if` 和 nested if 使用任务二产生的完整 path predicate。
-* [ ] 不为 `cond=false` 的单侧 store 再创建无必要的旧值 `memref.load`。
-* [ ] 保证 transformation 后 MLIR verifier 通过。
+* [x] 对单侧 store 生成 `ADORA.cond_store`。
+* [x] 对双方写不同地址的情况生成两个不同 predicate 的 `ADORA.cond_store`。
+* [x] 对 `else if` 和 nested if 使用任务二产生的完整 path predicate。
+* [x] 不为 `cond=false` 的单侧 store 再创建无必要的旧值 `memref.load`。
+* [x] 保证 transformation 后 MLIR verifier 通过。
 
 ### CDFG lowering
 
-* [ ] 在 CDFG generation 中增加：
+* [x] 在 CDFG generation 中增加：
 
 ```text
 ADORA.cond_store
@@ -756,9 +756,9 @@ ADORA.cond_store
 CSTORE
 ```
 
-* [ ] CSTORE operation name 必须与现有 Mapper contract 完全一致。
-* [ ] data / address / enable 的 port 必须使用 3.1 审计得到的真实编号。
-* [ ] 不自行定义新的 Mapper operand convention。
+* [x] CSTORE operation name 必须与现有 Mapper contract 完全一致。
+* [x] data / address / enable 的 port 必须使用 3.1 审计得到的真实编号。
+* [x] 不自行定义新的 Mapper operand convention。
 
 ---
 
@@ -782,9 +782,9 @@ byte offset
 
 ### 待办
 
-* [ ] 抽取或复用现有地址换算 helper，避免复制一套 `cond_store` 专用地址计算代码。
-* [ ] `cond_store` 地址仍需从 element index 转换成 byte offset。
-* [ ] i32：
+* [x] 抽取或复用现有地址换算 helper，避免复制一套 `cond_store` 专用地址计算代码。
+* [x] `cond_store` 地址仍需从 element index 转换成 byte offset。
+* [x] i32：
 
 ```text
 index
@@ -796,14 +796,14 @@ MUL
 CSTORE address input
 ```
 
-* [ ] i8 / 1-byte element 不生成无意义：
+* [x] i8 / 1-byte element 不生成无意义：
 
 ```text
 CONST 1 + MUL
 ```
 
-* [ ] synthetic `CONST / MUL` 节点已有的空 `operation` 防护继续有效。
-* [ ] 普通 `memref.store` 的现有行为不得发生回归。
+* [x] synthetic `CONST / MUL` 节点已有的空 `operation` 防护继续有效。
+* [x] 普通 `memref.store` 的现有行为不得发生回归。
 
 ### 特别注意
 
@@ -855,8 +855,8 @@ operations spec ✗
 
 则：
 
-* [ ] 记录缺失项。
-* [ ] 不自行猜测：
+* [x] 记录缺失项。
+* [x] 不自行猜测：
 
   * OPC
   * latency
@@ -878,14 +878,14 @@ UseEn ✗
 
 则：
 
-* [ ] 不伪造 CSTORE end-to-end 成功。
-* [ ] 不使用普通 `ISEL + STORE` 冒充真正 conditional store，除非项目明确要求这种 lowering。
-* [ ] 保留已经完成的：
+* [x] 不伪造 CSTORE end-to-end 成功。
+* [x] 不使用普通 `ISEL + STORE` 冒充真正 conditional store，除非项目明确要求这种 lowering。
+* [x] 保留已经完成的：
 
   * ADORA IR
   * CDFG frontend
   * testcase
-* [ ] 将硬件支持列为明确阻塞项。
+* [x] 将硬件支持列为明确阻塞项。
 
 ---
 
@@ -893,15 +893,15 @@ UseEn ✗
 
 ### Dialect / IR test
 
-* [ ] `ADORA.cond_store` 能正确 parse / print。
-* [ ] verifier 能拒绝错误 condition type。
-* [ ] condition 为正确类型时 verifier 通过。
+* [x] `ADORA.cond_store` 能正确 parse / print。
+* [x] verifier 能拒绝错误 condition type。
+* [x] condition 为正确类型时 verifier 通过。
 
 ### Control-flow lowering test
 
 至少覆盖：
 
-* [ ] 单侧：
+* [x] 单侧：
 
 ```c
 if (cond)
@@ -910,7 +910,7 @@ if (cond)
 
 预期：一个 CSTORE。
 
-* [ ] 同地址双侧：
+* [x] 同地址双侧：
 
 ```c
 if (cond)
@@ -921,7 +921,7 @@ else
 
 预期：`SELECT + STORE`。
 
-* [ ] 不同地址双侧：
+* [x] 不同地址双侧：
 
 ```c
 if (cond)
@@ -932,8 +932,8 @@ else
 
 预期：两个 CSTORE。
 
-* [ ] `if / else if / else`。
-* [ ] nested if。
+* [x] `if / else if / else`。
+* [x] nested if。
 
 ### Predicate test
 
@@ -951,17 +951,17 @@ a && b
 
 ### Memref 地址测试
 
-* [ ] i32 cond_store 生成正确 `×4` 地址。
-* [ ] 1-byte element 不生成 `×1`。
-* [ ] CSTORE address edge 连接到真实 backend address port。
-* [ ] enable edge 连接到真实 backend enable port。
+* [x] i32 cond_store 生成正确 `×4` 地址。
+* [x] 1-byte element 不生成 `×1`。
+* [x] CSTORE address edge 连接到真实 backend address port。
+* [x] enable edge 连接到真实 backend enable port。
 
 ### Regression
 
-* [ ] 原普通 `memref.load` 测试继续通过。
-* [ ] 原普通 `memref.store` 测试继续通过。
-* [ ] 原简单 if-conversion 测试继续通过。
-* [ ] 完整 `check-adora` 不产生新的 regression failure。
+* [x] 原普通 `memref.load` 测试继续通过。
+* [x] 原普通 `memref.store` 测试继续通过。
+* [x] 原简单 if-conversion 测试继续通过。
+* [x] 完整 `check-adora` 不产生新的 regression failure。
 
 ---
 
@@ -993,10 +993,10 @@ configuration / emit
 
 检查：
 
-* [ ] CDFG 中出现 `CSTORE`。
-* [ ] CSTORE 有正确 data input。
-* [ ] CSTORE 有正确 byte-address input。
-* [ ] CSTORE 有正确 enable input。
+* [x] CDFG 中出现 `CSTORE`。
+* [x] CSTORE 有正确 data input。
+* [x] CSTORE 有正确 byte-address input。
+* [x] CSTORE 有正确 enable input。
 * [ ] Mapper 不报 `CSTORE is not supported`。
 * [ ] Mapper 将 CSTORE 识别为 I/O / output node。
 * [ ] IOB 配置正确启用：
@@ -1089,18 +1089,18 @@ CSTORE
 
 任务三只有满足下面条件后才算完成：
 
-* [ ] 已完成 CSTORE backend audit。
-* [ ] 已明确 CSTORE data/address/enable 的真实 port contract。
-* [ ] 已明确当前 operation spec 是否支持 CSTORE。
-* [ ] 已明确当前 ADG / IOB 是否支持 `UseEn`。
-* [ ] `ADORA.cond_store` 定义与现有 backend contract 对齐。
-* [ ] 单侧条件 store 能正确转换成 CSTORE。
-* [ ] 双侧相同地址 store 能继续使用 `SELECT + STORE`。
-* [ ] 双侧不同地址 store 能正确生成两个条件 CSTORE。
-* [ ] else-if / nested-if 使用完整 path predicate。
-* [ ] cond_store 正确复用已有 memref byte-offset 地址换算。
-* [ ] 正式 lit tests 全部通过。
-* [ ] 完整 `check-adora` 无新增失败。
+* [x] 已完成 CSTORE backend audit。
+* [x] 已明确 CSTORE data/address/enable 的真实 port contract。
+* [x] 已明确当前 operation spec 是否支持 CSTORE（当前实际 spec 不支持）。
+* [x] 已明确当前 ADG / IOB 是否支持 `UseEn`（当前实际 ADG / IOB 不支持）。
+* [x] `ADORA.cond_store` 定义与现有 backend contract 对齐。
+* [x] 单侧条件 store 能正确转换成 CSTORE。
+* [x] 双侧相同地址 store 能继续使用 `SELECT + STORE`。
+* [x] 双侧不同地址 store 能正确生成两个条件 CSTORE。
+* [x] else-if / nested-if 使用完整 path predicate。
+* [x] cond_store 正确复用已有 memref byte-offset 地址换算。
+* [x] 正式 lit tests 全部通过。
+* [x] 完整 `check-adora` 无新增失败。
 
 如果当前硬件 spec 暂时缺少 CSTORE / UseEn，则允许将任务三拆分为：
 
@@ -1123,6 +1123,19 @@ operation spec
 ```
 ```
 
+
+---
+
+## 任务三当前状态
+
+**阶段 A 已完成，任务四可以开始；阶段 B 仍然阻塞，最终上游 PR 必须等待真实硬件 contract。**
+
+仓库中的实际 operation specs 均缺少 `CSTORE`；实际 ADG / IOB 仅提供两个
+operand，且没有 `UseEn`。因此本轮只完成并验证了 backend audit、
+`ADORA.cond_store`、控制流 lowering、规范化 CDFG ports（data/address/enable =
+0/1/2）、byte offset 和正式回归测试。当前 fp32 Mapper 尝试在这一硬件缺口处
+失败，不能视为 Mapper 配置、emit 或 conditional-store suppression 仿真通过；
+待获得真实的 CSTORE OPC/operation spec、三输入 IOB 和 `UseEn` 配置后再完成阶段 B。
 
 ---
 
