@@ -27,6 +27,15 @@ func.func @too_many_indices(%value: i32, %buffer: memref<16xi32>,
 
 // -----
 
+// CHECK: error: 'ADORA.cond_store' op requires exactly one index
+func.func @zero_indices(%value: i32, %buffer: memref<16xi32>,
+                        %condition: i1) {
+  "ADORA.cond_store"(%value, %buffer, %condition) : (i32, memref<16xi32>, i1) -> ()
+  return
+}
+
+// -----
+
 // CHECK: error: 'ADORA.cond_store' op operand #3 must be 1-bit signless integer, but got 'i32'
 func.func @condition_must_be_i1(%value: i32, %buffer: memref<16xi32>,
                                 %index: index, %condition: i32) {
