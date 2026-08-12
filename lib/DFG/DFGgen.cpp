@@ -3951,8 +3951,8 @@ LogicalResult mlir::ADORA::generateCDFGfromKernel(LLVMCDFG* &CDFG,
   kernel.getOperation()->getBlock()->push_back(optimizedKernel);
   optimizedKernel->moveBefore(fallbackKernel);
 
-  /// Hoist load store op
-  /// FIX: We should judge whether to use hoist
+  // The legacy hoist does not model CSTORE as a memory-ordering barrier.
+  // Preserve that optimization for kernels whose memory semantics it supports.
   bool containsCondStore =
       optimizedKernel
           .walk([&](ADORA::CondStoreOp) { return WalkResult::interrupt(); })

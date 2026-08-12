@@ -98,9 +98,10 @@ configuration bit for the enable input.
 
 ## Repository-history check
 
-This audit enumerated all 17 local heads, remote-tracking refs, and tags with
-`git for-each-ref refs/heads refs/remotes refs/tags`, then searched every tip
-for the following hardware/fixture artifacts:
+At the start of Stage A, this audit enumerated the available local heads,
+remote-tracking refs, and tags with `git for-each-ref refs/heads refs/remotes
+refs/tags`, then searched the pre-feature refs for the following
+hardware/fixture artifacts:
 
 - a JSON operation entry named `CSTORE`;
 - a JSON `iob_mode` equal to `2`;
@@ -108,15 +109,15 @@ for the following hardware/fixture artifacts:
 - `CSTORE` in test DFG-style `.dot`, `.json`, or `.mlir` fixtures (excluding
   operation and ADG catalog hits).
 
-All four searches returned no result. The mapper source does contain dormant
-CSTORE/UseEn handling described above; the negative result is specifically
-that no local or remote ref supplies a usable CSTORE operation entry, a
-three-input (`iob_mode=2`) I/O block with `UseEn`, or a CSTORE DFG fixture to
-exercise it.
+All four searches returned no result at that point. This feature branch now
+contains compiler/CDFG MLIR fixtures for Stage A. It still does not contain a
+usable CSTORE operation entry, a three-input (`iob_mode=2`) I/O block with
+`UseEn`, or a hardware-backed CSTORE fixture. The mapper source does contain
+the dormant CSTORE/UseEn handling described above.
 
 ## Delivery boundary
 
-**Stage A may proceed** with ADORA IR support, control-flow lowering,
+**Stage A is delivered** with ADORA IR support, control-flow lowering,
 normalized CDFG ports and metadata, and regression tests. These are frontend
 and mapper-contract checks that do not claim an enabled hardware store. The
 current lowering deliberately fails closed at these boundaries:

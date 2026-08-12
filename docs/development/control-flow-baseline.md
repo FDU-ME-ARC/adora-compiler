@@ -13,7 +13,12 @@
 
 The fixed MLIR path is authoritative for this baseline. C sources record the intended source semantics and can be compared with frontend output when `cgeist` becomes available.
 
-## Existing implementation
+This document preserves the Task 2 baseline at commit `4ef8fc6`. The current
+branch has since completed the compiler/CDFG Stage A for conditional stores;
+the updated status is summarized below and the hardware boundary is documented
+in [`cstore-backend-audit.md`](cstore-backend-audit.md).
+
+## Implementation at the Task 2 baseline
 
 The normal `adoracc.py` path normalizes the input, extracts affine loops into `ADORA.kernel`, optimizes block access, and finally invokes `--adora-kernel-dfg-gen`.
 
@@ -63,7 +68,7 @@ S3 -> !a && !b
 
 For the nested case, the inner result is committed through the outer true arm, which represents `a && b` without requiring a separate branch-predicate dialect or an explicit AND node. Captured `i1` function arguments now reach the CDFG as reusable synthetic Inputs, so the required predicate edges are no longer disconnected.
 
-The nesting expresses which value commits on each path; it does not make pure calculations control-dependent. Branch calculations that are safe to speculate can run before the SELs, while conditional memory operations require separate handling. In particular, the one-sided value-commit/store-sinking fixture verifies only the generated CDFG path shape; it does not establish general conditional-store correctness, which remains Task 3.
+The nesting expresses which value commits on each path; it does not make pure calculations control-dependent. Branch calculations that are safe to speculate can run before the SELs, while conditional memory operations require separate handling. At this baseline, the one-sided value-commit/store-sinking fixture verified only the generated CDFG path shape; it did not establish general conditional-store correctness.
 
 ## Known gaps and follow-up ownership
 
@@ -73,11 +78,17 @@ The nesting expresses which value commits on each path; it does not make pure ca
 - Conditional load is still a known limitation: existing lowering/memory-footprint processing can make a load unconditional, and Task 2 did not add a conditional-load representation.
 - `affine.if`, `cf.cond_br`, switch, break, continue, and unstructured CFG remain out of scope and have no equivalent CDFG control-flow implementation.
 
-### Task three: conditional memory operations
+### Current conditional-store status
 
-- Conditional store remains Task 3: replace one-sided store emulation with the planned `ADORA.cond_store`/`CSTORE` chain rather than reading an uninitialized local output buffer and issuing an unconditional store.
-- Preserve address, value, and enable operand ports explicitly.
-- Verify the mapper/IOB operation specs include the required `CSTORE` and predicate operations.
+- One-sided and different-address conditional writes now lower to
+  `ADORA.cond_store` and CDFG `CSTORE`; same-address two-sided writes retain
+  `SELECT + STORE`.
+- CSTORE uses explicit `data=0`, `address=1`, and `enable=2` ports, complete I/O
+  metadata, byte-scaled addresses, structured path predicates, conservative
+  memory ordering, and transactional fail-closed generation.
+- The repository operation specs still lack `CSTORE`, and the available ADG/IOB
+  descriptions still lack a three-input I/O block with `UseEn`. Hardware-level
+  conditional-store execution therefore remains outside the validated scope.
 
 ### Mapper/spec limitations
 
@@ -93,7 +104,7 @@ experiment/jyhu/control-flow/run.sh all
 # Run one experimental case and replace summary.tsv with that single result.
 experiment/jyhu/control-flow/run.sh if_elseif_else
 
-# Formal Task 2 CDFG regressions.
+# Formal control-flow and conditional-store CDFG regressions.
 cmake --build build --target check-adora-cgra-opt-cdfggen-control_flow_paths -- -j1
 cmake --build build --target check-adora-cgra-opt-cdfggen-gettanh -- -j1
 cmake --build build --target check-adora-cgra-opt-cdfggen -- -j1
