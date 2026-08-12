@@ -177,8 +177,8 @@ void LLVMCDFG::CDFGtoDOT(std::string fileName) {
 	ofs.open(fileName.c_str());
     ofs << "Digraph G {\n";
     std::string colors[4] = {"black", "purple", "blue", "yellow"};
-    // nodes
-	assert(_nodes.size() != 0);
+    // An operand slice may legitimately contain no mapped operations. Emit an
+    // empty graph instead of forcing unrelated kernel operations into it.
     for(auto &elem : _nodes){
         int node_id = elem.first;
         LLVMCDFGNode* node = elem.second;

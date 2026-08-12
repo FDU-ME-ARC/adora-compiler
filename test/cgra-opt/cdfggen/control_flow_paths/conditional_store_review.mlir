@@ -1,14 +1,17 @@
-// RUN: rm -f cf_ordered_store_CDFG.dot cf_mapped_producers_CDFG.dot cf_mixed_constant_CDFG.dot cf_fallback_rank_two_CDFG.dot cf_crossed_order_CDFG.dot
+// RUN: rm -f cf_ordered_store_CDFG.dot cf_ordered_memory_CDFG.dot cf_paired_values_CDFG.dot cf_mapped_producers_CDFG.dot cf_unrelated_memory_CDFG.dot cf_mixed_constant_CDFG.dot cf_fallback_rank_two_CDFG.dot cf_crossed_order_CDFG.dot
 // RUN: %cgra-opt --adora-kernel-dfg-gen %s | %FileCheck %s
 // RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_ordered_store_CDFG.dot)" -eq 2
+// RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_ordered_memory_CDFG.dot)" -eq 2
 // RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_mapped_producers_CDFG.dot)" -eq 1
 // RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_mixed_constant_CDFG.dot)" -eq 0
 // RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_crossed_order_CDFG.dot)" -eq 2
 // RUN: %FileCheck %s --check-prefix=ORDER-DOT --input-file=cf_ordered_store_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
+// RUN: %FileCheck %s --check-prefix=MEMORY-DOT --input-file=cf_ordered_memory_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=PRODUCER-DOT --input-file=cf_mapped_producers_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
+// RUN: %FileCheck %s --check-prefix=UNRELATED-DOT --input-file=cf_unrelated_memory_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=CONSTANT-DOT --input-file=cf_mixed_constant_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=CROSSED-DOT --input-file=cf_crossed_order_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
-// RUN: rm -f cf_ordered_store_CDFG.dot cf_mapped_producers_CDFG.dot cf_mixed_constant_CDFG.dot cf_fallback_rank_two_CDFG.dot cf_crossed_order_CDFG.dot
+// RUN: rm -f cf_ordered_store_CDFG.dot cf_ordered_memory_CDFG.dot cf_paired_values_CDFG.dot cf_mapped_producers_CDFG.dot cf_unrelated_memory_CDFG.dot cf_mixed_constant_CDFG.dot cf_fallback_rank_two_CDFG.dot cf_crossed_order_CDFG.dot
 
 // CHECK-LABEL: func.func @ordered_nested_then_direct(
 // CHECK-SAME: %[[OUTER:[a-zA-Z0-9]+]]: i1, %[[INNER:[a-zA-Z0-9]+]]: i1, %[[FIRST:[a-zA-Z0-9]+]]: i32, %[[SECOND:[a-zA-Z0-9]+]]: i32
@@ -25,26 +28,67 @@
 // ORDER-DOT-COUNT-2: opcode = "CSTORE"
 // ORDER-DOT: }
 
-// CHECK-LABEL: func.func @mapped_producers
+// CHECK-LABEL: func.func @ordered_store_load_store(
+// CHECK-SAME: %[[COND:[a-zA-Z0-9]+]]: i1, %[[FIRST:[a-zA-Z0-9]+]]: i32
 // CHECK: ADORA.kernel
+// CHECK-NOT: scf.if
+// CHECK: ADORA.cond_store %[[FIRST]], %[[OUTPUT:.*]]{{\[}}%[[ZERO:.*]]{{\]}} if %[[COND]] : memref<8xi32>
+// CHECK-NEXT: %[[LOADED:.*]] = memref.load %[[OUTPUT]]{{\[}}%[[ZERO]]{{\]}} : memref<8xi32>
+// CHECK-NEXT: ADORA.cond_store %[[LOADED]], %[[OUTPUT]]{{\[}}%{{.*}}{{\]}} if %[[COND]] : memref<8xi32>
+// CHECK: ADORA.terminator
+
+// MEMORY-DOT: Digraph G {
+// MEMORY-DOT: CSTORE[[FIRST_STORE:[0-9]+]][opcode = "CSTORE"
+// MEMORY-DOT: load[[LOAD:[0-9]+]][opcode = "load"
+// MEMORY-DOT: CSTORE[[SECOND_STORE:[0-9]+]][opcode = "CSTORE"
+// MEMORY-DOT-DAG: CSTORE[[FIRST_STORE]] -> load[[LOAD]]{{[^]]*}}operand = -1, label = "Op=-1, DepDist = 0"
+// MEMORY-DOT-DAG: load[[LOAD]] -> CSTORE[[SECOND_STORE]]{{[^]]*}}operand = 0, label = "Op=0"
+// MEMORY-DOT: }
+
+// CHECK-LABEL: func.func @paired_branch_values(
+// CHECK: affine.for
+// CHECK: %[[THEN:.*]] = arith.addi
+// CHECK-NEXT: %[[ELSE:.*]] = arith.subi
+// CHECK-NEXT: %[[SELECTED:.*]] = arith.select %{{.*}}, %[[THEN]], %[[ELSE]] : i32
+// CHECK-NEXT: affine.store %[[SELECTED]], %{{.*}}[0] : memref<8xi32>
+
+// CHECK-LABEL: func.func @mapped_producers
 // CHECK: %[[INDEX:.*]] = arith.index_cast %{{.*}} : i32 to index
 // CHECK: %[[VALUE:.*]] = arith.xori %{{.*}}, %{{.*}} : i32
-// CHECK: ADORA.cond_store %[[VALUE]], %{{.*}}[%[[INDEX]]] if %{{.*}} : memref<16xi32>
+// CHECK: %[[PREDICATE:.*]] = arith.xori %{{.*}}, %{{.*}} : i1
+// CHECK: ADORA.kernel
+// CHECK: ADORA.cond_store %[[VALUE]], %{{.*}}[%[[INDEX]]] if %[[PREDICATE]] : memref<16xi32>
 // CHECK: ADORA.terminator
 
 // PRODUCER-DOT: Digraph G {
 // PRODUCER-DOT-DAG: Input[[RAW:[0-9]+]][opcode = "Input", ref_name="cf_mapped_producers:arg0"
-// PRODUCER-DOT-DAG: Input[[COND:[0-9]+]][opcode = "Input", ref_name="cf_mapped_producers:arg3"
+// PRODUCER-DOT-DAG: Input[[VALUE_INPUT:[0-9]+]][opcode = "Input", ref_name="cf_mapped_producers:arg1"
+// PRODUCER-DOT-DAG: Input[[COND:[0-9]+]][opcode = "Input", ref_name="cf_mapped_producers:arg2"
 // PRODUCER-DOT-DAG: XOR[[VALUE:[0-9]+]][opcode = "XOR"
+// PRODUCER-DOT-DAG: XOR[[PREDICATE:[0-9]+]][opcode = "XOR"
 // PRODUCER-DOT-DAG: CONST[[FOUR:[0-9]+]][opcode = "CONST", value="0x00000004"
 // PRODUCER-DOT-DAG: MUL[[BYTE_ADDR:[0-9]+]][opcode = "MUL"
 // PRODUCER-DOT-DAG: CSTORE[[STORE:[0-9]+]][opcode = "CSTORE"
+// PRODUCER-DOT-DAG: Input[[VALUE_INPUT]] -> XOR[[VALUE]]
 // PRODUCER-DOT-DAG: XOR[[VALUE]] -> CSTORE[[STORE]]{{[^]]*}}operand = 0, label = "Op=0"
 // PRODUCER-DOT-DAG: Input[[RAW]] -> MUL[[BYTE_ADDR]]
 // PRODUCER-DOT-DAG: CONST[[FOUR]] -> MUL[[BYTE_ADDR]]
 // PRODUCER-DOT-DAG: MUL[[BYTE_ADDR]] -> CSTORE[[STORE]]{{[^]]*}}operand = 1, label = "Op=1"
-// PRODUCER-DOT-DAG: Input[[COND]] -> CSTORE[[STORE]]{{[^]]*}}operand = 2, label = "Op=2"
+// PRODUCER-DOT-DAG: Input[[COND]] -> XOR[[PREDICATE]]
+// PRODUCER-DOT-DAG: XOR[[PREDICATE]] -> CSTORE[[STORE]]{{[^]]*}}operand = 2, label = "Op=2"
 // PRODUCER-DOT: }
+
+// CHECK-LABEL: func.func @unrelated_direct_memory
+// CHECK: ADORA.kernel
+// CHECK: memref.load
+// CHECK: memref.store
+// CHECK: ADORA.terminator
+
+// UNRELATED-DOT: Digraph G {
+// UNRELATED-DOT: opcode = "CSTORE"
+// UNRELATED-DOT-NOT: opcode = "load"
+// UNRELATED-DOT-NOT: opcode = "store"
+// UNRELATED-DOT: }
 
 // CHECK-LABEL: func.func @mixed_constant_address
 // CHECK: ADORA.kernel
@@ -104,15 +148,61 @@ module {
     return
   }
 
-  func.func @mapped_producers(%raw_index: i32, %value: i32,
-                              %output: memref<16xi32>, %cond: i1) {
+  func.func @ordered_store_load_store(%cond: i1, %first: i32,
+                                      %output: memref<8xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
     ADORA.kernel {
-      %index = arith.index_cast %raw_index : i32 to index
-      %c1 = arith.constant 1 : i32
-      %stored_value = arith.xori %value, %c1 : i32
-      ADORA.cond_store %stored_value, %output[%index] if %cond : memref<16xi32>
+      scf.if %cond {
+        memref.store %first, %output[%c0] : memref<8xi32>
+        %loaded = memref.load %output[%c0] : memref<8xi32>
+        memref.store %loaded, %output[%c1] : memref<8xi32>
+      }
+      ADORA.terminator
+    } {KernelName = "cf_ordered_memory"}
+    return
+  }
+
+  func.func @paired_branch_values(%cond: i1, %lhs: i32, %rhs: i32,
+                                  %output: memref<8xi32>) {
+    ADORA.kernel {
+      affine.for %i = 0 to 8 {
+        scf.if %cond {
+          %then_value = arith.addi %lhs, %rhs : i32
+          affine.store %then_value, %output[0] : memref<8xi32>
+        } else {
+          %else_value = arith.subi %lhs, %rhs : i32
+          affine.store %else_value, %output[0] : memref<8xi32>
+        }
+      }
+      ADORA.terminator
+    } {KernelName = "cf_paired_values"}
+    return
+  }
+
+  func.func @mapped_producers(%raw_index: i32, %value: i32, %cond: i1,
+                              %output: memref<16xi32>) {
+    %index = arith.index_cast %raw_index : i32 to index
+    %c1 = arith.constant 1 : i32
+    %stored_value = arith.xori %value, %c1 : i32
+    %true = arith.constant true
+    %predicate = arith.xori %cond, %true : i1
+    ADORA.kernel {
+      ADORA.cond_store %stored_value, %output[%index] if %predicate : memref<16xi32>
       ADORA.terminator
     } {KernelName = "cf_mapped_producers"}
+    return
+  }
+
+  func.func @unrelated_direct_memory(%input: memref<8xi32>,
+                                     %output: memref<8xi32>, %index: index,
+                                     %value: i32, %cond: i1) {
+    ADORA.kernel {
+      ADORA.cond_store %value, %output[%index] if %cond : memref<8xi32>
+      %loaded = memref.load %input[%index] : memref<8xi32>
+      memref.store %loaded, %output[%index] : memref<8xi32>
+      ADORA.terminator
+    } {KernelName = "cf_unrelated_memory"}
     return
   }
 
