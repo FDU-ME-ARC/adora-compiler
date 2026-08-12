@@ -135,9 +135,12 @@ current lowering deliberately fails closed at these boundaries:
 - nested `affine.apply` address expressions are fully composed before
   arithmetic expansion; any address that still cannot be represented fails
   closed through the CDFG port postcondition;
-- when a CSTORE participates in a block, mapped memory operations in that
-  execution region are conservatively chained in source order, including
-  intervening accesses to other memrefs; and
+- when a CSTORE participates in a kernel, mapped leaf memory operations are
+  conservatively chained in structured lexical order, including intervening
+  accesses to other memrefs and the entry/exit boundaries of nested
+  `affine.for` regions;
+- tensor mapper execution failure propagates to the tool before tensor-op
+  erasure or configuration/execution emission; and
 - every rejection diagnoses the unsupported operation, fails the DFG pass,
   and emits no success DOT for that kernel. Validation precedes normalization,
   and lowering plus both optimized/fallback CDFG attempts run on temporary

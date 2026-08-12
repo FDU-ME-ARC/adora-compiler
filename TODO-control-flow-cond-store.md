@@ -965,8 +965,9 @@ a && b
 * [x] enable edge 连接到真实 backend enable port。
 * [x] nested `affine.apply` 地址先完整 compose 再展开；每个 CSTORE 在写 DOT
   前必须通过 data/address/enable 端口与 memref metadata 完整性检查。
-* [x] CSTORE 所在 execution region 的 mapped memory operation 按源码顺序保守
-  串联，不能越过中间对其他 memref 的普通 memory operation。
+* [x] CSTORE 所在 kernel 的 mapped leaf memory operation 按 structured lexical
+  源码顺序保守串联；顺序跨越 nested `affine.for` 的 entry/exit boundary，且
+  不能越过中间对其他 memref 的普通 memory operation。
 
 ### Regression
 
@@ -1148,6 +1149,7 @@ operand，且没有 `UseEn`。因此本轮只完成并验证了 backend audit、
 0/1/2）、完整 I/O metadata、静态 rank-1 边界、transactional fail-closed
 lowering、memory source ordering、byte offset 和正式回归测试。当前 fp32 Mapper 尝试在这一硬件缺口处
 失败，不能视为 Mapper 配置、emit 或 conditional-store suppression 仿真通过；
+mapper `execute()` 失败会在 tensor op erase 和 config/execute emit 前向工具传播；
 待获得真实的 CSTORE OPC/operation spec、三输入 IOB 和 `UseEn` 配置后再完成阶段 B。
 
 ---
