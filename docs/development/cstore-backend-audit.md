@@ -3,7 +3,8 @@
 **Scope.** This is a source and repository-history audit of the conditional
 store (`CSTORE`) backend contract. It records what the mapper can represent
 today and the separate hardware-spec gap that prevents an end-to-end CSTORE
-claim. It does not change mapper code or hardware specifications.
+claim. It does not add a CSTORE operation specification or change the hardware
+interface.
 
 ## Mapper contract
 
@@ -34,6 +35,24 @@ line 18. The JSON DFG parser transfers each edge's `operand` value (or
 Therefore the frontend/CDFG contract must normalize a CSTORE's operands as
 `data=0`, `address=1`, and `enable=2`; a frontend must emit those destination
 port indices rather than rely on edge order.
+
+## CDFG I/O metadata contract
+
+A CSTORE is serialized as an I/O node as well as a three-input operation. Its
+DOT/LLVM-CDFG record carries the same memory identity and footprint fields used
+by other memory I/O nodes:
+
+- `ref_name` identifies the target (`KernelName:argN` for function block
+  arguments, or the established `BlockLoad`/`LocalMemAlloc` ID for local
+  buffers);
+- `size` is the full memref size in bytes;
+- `offset` is initialized as `0,0`; and
+- `pattern` is `0,1`, denoting one explicit scalar address per invocation.
+
+The pattern is metadata, not an implicit affine address. CSTORE address port 1
+therefore remains connected and byte-scaled in the CDFG. The direct
+LLVM-CDFG-to-mapper parser consumes access-pattern fields only in complete,
+non-empty pairs, so malformed or absent pairs are never indexed past the end.
 
 ## Configuration contract
 
@@ -95,8 +114,19 @@ exercise it.
 ## Delivery boundary
 
 **Stage A may proceed** with ADORA IR support, control-flow lowering,
-normalized CDFG ports, and regression tests. These are frontend and mapper
-contract work that can be checked without claiming an enabled hardware store.
+normalized CDFG ports and metadata, and regression tests. These are frontend
+and mapper-contract checks that do not claim an enabled hardware store. The
+current lowering deliberately fails closed at these boundaries:
+
+- branch-local loads are unsupported because conditional loads are outside
+  Stage A; a read is not speculatively moved across a write;
+- branch operations other than supported stores must be both memory-effect
+  free and speculatable; calls, copies, nested loops/regions, and other effects
+  are rejected before any `scf.if` rewrite;
+- `ADORA.cond_store` under `scf.for` is rejected because its address cannot be
+  represented safely by this CDFG path; `affine.for` remains supported; and
+- every rejection diagnoses the unsupported operation, fails the DFG pass,
+  and emits no success DOT for that kernel.
 
 **Stage B is blocked** until the repository has all of the following:
 
