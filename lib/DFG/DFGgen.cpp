@@ -2882,6 +2882,11 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
   std::map<mlir::Operation*, int> For_loop_level;
   std::map<mlir::Block*, int> loop_block_level;
   SmallVector<mlir::Operation*> OpsOutsideFor;
+  llvm::DenseSet<mlir::Operation *> opsOutsideForSet;
+  auto addOutsideFor = [&](mlir::Operation *op) {
+    if (opsOutsideForSet.insert(op).second)
+      OpsOutsideFor.push_back(op);
+  };
   std::set<std::string> mappedOperationNames;
   {
     std::ifstream opNameFile(CDFG->getOpNameFilePath());
@@ -2914,7 +2919,7 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
         level++;
       }
       if(isa<ADORA::KernelOp>(op->getParentOp()))
-        OpsOutsideFor.push_back(op);
+        addOutsideFor(op);
       // for_region.viewGraph();
     }
     // scf::ForOp forop;
@@ -2934,11 +2939,22 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
       }
       // for_region.viewGraph();
     }
+    else if((isa<affine::AffineLoadOp>(op)
+        || isa<affine::AffineStoreOp>(op)
+        || isa<arith::AddFOp>(op)
+        || isa<arith::AddIOp>(op)
+        || isa<arith::SubFOp>(op)
+        || isa<arith::SubIOp>(op))
+        && isa<ADORA::KernelOp>(op->getParentOp())){
+      // Preserve the original direct-Kernel graph contract. The CSTORE slice
+      // below extends this baseline; it does not replace it.
+      addOutsideFor(op);
+    }
   });
 
-  // Top-level CDFG nodes outside affine loops are needed only when they feed a
+  // Extend the original direct-Kernel graph with mapped producers needed by a
   // conditional-store port. Build that slice recursively so unrelated mapped
-  // memory operations and host-side operations do not enter the kernel graph.
+  // memref operations and host-side operations do not enter the kernel graph.
   func::FuncOp kernelFunction = kernel->getParentOfType<func::FuncOp>();
   llvm::DenseSet<mlir::Operation *> slicedOps;
   auto isInsideAffineLoop = [&](mlir::Operation *op) {
@@ -2968,7 +2984,7 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
     for (mlir::Value operand : producer->getOperands())
       collectCondStoreProducer(operand);
     if (!isInsideAffineLoop(producer))
-      OpsOutsideFor.push_back(producer);
+      addOutsideFor(producer);
   };
 
   kernel.walk([&](ADORA::CondStoreOp store) {
@@ -2978,7 +2994,7 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
     collectCondStoreProducer(store.getCondition());
     if (!isInsideAffineLoop(store) &&
         slicedOps.insert(store.getOperation()).second)
-      OpsOutsideFor.push_back(store.getOperation());
+      addOutsideFor(store.getOperation());
   });
   level_total = level;
   // scf::ForOp scf_for;
