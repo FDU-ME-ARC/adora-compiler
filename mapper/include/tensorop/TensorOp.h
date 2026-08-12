@@ -3,6 +3,7 @@
 
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/Support/LogicalResult.h"
 #include "ADORA/Dialect/ADORATensor/IR/ADORATensor.h"
 
 #include "emit/EmitCGRACall.h"
@@ -22,7 +23,7 @@ inline int tensorOpCnt = 0;
 
 
 
-void MapAdoraTensorOp(MLIRContext* context, mlir::ModuleOp module, 
+LogicalResult MapAdoraTensorOp(MLIRContext* context, mlir::ModuleOp module,
                     std::vector<ADORA_TENSOR_MAPPER*> mappers,
                     
                     CGRACallEmitter* CEmitter, 
@@ -70,7 +71,7 @@ public:
 
 
   /// Function members
-  void MapNestedForOrKernel(ADORA_TENSOR_MAPPER* mapper, 
+  LogicalResult MapNestedForOrKernel(ADORA_TENSOR_MAPPER* mapper,
     mlir::Operation* forOrKernel, std::string& OpNameFile_str);
   void setEmitter(CGRACallEmitter* _) {cEmitter = _;}
   void setEmitter(PytestEmitter* _) {pyEmitter = _;}

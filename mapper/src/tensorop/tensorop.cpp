@@ -10,7 +10,7 @@ namespace mlir{
 namespace ADORA{
 
 
-void MapAdoraTensorOp(MLIRContext* context, mlir::ModuleOp moduleop, 
+LogicalResult MapAdoraTensorOp(MLIRContext* context, mlir::ModuleOp moduleop,
                     std::vector<ADORA_TENSOR_MAPPER*> mappers,
 
                     CGRACallEmitter* CEmitter, 
@@ -23,13 +23,18 @@ void MapAdoraTensorOp(MLIRContext* context, mlir::ModuleOp moduleop,
   TensorDataflowGen engine(context);
   engine.setEmitter(CEmitter);
   engine.setEmitter(PyEmitter);
+  engine.setEmitter(SdkEmitter);
   engine.setMappingArgs(adg, OpNameFile_str, timeout_ms, max_iters, objOpt);
   engine.setVerbose(verbose);
   if(verbose) moduleop.dump();
-  moduleop.walk([&](mlir::Operation* op) {
-    if(engine.dispatchVisitor(op)){
+  WalkResult walkResult = moduleop.walk([&](mlir::Operation* op) {
+    bool isTensorOp = isa<ADORATensor::GemmOp, ADORATensor::ConvOp>(op);
+    bool handled = engine.dispatchVisitor(op);
+    if(handled){
       if(verbose) {moduleop.dump();}
     }
+    if (isTensorOp && !handled)
+      return WalkResult::interrupt();
     
  
     // mapper->setDFG(dfg);
@@ -63,8 +68,10 @@ void MapAdoraTensorOp(MLIRContext* context, mlir::ModuleOp moduleop,
     //   }
     // }
     // kernel_cnt++;
+    return WalkResult::advance();
   });
 
+  return walkResult.wasInterrupted() ? failure() : success();
 }
 
 }

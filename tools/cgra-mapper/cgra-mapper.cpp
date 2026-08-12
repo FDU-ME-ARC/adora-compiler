@@ -340,8 +340,13 @@ int main(int argc, char **argv) {
   /////////////////////////
   /// Map ADORA Tensor
   /////////////////////////
-  MapAdoraTensorOp(&context, moduleop, tensor_mapper_Vec, &CEmitter, &PyEmitter, &SDKEmitter,
-    subadg, GeneralOpNameFile_str, timeout_ms, max_iters, objOpt, verbose);
+  if (failed(MapAdoraTensorOp(&context, moduleop, tensor_mapper_Vec, &CEmitter,
+                              &PyEmitter, &SDKEmitter, subadg,
+                              GeneralOpNameFile_str, timeout_ms, max_iters,
+                              objOpt, verbose))) {
+    llvm::errs() << "cgra-mapper: tensor CDFG generation failed.\n";
+    return 1;
+  }
   // if(emit_type == "pytest"){
   //   MapAdoraTensorOp(tensor_mapper_Vec)
   // }

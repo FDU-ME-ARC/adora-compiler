@@ -951,15 +951,22 @@ static mlir::Value findExistingLoadValue(scf::IfOp ifOp, mlir::Value memref,
 static mlir::Value materializeCondStoreIndex(OpBuilder &builder, Location loc,
                                              const StoreInfo &store) {
     auto memrefType = dyn_cast<MemRefType>(store.memref.getType());
-    if (!memrefType || memrefType.getRank() != 1)
+    if (!memrefType || memrefType.getRank() != 1 ||
+        !memrefType.hasStaticShape())
         return {};
 
     if (auto affineStore = dyn_cast<affine::AffineStoreOp>(store.op)) {
         if (affineStore.getAffineMap().getNumResults() != 1)
             return {};
-        auto expanded = affine::expandAffineMap(
-            builder, loc, affineStore.getAffineMap(),
+        AffineMap composedMap = affineStore.getAffineMap();
+        SmallVector<mlir::Value> composedOperands(
             affineStore.getMapOperands());
+        affine::fullyComposeAffineMapAndOperands(&composedMap,
+                                                 &composedOperands);
+        if (composedMap.getNumResults() != 1)
+            return {};
+        auto expanded = affine::expandAffineMap(
+            builder, loc, composedMap, composedOperands);
         if (!expanded || expanded->size() != 1)
             return {};
         return expanded->front();
@@ -1039,6 +1046,28 @@ static LogicalResult preflightSCFIfToSelect(ADORA::KernelOp kernel) {
     });
 
     kernel.walk([&](scf::IfOp ifOp) {
+        bool containsStore = false;
+        ifOp.walk([&](Operation *nested) {
+            if (nested != ifOp.getOperation() &&
+                isa<affine::AffineStoreOp, memref::StoreOp,
+                    ADORA::CondStoreOp>(nested))
+                containsStore = true;
+        });
+        if (containsStore) {
+            for (Operation *ancestor = ifOp->getParentOp(); ancestor;
+                 ancestor = ancestor->getParentOp()) {
+                if (isa<scf::ForOp>(ancestor)) {
+                    ifOp.emitError(
+                        "store-bearing scf.if nested under scf.for is "
+                        "unsupported by CDFG generation; use affine.for");
+                    invalid = true;
+                    break;
+                }
+                if (ancestor == kernel.getOperation())
+                    break;
+            }
+        }
+
         auto validateBlock = [&](Block *block) {
             if (!block)
                 return;
@@ -3670,31 +3699,63 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
     }
   }
 
-  // A CSTORE has no SSA result, so source order alone does not constrain a
-  // scheduler when an ordered memory operation follows it. Conservatively
-  // chain adjacent mapped memory effects in the same block whenever either
-  // endpoint is a CSTORE. Existing SSA edges already provide the dependency
-  // and do not need a duplicate memory edge.
-  llvm::DenseMap<mlir::Block *, mlir::Operation *> previousMemoryOp;
+  // A CSTORE has no SSA result, so source order alone does not constrain the
+  // scheduler.  If an execution block contains a CSTORE, conservatively chain
+  // its complete mapped memory sequence.  This retains ordering through an
+  // intervening access to a distinct memref without imposing dependencies on
+  // blocks that contain only the legacy ordinary memory operations.
+  llvm::DenseMap<mlir::Block *, llvm::SmallVector<mlir::Operation *, 4>>
+      orderedMemoryOps;
   kernel.walk([&](mlir::Operation *op) {
     if (op->getNumRegions() != 0 ||
         op->hasTrait<mlir::OpTrait::IsTerminator>() ||
         mlir::isMemoryEffectFree(op) || !CDFG->node(op))
       return;
+    orderedMemoryOps[op->getBlock()].push_back(op);
+  });
 
-    mlir::Operation *&previous = previousMemoryOp[op->getBlock()];
-    if (previous &&
-        (isa<ADORA::CondStoreOp>(previous) || isa<ADORA::CondStoreOp>(op))) {
+  auto hasGraphPath = [](LLVMCDFGNode *source, LLVMCDFGNode *target) {
+    llvm::SmallVector<LLVMCDFGNode *, 8> worklist{source};
+    llvm::DenseSet<LLVMCDFGNode *> visited;
+    while (!worklist.empty()) {
+      LLVMCDFGNode *current = worklist.pop_back_val();
+      if (!visited.insert(current).second)
+        continue;
+      if (current == target)
+        return true;
+      llvm::append_range(worklist, current->outputNodes());
+    }
+    return false;
+  };
+
+  bool invalidMemoryOrder = false;
+  for (auto &blockAndOps : orderedMemoryOps) {
+    auto &memoryOps = blockAndOps.second;
+    if (!llvm::any_of(memoryOps, [](Operation *op) {
+          return isa<ADORA::CondStoreOp>(op);
+        }))
+      continue;
+
+    for (size_t i = 1; i < memoryOps.size(); ++i) {
+      Operation *previous = memoryOps[i - 1];
+      Operation *current = memoryOps[i];
       LLVMCDFGNode *sourceNode = CDFG->node(previous);
-      LLVMCDFGNode *targetNode = CDFG->node(op);
+      LLVMCDFGNode *targetNode = CDFG->node(current);
       if (!CDFG->edge(sourceNode, targetNode)) {
+        if (hasGraphPath(targetNode, sourceNode)) {
+          current->emitError(
+              "cannot preserve CSTORE memory source order without creating "
+              "a CDFG cycle");
+          invalidMemoryOrder = true;
+          break;
+        }
         auto isRead = [](mlir::Operation *memoryOp) {
           return isa<affine::AffineLoadOp, memref::LoadOp>(memoryOp);
         };
         DependInfo dependence;
         dependence.type = isRead(previous)
-            ? (isRead(op) ? INPUT_DEP : ANTI_DEP)
-            : (isRead(op) ? FLOW_DEP : OUTPUT_DEP);
+            ? (isRead(current) ? INPUT_DEP : ANTI_DEP)
+            : (isRead(current) ? FLOW_DEP : OUTPUT_DEP);
         dependence.isConstDist = true;
         dependence.distance = 0;
 
@@ -3705,8 +3766,9 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
         CDFG->addEdge(sourceNode, targetNode, EDGE_TYPE_MEM);
       }
     }
-    previous = op;
-  });
+  }
+  if (invalidMemoryOrder)
+    return false;
   if(verbose) { CDFG->CDFGtoDOT(CDFG->name_str()+"_0_CDFG.dot");}
 
   ////////////////////////
@@ -3834,6 +3896,34 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
   if(verbose) { CDFG->CDFGtoDOT(CDFG->name_str()+"_3_CDFG.dot");}
   FuseOperators(CDFG, verbose);
 
+  // Fail closed rather than serializing a CSTORE whose required value,
+  // explicit byte address, enable, or memory identity was lost while building
+  // and simplifying the graph.
+  bool malformedCStore = false;
+  kernel.walk([&](ADORA::CondStoreOp store) {
+    LLVMCDFGNode *node = CDFG->node(store.getOperation());
+    unsigned portCounts[3] = {0, 0, 0};
+    if (node) {
+      for (const auto &inputAndInfo : node->inputInfoMap()) {
+        for (const NodeInfo &info : inputAndInfo.second) {
+          if (info.idx >= 0 && info.idx < 3)
+            ++portCounts[info.idx];
+        }
+      }
+    }
+    if (!node || portCounts[0] != 1 || portCounts[1] != 1 ||
+        portCounts[2] != 1 || node->getMemrefName().empty() ||
+        node->getMemrefSize() <= 0 || node->getInitAddr() != "0" ||
+        node->getLinearAccess() != "0,1") {
+      store.emitError(
+          "malformed CSTORE CDFG node: requires exactly connected ports 0, "
+          "1, and 2 and valid memory metadata");
+      malformedCStore = true;
+    }
+  });
+  if (malformedCStore)
+    return false;
+
   return true;
 }
 
@@ -3841,61 +3931,77 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
 LogicalResult mlir::ADORA::generateCDFGfromKernel(LLVMCDFG* &CDFG,
                                                   ADORA::KernelOp kernel,
                                                   bool verbose){
-  
-  
-  /// remove truncf op
-  RemoveConstantTruncF(kernel);
-
-  // hjy
-  // [Add] If-Conversion (scf.if -> arith.select)
-  if (failed(lowerSCFIfToSelect(kernel)))
+  // Validate the original operation before any normalization or if-conversion.
+  // All subsequent mutations happen on detached copies which replace the
+  // original only after a complete CDFG has been generated successfully.
+  if (failed(preflightSCFIfToSelect(kernel)))
     return failure();
+
+  ADORA::KernelOp fallbackKernel = kernel.clone();
+  kernel.getOperation()->getBlock()->push_back(fallbackKernel);
+  fallbackKernel->moveBefore(kernel);
+
+  RemoveConstantTruncF(fallbackKernel);
+  if (failed(lowerSCFIfToSelect(fallbackKernel))) {
+    fallbackKernel.erase();
+    return failure();
+  }
   if(verbose) {
     llvm::errs() << "[ADORA] Applied If-Conversion (scf.if -> arith.select).\n";
-    kernel.dump(); 
+    fallbackKernel.dump();
   }
-  // [Add] End
 
-  ADORA::KernelOp kernel_clone = kernel.clone();
-  // kernel_clone.dump();
-  kernel.getOperation()->getBlock()->push_back(kernel_clone);
-  kernel_clone->moveBefore(kernel);
+  ADORA::KernelOp optimizedKernel = fallbackKernel.clone();
+  kernel.getOperation()->getBlock()->push_back(optimizedKernel);
+  optimizedKernel->moveBefore(fallbackKernel);
 
   /// Hoist load store op
   /// FIX: We should judge whether to use hoist
-  HoistLoadStoreInKernelOp(kernel); 
-  if(verbose) kernel.dump();
+  HoistLoadStoreInKernelOp(optimizedKernel);
+  if(verbose) optimizedKernel.dump();
 
   
 
   /// For every loop carried value, find their accumulation mode. Move initial value computing to outer most level.
-  MoveLoopCarriedInitailValue(kernel);
-  if(verbose) kernel.dump();
+  MoveLoopCarriedInitailValue(optimizedKernel);
+  if(verbose) optimizedKernel.dump();
 
   /// For accumulation chain, move accumulation operation to the last using commutative law of addition/multiplication
-  MoveAccumulationToLast(kernel);
-  if(verbose) kernel.dump();
+  MoveAccumulationToLast(optimizedKernel);
+  if(verbose) optimizedKernel.dump();
 
   /// insert ISEL operator for loop carried value(not acc)
-  InsertIselForLoopCarry(kernel, verbose);
-  if(verbose) kernel.dump();
+  InsertIselForLoopCarry(optimizedKernel, verbose);
+  if(verbose) optimizedKernel.dump();
+
+  auto resetCDFG = [&]() {
+    LLVMCDFG *newCDFG =
+        new LLVMCDFG(CDFG->name_str(), CDFG->getOpNameFilePath());
+    delete CDFG;
+    CDFG = newCDFG;
+  };
 
   /// Generate
-  if(generateCDFGfromKernelAfterOptimization(CDFG, kernel, verbose)){
-    kernel_clone.erase();
+  if(generateCDFGfromKernelAfterOptimization(CDFG, optimizedKernel, verbose)){
+    kernel->getRegion(0).takeBody(optimizedKernel->getRegion(0));
+    optimizedKernel.erase();
+    fallbackKernel.erase();
   }
   else{
     if(verbose) llvm::errs() << "[Mion] CDFG generation failed. Try again with no opt.\n";
-    if(verbose) kernel.dump();
-    if(verbose) kernel_clone.dump();
-    LLVMCDFG* NewCDFG = new LLVMCDFG(CDFG->name_str(), CDFG->getOpNameFilePath());
-    delete CDFG;
-    CDFG = NewCDFG;
-    if(generateCDFGfromKernelAfterOptimization(CDFG, kernel_clone, verbose)){
-      kernel.erase();
+    if(verbose) optimizedKernel.dump();
+    if(verbose) fallbackKernel.dump();
+    resetCDFG();
+    if(generateCDFGfromKernelAfterOptimization(CDFG, fallbackKernel, verbose)){
+      kernel->getRegion(0).takeBody(fallbackKernel->getRegion(0));
+      optimizedKernel.erase();
+      fallbackKernel.erase();
     }
     else{
       llvm::errs() << "[ERROR] CDFG generation failed again. Abort.\n";
+      resetCDFG();
+      optimizedKernel.erase();
+      fallbackKernel.erase();
       return failure();
     }
   }

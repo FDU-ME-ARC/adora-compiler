@@ -42,3 +42,12 @@ func.func @condition_must_be_i1(%value: i32, %buffer: memref<16xi32>,
   "ADORA.cond_store"(%value, %buffer, %index, %condition) : (i32, memref<16xi32>, index, i32) -> ()
   return
 }
+
+// -----
+
+// CHECK: error: 'ADORA.cond_store' op requires a statically shaped rank-1 memref
+func.func @dynamic_rank_one(%value: i32, %buffer: memref<?xi32>,
+                            %index: index, %condition: i1) {
+  ADORA.cond_store %value, %buffer[%index] if %condition : memref<?xi32>
+  return
+}

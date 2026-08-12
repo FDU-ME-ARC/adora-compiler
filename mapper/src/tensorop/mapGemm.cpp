@@ -67,7 +67,7 @@ void tryToMoveOutBlockAccessOp(affine::AffineForOp forop){
   }
 }
 
-void TensorDataflowGen::MapNestedForOrKernel(
+LogicalResult TensorDataflowGen::MapNestedForOrKernel(
   ADORA_TENSOR_MAPPER* mapper, mlir::Operation* forOrKernel, std::string& OpNameFile_str){
   ADORA::KernelOp kernel;
   if(isa<ADORA::KernelOp>(forOrKernel)){
@@ -75,6 +75,10 @@ void TensorDataflowGen::MapNestedForOrKernel(
   }
   else if(isa<affine::AffineForOp>(forOrKernel)){
     kernel = findTheOnlyKernelInNestedLoop(dyn_cast<affine::AffineForOp>(forOrKernel));
+  }
+  if (!kernel) {
+    forOrKernel->emitError("tensor lowering did not produce an ADORA.kernel");
+    return failure();
   }
   kernel.getOperation()->setAttr("Pingpong", mlir::UnitAttr::get(forOrKernel->getContext()));
 
@@ -88,7 +92,7 @@ void TensorDataflowGen::MapNestedForOrKernel(
   LLVMCDFG *CDFG = new LLVMCDFG(kernelName, OpNameFile_str);
   if (failed(generateCDFGfromKernel(CDFG, kernel, /*verbose=*/_verbose))) {
     delete CDFG;
-    return;
+    return failure();
   }
 
   /// DFG Mapping to CGRA architecture
@@ -138,6 +142,7 @@ void TensorDataflowGen::MapNestedForOrKernel(
   //   ADORA::LocalMemAllocOp alloc = elem.first;
   //   alloc.dump();
   // }
+  return success();
 }
 
 bool TensorDataflowGen::visitOp(ADORATensor::GemmOp op){
@@ -163,10 +168,13 @@ bool TensorDataflowGen::visitOp(ADORATensor::GemmOp op){
   if(_verbose) newfor.dump();
 
   ADORA_TENSOR_MAPPER* mapper = new ADORA_TENSOR_MAPPER(_adg, _timeout_ms, _max_iters, _objOpt);
-  mappers.push_back(mapper);
       
   // mlir::Operation* loweredIR = op->getNextNode();
-  MapNestedForOrKernel(mapper, newfor, _OpNameFile_str);
+  if (failed(MapNestedForOrKernel(mapper, newfor, _OpNameFile_str))) {
+    delete mapper;
+    return false;
+  }
+  mappers.push_back(mapper);
 
   op.erase();
 
