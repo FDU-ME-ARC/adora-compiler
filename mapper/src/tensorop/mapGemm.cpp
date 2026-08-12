@@ -78,6 +78,7 @@ LogicalResult TensorDataflowGen::MapNestedForOrKernel(
   }
   if (!kernel) {
     forOrKernel->emitError("tensor lowering did not produce an ADORA.kernel");
+    delete mapper;
     return failure();
   }
   kernel.getOperation()->setAttr("Pingpong", mlir::UnitAttr::get(forOrKernel->getContext()));
@@ -92,6 +93,7 @@ LogicalResult TensorDataflowGen::MapNestedForOrKernel(
   LLVMCDFG *CDFG = new LLVMCDFG(kernelName, OpNameFile_str);
   if (failed(generateCDFGfromKernel(CDFG, kernel, /*verbose=*/_verbose))) {
     delete CDFG;
+    delete mapper;
     return failure();
   }
 
@@ -110,13 +112,29 @@ LogicalResult TensorDataflowGen::MapNestedForOrKernel(
     //   CEmitter.preestablishPlacementConstraints(kernel, mapper);
     // }
 
-  std::filesystem::create_directory(kernelName + "_map_result");
-  CDFG->CDFGtoDOT(kernelName + "_map_result/before_map_" + CDFG->name_str() + "_CDFG.dot");
-  bool succeed = mapper->execute(/*dumpCallFunc=*/false, /*dumpMappedViz*/true, /*resultDir=*/kernelName + "_map_result");
+  std::string resultDir = kernelName + "_map_result";
+  bool createdResultDir = std::filesystem::create_directory(resultDir);
+  bool succeed = mapper->execute(/*dumpCallFunc=*/false,
+                                 /*dumpMappedViz=*/true,
+                                 /*resultDir=*/resultDir);
     // std::filesystem::create_directory("map_result");
     // CDFG->CDFGtoDOT("map_result/before_map_" + CDFG->name_str() + "_CDFG.dot");
     // bool succeed = mapper->execute(/*dumpCallFunc=*/false, /*dumpMappedViz*/true, /*resultDir=*/"map_result");
-  if(succeed){
+  if (!succeed) {
+    kernel.emitError("failed to map tensor kernel to the selected ADG");
+    delete mapper;
+    delete dfg_ir;
+    delete CDFG;
+    if (createdResultDir) {
+      std::error_code cleanupError;
+      std::filesystem::remove_all(resultDir, cleanupError);
+    }
+    return failure();
+  }
+
+  CDFG->CDFGtoDOT(resultDir + "/before_map_" + CDFG->name_str() +
+                  "_CDFG.dot");
+  {
       // Mapping is successful, get all blockload and blockstore op and corresponding spad memory addresses.
       // if(_emit_type == "pytest"){
         pyEmitter->setMapResult(kernel, mapper);
@@ -130,7 +148,7 @@ LogicalResult TensorDataflowGen::MapNestedForOrKernel(
       //   cEmitter->DataBlockOperationsToSPADInfo(kernel, mapper);
       //   cEmitter->GenerateCGRAConfig(kernel, mapper);
       // }
-    }
+  }
     // kernel_cnt++;
   forOrKernel->dump();
 
@@ -171,7 +189,6 @@ bool TensorDataflowGen::visitOp(ADORATensor::GemmOp op){
       
   // mlir::Operation* loweredIR = op->getNextNode();
   if (failed(MapNestedForOrKernel(mapper, newfor, _OpNameFile_str))) {
-    delete mapper;
     return false;
   }
   mappers.push_back(mapper);

@@ -132,7 +132,6 @@ namespace mlir
             ADORA_TENSOR_MAPPER *mapper = new ADORA_TENSOR_MAPPER(_adg, _timeout_ms, _max_iters, _objOpt);
             if (failed(MapNestedForOrKernel(mapper, newfor,
                                             _OpNameFile_str))) {
-                delete mapper;
                 return false;
             }
             mappers.push_back(mapper);
