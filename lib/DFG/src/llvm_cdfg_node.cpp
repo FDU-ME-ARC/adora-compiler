@@ -104,7 +104,6 @@ void LLVMCDFGNode::addInputNode(LLVMCDFGNode *node, int idx, bool isBackEdge, Co
 void LLVMCDFGNode::addOutputNode(LLVMCDFGNode *node, bool isBackEdge, CondVal cond)
 {
     if(std::find(_outputNodes.begin(), _outputNodes.end(), node) != _outputNodes.end()){
-        errs()<<"%%%%%"<<this->getName()<<"'s outputlist already has "<<node->getName()<<"\n";
         return;
     }
     _outputNodes.push_back(node);
