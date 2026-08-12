@@ -226,6 +226,7 @@ public:
     std::vector<int> getInputIndices(LLVMCDFGNode *node);           // @jhlou input index
     LLVMCDFGNode* getInputPort(int idx);           // get input node of idx port
     void setInputPort(LLVMCDFGNode *node, int idx);           // get input node of idx port
+    void swapInputPorts(int firstIdx, int secondIdx);
     bool isInputBackEdge(LLVMCDFGNode *node);      // input -> this node is back-edge
     CondVal getInputCondVal(LLVMCDFGNode *node);   // conditional dependence between inputs and this node
     bool isOutputBackEdge(LLVMCDFGNode *node);     // this node -> output is back-edge

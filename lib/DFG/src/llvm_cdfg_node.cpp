@@ -73,19 +73,22 @@ std::string LLVMCDFGNode::getName()
 void LLVMCDFGNode::addInputNode(LLVMCDFGNode *node, int idx, bool isBackEdge, CondVal cond)
 {
     _inputPortMap[idx] = node;
+    NodeInfo info;
+    info.idx = idx;
+    info.isBackEdge = isBackEdge;
+    info.cond = cond;
+
     if(std::find(_inputNodes.begin(), _inputNodes.end(), node) != _inputNodes.end()){
-        NodeInfo info;
-        info.idx = idx;
-        info.isBackEdge = isBackEdge;
-        info.cond = cond;
-        std::vector<int> indices = getInputIndices(node);
-        if(std::find(indices.begin(), indices.end(), idx) != indices.end()){
+        auto &infos = _inputInfoMap[node];
+        if(std::any_of(infos.begin(), infos.end(),
+                       [idx](const NodeInfo &existing) {
+                           return existing.idx == idx;
+                       })){
             errs()<<"%%%%%"<<this->getName()<<"'s inputlist already has "<<node->getName()<<"\n";
             return;
         }
-        else{
-            _inputInfoMap[node].push_back(info);
-        }
+        infos.push_back(info);
+        return;
     }
     _inputNodes.push_back(node);
     // if(node->instruction() != NULL && dyn_cast<PHINode>(node->instruction())){
@@ -93,10 +96,6 @@ void LLVMCDFGNode::addInputNode(LLVMCDFGNode *node, int idx, bool isBackEdge, Co
     // }else{
     //     _inputInfoMap[node].isPHI = false;
     // }
-    NodeInfo info;
-    info.idx = idx;
-    info.isBackEdge = isBackEdge;
-    info.cond = cond;
     _inputInfoMap[node].push_back(info);
 }
 
@@ -224,6 +223,37 @@ void LLVMCDFGNode::setInputPort(LLVMCDFGNode *node, int idx)
     _inputPortMap[idx] = node;
 } 
 
+void LLVMCDFGNode::swapInputPorts(int firstIdx, int secondIdx)
+{
+    if (firstIdx == secondIdx)
+        return;
+
+    auto firstIt = _inputPortMap.find(firstIdx);
+    auto secondIt = _inputPortMap.find(secondIdx);
+    bool hasFirst = firstIt != _inputPortMap.end();
+    bool hasSecond = secondIt != _inputPortMap.end();
+    LLVMCDFGNode *firstNode = hasFirst ? firstIt->second : nullptr;
+    LLVMCDFGNode *secondNode = hasSecond ? secondIt->second : nullptr;
+
+    if (hasFirst)
+        _inputPortMap.erase(firstIdx);
+    if (hasSecond)
+        _inputPortMap.erase(secondIdx);
+    if (hasFirst)
+        _inputPortMap[secondIdx] = firstNode;
+    if (hasSecond)
+        _inputPortMap[firstIdx] = secondNode;
+
+    for (auto &entry : _inputInfoMap) {
+        for (NodeInfo &info : entry.second) {
+            if (info.idx == firstIdx)
+                info.idx = secondIdx;
+            else if (info.idx == secondIdx)
+                info.idx = firstIdx;
+        }
+    }
+}
+
 // input -> this node is back-edge
 bool LLVMCDFGNode::isInputBackEdge(LLVMCDFGNode *node)
 {
@@ -327,4 +357,3 @@ void LLVMCDFGNode::delDstDep(LLVMCDFGNode *node)
 // 	}
 // 	return false;
 // }
-

@@ -876,7 +876,7 @@ static mlir::Value findExistingLoadValue(scf::IfOp ifOp, mlir::Value memref,
 // The main function to lower scf.if to select with store sinking support
 static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
     llvm::SmallVector<scf::IfOp, 4> ifOps;
-    kernel.walk([&](scf::IfOp op) {
+    kernel.walk<WalkOrder::PostOrder>([&](scf::IfOp op) {
         ifOps.push_back(op);
     });
 
@@ -2632,17 +2632,13 @@ static void FuseOperators(LLVMCDFG* CDFG, bool verbose){
 
 /// After HandleSelfCycle, fix operand indices for SEL nodes. When adding edges we use
 /// MLIR operand order (0=cond, 1=true_value, 2=false_value). CDFG SEL expects
-/// 0=value_if_false, 1=value_if_true, 2=cond. Remap each input's idx to 2 - old_idx.
+/// 0=value_if_false, 1=value_if_true, 2=cond.
 static void fixSELOperandIndices(LLVMCDFG *CDFG, bool verbose) {
   for (auto nodepair : CDFG->nodes()) {
     LLVMCDFGNode *node = nodepair.second;
     if (node->getTypeName() != "SEL")
       continue;
-    for (LLVMCDFGNode *inputNode : node->inputNodes()) {
-      int oldIdx = node->getInputIdx(inputNode);
-      int newIdx = 2 - oldIdx;
-      node->setInputIdx(inputNode, newIdx);
-    }
+    node->swapInputPorts(0, 2);
   }
 }
 
@@ -3030,6 +3026,8 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
   }
 
   /*** Add Edges ***/
+  std::map<std::pair<mlir::Block *, unsigned>, LLVMCDFGNode *>
+      scalarInputNodes;
   for (auto nodepair : CDFG->nodes())
   {
     // int id = nodepair.first;
@@ -3044,6 +3042,8 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
     }
 
     mlir::Operation *op = SuccNode->operation();
+    if (!op)
+      continue;
     if(verbose) {errs() << nodepair.first << ".Node:";}
     if(verbose) {op->dump();}
     for (unsigned operand_idx = 0; operand_idx < op->getNumOperands(); operand_idx++)
@@ -3063,6 +3063,37 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
         /// Operands is a loop index or loop arg
         mlir::BlockArgument arg = _v.cast<BlockArgument>();
         mlir::Block * owner = arg.getOwner();
+
+        mlir::Type argType = arg.getType();
+        if (isa<func::FuncOp>(owner->getParentOp()) &&
+            (argType.isa<mlir::IntegerType>() ||
+             argType.isa<mlir::FloatType>())) {
+          auto key = std::make_pair(owner, arg.getArgNumber());
+          auto inputIt = scalarInputNodes.find(key);
+          if (inputIt == scalarInputNodes.end()) {
+            AnceNode = CDFG->addNode("Input");
+            AnceNode->setTypeName("Input");
+            AnceNode->setLoopLevel(SuccNode->getLoopLevel());
+
+            unsigned bitWidth = argType.isa<mlir::IntegerType>()
+                                    ? argType.cast<mlir::IntegerType>().getWidth()
+                                    : argType.cast<mlir::FloatType>().getWidth();
+            AnceNode->setMemrefName(CDFG->name_str() + ":arg" +
+                                    std::to_string(arg.getArgNumber()));
+            AnceNode->setMemrefSize(std::max(1u, (bitWidth + 7u) / 8u));
+            AnceNode->setInitAddr("0");
+            AnceNode->setLinearAccess("0,1");
+            scalarInputNodes[key] = AnceNode;
+          } else {
+            AnceNode = inputIt->second;
+          }
+
+          AnceNode->addOutputNode(SuccNode, false);
+          SuccNode->addInputNode(AnceNode, edgeidx, false);
+          CDFG->addEdge(AnceNode, SuccNode);
+          continue;
+        }
+
         int blk_level = loop_block_level[owner];
         
         // _v.dump();

@@ -210,7 +210,8 @@ void LLVMCDFG::CDFGtoDOT(std::string fileName) {
         // if(node->hasConst()){
         //     ofs << ", Const=" << node->constVal();
         // }
-        if(node->isLinearAccess()){
+        if(node->isLinearAccess() ||
+           (TypeName == "Input" && !node->getLinearAccess().empty())){
             // if(ins != NULL){
             //     if(dyn_cast<LoadInst>(ins) || dyn_cast<StoreInst>(ins))
             //     ofs << ", ArrayName=" << node->getLSArrayName();
