@@ -139,8 +139,13 @@ current lowering deliberately fails closed at these boundaries:
   conservatively chained in structured lexical order, including intervening
   accesses to other memrefs and the entry/exit boundaries of nested
   `affine.for` regions;
+- the optimized CDFG clone bypasses affine load/store-pair hoisting whenever it
+  contains a CSTORE, because that transform does not model CSTORE as a memory
+  ordering barrier; kernels without CSTORE retain the existing hoist path;
 - tensor mapper execution failure propagates to the tool before tensor-op
-  erasure or configuration/execution emission; and
+  erasure or configuration/execution emission. The failed in-memory module may
+  still contain temporary lowered loop IR beside the unerased tensor op, but
+  the caller exits without serializing or emitting it; and
 - every rejection diagnoses the unsupported operation, fails the DFG pass,
   and emits no success DOT for that kernel. Validation precedes normalization,
   and lowering plus both optimized/fallback CDFG attempts run on temporary
