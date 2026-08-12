@@ -2,7 +2,7 @@
 // RUN: %cgra-opt --adora-kernel-dfg-gen %s | %FileCheck %s
 // RUN: test -s cf_else_if_CDFG.dot
 // RUN: test "$(grep -c 'opcode = \"SEL\"' cf_else_if_CDFG.dot)" -eq 2
-// RUN: %FileCheck %s --check-prefix=DOT --input-file=cf_else_if_CDFG.dot
+// RUN: %FileCheck %s --check-prefix=DOT --input-file=cf_else_if_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL'
 // RUN: rm -f cf_else_if_CDFG.dot
 
 // CHECK-LABEL: func.func @if_else_if_else
@@ -20,8 +20,6 @@
 // DOT-DAG: Input[[B]] -> SEL[[INNER]]{{[^]]*}}operand = 2, label = "Op=2"
 // DOT-DAG: Input[[A]] -> SEL[[OUTER]]{{[^]]*}}operand = 2, label = "Op=2"
 // DOT-DAG: SEL[[INNER]] -> SEL[[OUTER]]{{[^]]*}}operand = 0, label = "Op=0"
-// DOT-NOT: opcode = "undefined"
-// DOT-NOT: opcode = "CTRL
 // DOT: }
 
 module {

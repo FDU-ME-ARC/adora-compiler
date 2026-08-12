@@ -3065,7 +3065,9 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
         mlir::Block * owner = arg.getOwner();
 
         mlir::Type argType = arg.getType();
-        if (isa<func::FuncOp>(owner->getParentOp()) &&
+        auto func = dyn_cast<func::FuncOp>(owner->getParentOp());
+        if (func && owner == &func.getBody().front() &&
+            arg.getArgNumber() < func.getNumArguments() &&
             (argType.isa<mlir::IntegerType>() ||
              argType.isa<mlir::FloatType>())) {
           auto key = std::make_pair(owner, arg.getArgNumber());
