@@ -3700,18 +3700,18 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
   }
 
   // A CSTORE has no SSA result, so source order alone does not constrain the
-  // scheduler.  If an execution block contains a CSTORE, conservatively chain
-  // its complete mapped memory sequence.  This retains ordering through an
-  // intervening access to a distinct memref without imposing dependencies on
-  // blocks that contain only the legacy ordinary memory operations.
-  llvm::DenseMap<mlir::Block *, llvm::SmallVector<mlir::Operation *, 4>>
-      orderedMemoryOps;
+  // scheduler.  Flatten mapped leaf memory effects in structured lexical
+  // execution order.  When a CSTORE participates, chaining the complete
+  // sequence preserves both same-block order and the entry/exit boundaries of
+  // affine loops (including nested loops).  Kernels without CSTORE retain the
+  // legacy graph unchanged.
+  llvm::SmallVector<mlir::Operation *, 8> orderedMemoryOps;
   kernel.walk([&](mlir::Operation *op) {
     if (op->getNumRegions() != 0 ||
         op->hasTrait<mlir::OpTrait::IsTerminator>() ||
         mlir::isMemoryEffectFree(op) || !CDFG->node(op))
       return;
-    orderedMemoryOps[op->getBlock()].push_back(op);
+    orderedMemoryOps.push_back(op);
   });
 
   auto hasGraphPath = [](LLVMCDFGNode *source, LLVMCDFGNode *target) {
@@ -3729,16 +3729,12 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
   };
 
   bool invalidMemoryOrder = false;
-  for (auto &blockAndOps : orderedMemoryOps) {
-    auto &memoryOps = blockAndOps.second;
-    if (!llvm::any_of(memoryOps, [](Operation *op) {
-          return isa<ADORA::CondStoreOp>(op);
-        }))
-      continue;
-
-    for (size_t i = 1; i < memoryOps.size(); ++i) {
-      Operation *previous = memoryOps[i - 1];
-      Operation *current = memoryOps[i];
+  if (llvm::any_of(orderedMemoryOps, [](Operation *op) {
+        return isa<ADORA::CondStoreOp>(op);
+      })) {
+    for (size_t i = 1; i < orderedMemoryOps.size(); ++i) {
+      Operation *previous = orderedMemoryOps[i - 1];
+      Operation *current = orderedMemoryOps[i];
       LLVMCDFGNode *sourceNode = CDFG->node(previous);
       LLVMCDFGNode *targetNode = CDFG->node(current);
       if (!CDFG->edge(sourceNode, targetNode)) {

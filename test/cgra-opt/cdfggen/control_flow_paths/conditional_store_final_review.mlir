@@ -1,9 +1,10 @@
-// RUN: rm -f cf_memory_before_CDFG.dot cf_memory_after_loop_CDFG.dot cf_affine_apply_CDFG.dot
+// RUN: rm -f cf_memory_before_CDFG.dot cf_memory_after_loop_CDFG.dot cf_affine_apply_CDFG.dot cf_memory_loop_boundary_CDFG.dot
 // RUN: %cgra-opt --adora-kernel-dfg-gen %s | %FileCheck %s
 // RUN: %FileCheck %s --check-prefix=BEFORE-DOT --input-file=cf_memory_before_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=AFTER-DOT --input-file=cf_memory_after_loop_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=APPLY-DOT --input-file=cf_affine_apply_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
-// RUN: rm -f cf_memory_before_CDFG.dot cf_memory_after_loop_CDFG.dot cf_affine_apply_CDFG.dot
+// RUN: %FileCheck %s --check-prefix=BOUNDARY-DOT --input-file=cf_memory_loop_boundary_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
+// RUN: rm -f cf_memory_before_CDFG.dot cf_memory_after_loop_CDFG.dot cf_affine_apply_CDFG.dot cf_memory_loop_boundary_CDFG.dot
 
 // CHECK-LABEL: func.func @memory_before_cstore
 // CHECK: ADORA.kernel
@@ -55,6 +56,28 @@
 // APPLY-DOT-DAG: {{.*}} -> CSTORE[[STORE]]{{.*}}operand = 2, label = "Op=2"
 // APPLY-DOT: }
 
+// CHECK-LABEL: func.func @memory_across_nested_affine_loop
+// CHECK: affine.store
+// CHECK-NEXT: %{{.*}} = affine.load
+// CHECK-NEXT: affine.for
+// CHECK: affine.for
+// CHECK: ADORA.cond_store
+// CHECK: %{{.*}} = affine.load
+// CHECK-NEXT: affine.store
+
+// BOUNDARY-DOT: Digraph G {
+// BOUNDARY-DOT-DAG: Output[[BEFORE_STORE:[0-9]+]][opcode = "Output"
+// BOUNDARY-DOT-DAG: Input[[BEFORE_LOAD:[0-9]+]][opcode = "Input", ref_name="cf_memory_loop_boundary:arg3", size="32"
+// BOUNDARY-DOT-DAG: CSTORE[[INNER:[0-9]+]][opcode = "CSTORE", ref_name="cf_memory_loop_boundary:arg4", size="32"
+// BOUNDARY-DOT-DAG: Input[[AFTER_LOAD:[0-9]+]][opcode = "Input", ref_name="cf_memory_loop_boundary:arg5", size="32"
+// BOUNDARY-DOT-DAG: Output[[AFTER_STORE:[0-9]+]][opcode = "Output"
+// BOUNDARY-DOT-DAG: Output[[BEFORE_STORE]] -> Input[[BEFORE_LOAD]][color = blue{{.*}}operand = -1, label = "Op=-1, DepDist = 0"
+// BOUNDARY-DOT-DAG: Input[[BEFORE_LOAD]] -> CSTORE[[INNER]][color = blue{{.*}}operand = -1, label = "Op=-1, DepDist = 0"
+// BOUNDARY-DOT-DAG: CSTORE[[INNER]] -> Input[[AFTER_LOAD]][color = blue{{.*}}operand = -1, label = "Op=-1, DepDist = 0"
+// BOUNDARY-DOT-DAG: Input[[AFTER_LOAD]] -> Output[[AFTER_STORE]][color = blue{{.*}}operand = -1, label = "Op=-1, DepDist = 0"
+// BOUNDARY-DOT-NOT: Output[[AFTER_STORE]] -> Output[[BEFORE_STORE]]
+// BOUNDARY-DOT: }
+
 #plus_one = affine_map<(d0) -> (d0 + 1)>
 #twice = affine_map<(d0) -> (d0 * 2)>
 
@@ -98,6 +121,25 @@ module {
       }
       ADORA.terminator
     } {KernelName = "cf_affine_apply"}
+    return
+  }
+
+  func.func @memory_across_nested_affine_loop(
+      %cond: i1, %value: i32, %before_store: memref<8xi32>,
+      %before_load: memref<8xi32>, %loop_target: memref<8xi32>,
+      %after_load: memref<8xi32>, %after_store: memref<8xi32>) {
+    ADORA.kernel {
+      affine.store %value, %before_store[0] : memref<8xi32>
+      %before = affine.load %before_load[0] : memref<8xi32>
+      affine.for %i = 0 to 2 {
+        affine.for %j = 0 to 8 {
+          ADORA.cond_store %value, %loop_target[%j] if %cond : memref<8xi32>
+        }
+      }
+      %after = affine.load %after_load[0] : memref<8xi32>
+      affine.store %value, %after_store[0] : memref<8xi32>
+      ADORA.terminator
+    } {KernelName = "cf_memory_loop_boundary"}
     return
   }
 }
