@@ -130,9 +130,9 @@ current lowering deliberately fails closed at these boundaries:
 - store-bearing `scf.if` and pre-authored `ADORA.cond_store` under `scf.for`
   are rejected before lowering because their execution/address contract cannot
   be represented safely by this CDFG path; `affine.for` remains supported;
-- Stage A CSTORE targets must be statically shaped rank-one memrefs. Dynamic
-  rank-one and all higher-rank targets are rejected rather than serialized with
-  incomplete size/address metadata;
+- Stage A CSTORE targets must be statically shaped, identity-layout rank-one
+  memrefs. Dynamic rank-one, non-identity-layout, and all higher-rank targets
+  are rejected rather than serialized with incomplete size/address metadata;
 - nested `affine.apply` address expressions are fully composed before
   arithmetic expansion; any address that still cannot be represented fails
   closed through the CDFG port postcondition;

@@ -952,7 +952,8 @@ static mlir::Value materializeCondStoreIndex(OpBuilder &builder, Location loc,
                                              const StoreInfo &store) {
     auto memrefType = dyn_cast<MemRefType>(store.memref.getType());
     if (!memrefType || memrefType.getRank() != 1 ||
-        !memrefType.hasStaticShape())
+        !memrefType.hasStaticShape() ||
+        !memrefType.getLayout().isIdentity())
         return {};
 
     if (auto affineStore = dyn_cast<affine::AffineStoreOp>(store.op)) {
@@ -1252,6 +1253,41 @@ static LogicalResult lowerSCFIfToSelect(ADORA::KernelOp kernel) {
                 matchedElseOps[matchedThenOp] = elseEntry.op;
                 processedElseOps.insert(elseEntry.op);
             }
+
+            // Stage A serializes CSTORE addresses as an identity-layout logical
+            // index scaled by the element byte width. Reject an unmatched store
+            // before constructing CSTORE when the memref layout would require
+            // an additional offset or stride. Same-location branch pairs do not
+            // require CSTORE and remain on the ordinary SELECT + STORE path.
+            auto validateConditionalStoreLayouts = [&]() -> LogicalResult {
+                auto validateEntry = [&](const BranchStoreEntry &entry) {
+                    StoreInfo store = getStoreInfo(entry.op);
+                    auto memrefType = dyn_cast<MemRefType>(store.memref.getType());
+                    if (memrefType && !memrefType.getLayout().isIdentity()) {
+                        entry.op->emitError(
+                            "conditional-store lowering requires an "
+                            "identity-layout memref");
+                        return failure();
+                    }
+                    return success();
+                };
+
+                for (const auto &entry : thenStores) {
+                    if (entry.kind == BranchStoreEntry::Kind::Direct &&
+                        !matchedElseOps.count(entry.op) &&
+                        failed(validateEntry(entry)))
+                        return failure();
+                }
+                for (const auto &entry : elseStores) {
+                    if (entry.kind == BranchStoreEntry::Kind::Direct &&
+                        !processedElseOps.count(entry.op) &&
+                        failed(validateEntry(entry)))
+                        return failure();
+                }
+                return success();
+            };
+            if (failed(validateConditionalStoreLayouts()))
+                return failure();
 
             mlir::Value falseValue;
             auto getFalseValue = [&]() -> mlir::Value {

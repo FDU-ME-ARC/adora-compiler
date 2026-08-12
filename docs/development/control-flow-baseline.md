@@ -83,6 +83,9 @@ The nesting expresses which value commits on each path; it does not make pure ca
 - One-sided and different-address conditional writes now lower to
   `ADORA.cond_store` and CDFG `CSTORE`; same-address two-sided writes retain
   `SELECT + STORE`.
+- Stage A CSTORE targets are statically shaped, identity-layout rank-one
+  memrefs; layouts that need an extra offset or stride fail closed rather than
+  being serialized with an incorrect byte address.
 - CSTORE uses explicit `data=0`, `address=1`, and `enable=2` ports, complete I/O
   metadata, byte-scaled addresses, structured path predicates, conservative
   memory ordering, and transactional fail-closed generation.

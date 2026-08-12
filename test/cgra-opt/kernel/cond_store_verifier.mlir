@@ -51,3 +51,14 @@ func.func @dynamic_rank_one(%value: i32, %buffer: memref<?xi32>,
   ADORA.cond_store %value, %buffer[%index] if %condition : memref<?xi32>
   return
 }
+
+// -----
+
+// CHECK: error: 'ADORA.cond_store' op requires an identity-layout memref
+func.func @non_identity_layout(
+    %value: i32,
+    %buffer: memref<8xi32, strided<[2], offset: 1>>,
+    %index: index, %condition: i1) {
+  ADORA.cond_store %value, %buffer[%index] if %condition : memref<8xi32, strided<[2], offset: 1>>
+  return
+}

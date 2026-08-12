@@ -61,6 +61,8 @@ LogicalResult CondStoreOp::verify() {
     return emitOpError("requires a rank-1 memref");
   if (!memrefType.hasStaticShape())
     return emitOpError("requires a statically shaped rank-1 memref");
+  if (!memrefType.getLayout().isIdentity())
+    return emitOpError("requires an identity-layout memref");
   if (getIndices().size() != 1)
     return emitOpError("requires exactly one index");
   return success();
