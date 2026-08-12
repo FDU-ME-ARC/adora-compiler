@@ -194,7 +194,7 @@ nested if
 
 * [x] 梳理现有代码如何表示 branch condition。
 * [x] 判断能否复用现有结构，不优先新建新的复杂 Dialect。
-* [ ] 为每个 branch/body operation 能够获取对应的 path predicate。
+* [x] 为每个 branch/body operation 能够获取对应的 path predicate。
 
 例如：
 
@@ -238,7 +238,7 @@ S → a && b
 * [x] 保证普通 `if-else` 行为不回归。
 * [x] 支持连续 `if / else if / else`。
 * [x] 支持至少两层 nested if。
-* [ ] 对 predicate 取反逻辑统一处理，不在多个代码位置重复手写。
+* [x] 对 predicate 取反逻辑统一处理，不在多个代码位置重复手写。
 * [x] 避免将 mutually-exclusive branch 错误视为同时执行。
 * [ ] 暂不扩展到：
 

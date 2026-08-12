@@ -33,7 +33,8 @@ Important boundaries found by code inspection:
 - Only `scf.if` has explicit if-conversion in the CDFG path.
 - `affine.if` may be carried through kernel extraction, but has no corresponding conversion or operation-name mapping in CDFG generation.
 - `cf.cond_br` is registered with the driver through the standard SCF-to-CF pass, but the `adoracc`/CDFG pipeline does not run that conversion and has no `cf.cond_br` graph mapping.
-- `arith.select` is directly representable as `SEL`; nested SEL value-commit structure carries structured path semantics. It does not add a per-operation predicate annotation, and pure branch calculations may still execute speculatively.
+- `arith.select` is directly representable as `SEL`; nested SEL value-commit structure carries structured path semantics for every branch/body value commit, rather than adding a per-operation predicate annotation. Pure branch calculations may still execute speculatively.
+- The false arm of each SEL is the single, compositional representation of predicate negation. Else-if and nested paths therefore compose through false/true SEL arms without a separate explicit NOT helper or repeated handwritten negation logic.
 - `ADORA.isel` represents loop-carried state selection; it is not the general branch predicate representation.
 
 ## Task 2 results
@@ -42,7 +43,7 @@ The formal `control_flow_paths` lit regressions cover the four Task 2 completion
 
 | Case | CDFG path-condition evidence | Result |
 |---|---|---|
-| one-sided `if` | One SEL; old value -> port 0, true value -> port 1, captured `i1` -> port 2 | PASS |
+| one-sided value-commit/store-sinking fixture | One SEL; old value -> port 0, true value -> port 1, captured `i1` -> port 2 | CDFG path shape PASS; not evidence of general conditional-store correctness |
 | `if-else` | One SEL; captured predicate and scalar value Inputs, with false/true/condition ports 0/1/2 | PASS |
 | `if-else if-else` | Two SELs; `b` feeds the inner condition, `a` the outer condition, and the inner result is the outer false value (port 0) | PASS |
 | two-level nested `if` | Two SELs; `b` feeds the inner condition, `a` the outer condition, and the inner result is the outer true value (port 1) | PASS |
@@ -62,13 +63,13 @@ S3 -> !a && !b
 
 For the nested case, the inner result is committed through the outer true arm, which represents `a && b` without requiring a separate branch-predicate dialect or an explicit AND node. Captured `i1` function arguments now reach the CDFG as reusable synthetic Inputs, so the required predicate edges are no longer disconnected.
 
-The nesting expresses which value commits on each path; it does not make pure calculations control-dependent. Branch calculations that are safe to speculate can run before the SELs, while conditional memory operations require separate handling.
+The nesting expresses which value commits on each path; it does not make pure calculations control-dependent. Branch calculations that are safe to speculate can run before the SELs, while conditional memory operations require separate handling. In particular, the one-sided value-commit/store-sinking fixture verifies only the generated CDFG path shape; it does not establish general conditional-store correctness, which remains Task 3.
 
 ## Known gaps and follow-up ownership
 
 ### Task two: path conditions and control-flow correctness
 
-- Structured `scf.if` result paths are represented by nested SEL commits, with captured scalar and `i1` function arguments feeding SEL condition port 2. Postorder lowering preserves the required inner-to-outer ordering.
+- Structured `scf.if` result paths are represented by nested SEL commits, with captured scalar and `i1` function arguments feeding SEL condition port 2. The false SEL arm is the uniform negation representation, and postorder lowering preserves the required inner-to-outer ordering.
 - Conditional load is still a known limitation: existing lowering/memory-footprint processing can make a load unconditional, and Task 2 did not add a conditional-load representation.
 - `affine.if`, `cf.cond_br`, switch, break, continue, and unstructured CFG remain out of scope and have no equivalent CDFG control-flow implementation.
 
