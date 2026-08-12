@@ -1,13 +1,14 @@
-// RUN: rm -f cf_else_only_CDFG.dot cf_same_address_CDFG.dot cf_different_address_CDFG.dot cf_store_else_if_CDFG.dot cf_store_nested_CDFG.dot cf_direct_i8_CDFG.dot cf_result_store_CDFG.dot cf_mixed_address_CDFG.dot cf_direct_dynamic_CDFG.dot cf_outside_affine_CDFG.dot
+// RUN: rm -f cf_else_only_CDFG.dot cf_same_address_CDFG.dot cf_different_address_CDFG.dot cf_store_else_if_CDFG.dot cf_store_nested_CDFG.dot cf_direct_i8_CDFG.dot cf_distinct_memrefs_CDFG.dot cf_result_store_CDFG.dot cf_mixed_address_CDFG.dot cf_direct_dynamic_CDFG.dot cf_outside_affine_CDFG.dot
 // RUN: %cgra-opt --adora-kernel-dfg-gen %s | %FileCheck %s
 // RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_else_only_CDFG.dot)" -eq 1
 // RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_same_address_CDFG.dot)" -eq 0
 // RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_different_address_CDFG.dot)" -eq 2
-// RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_store_else_if_CDFG.dot)" -eq 2
+// RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_store_else_if_CDFG.dot)" -eq 3
 // RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_store_nested_CDFG.dot)" -eq 1
 // RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_result_store_CDFG.dot)" -eq 1
 // RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_direct_i8_CDFG.dot)" -eq 1
 // RUN: test "$(grep -c 'opcode = \"MUL\"' cf_direct_i8_CDFG.dot)" -eq 0
+// RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_distinct_memrefs_CDFG.dot)" -eq 2
 // RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_mixed_address_CDFG.dot)" -eq 0
 // RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_direct_dynamic_CDFG.dot)" -eq 1
 // RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_outside_affine_CDFG.dot)" -eq 1
@@ -17,10 +18,11 @@
 // RUN: %FileCheck %s --check-prefix=ELSEIF-DOT --input-file=cf_store_else_if_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL'
 // RUN: %FileCheck %s --check-prefix=NESTED-DOT --input-file=cf_store_nested_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL'
 // RUN: %FileCheck %s --check-prefix=I8-DOT --input-file=cf_direct_i8_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL'
+// RUN: %FileCheck %s --check-prefix=METADATA-DOT --input-file=cf_distinct_memrefs_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=RESULT-DOT --input-file=cf_result_store_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=DYNAMIC-DOT --input-file=cf_direct_dynamic_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=AFFINE-DOT --input-file=cf_outside_affine_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
-// RUN: rm -f cf_else_only_CDFG.dot cf_same_address_CDFG.dot cf_different_address_CDFG.dot cf_store_else_if_CDFG.dot cf_store_nested_CDFG.dot cf_direct_i8_CDFG.dot cf_result_store_CDFG.dot cf_mixed_address_CDFG.dot cf_direct_dynamic_CDFG.dot cf_outside_affine_CDFG.dot
+// RUN: rm -f cf_else_only_CDFG.dot cf_same_address_CDFG.dot cf_different_address_CDFG.dot cf_store_else_if_CDFG.dot cf_store_nested_CDFG.dot cf_direct_i8_CDFG.dot cf_distinct_memrefs_CDFG.dot cf_result_store_CDFG.dot cf_mixed_address_CDFG.dot cf_direct_dynamic_CDFG.dot cf_outside_affine_CDFG.dot
 
 // CHECK-LABEL: func.func @else_only(
 // CHECK-SAME: %[[ELSE_PARENT:[a-zA-Z0-9]+]]: i1
@@ -52,10 +54,15 @@
 // CHECK-SAME: %[[ELSEIF_OUTER:[a-zA-Z0-9]+]]: i1, %[[ELSEIF_INNER:[a-zA-Z0-9]+]]: i1
 // CHECK: ADORA.kernel
 // CHECK-NOT: scf.if
+// CHECK: %[[INNER_FALSE:.*]] = arith.constant false
+// CHECK: %[[INNER_TRUE:.*]] = arith.constant true
+// CHECK: %[[NOT_INNER:.*]] = arith.select %[[ELSEIF_INNER]], %[[INNER_FALSE]], %[[INNER_TRUE]] : i1
 // CHECK: ADORA.cond_store %{{.*}}, %{{.*}}[%{{.*}}] if %[[ELSEIF_OUTER]] : memref<8xi32>
 // CHECK: %[[ELSEIF_FALSE:.*]] = arith.constant false
 // CHECK: %[[ELSE_PATH:.*]] = arith.select %[[ELSEIF_OUTER]], %[[ELSEIF_FALSE]], %[[ELSEIF_INNER]] : i1
 // CHECK: ADORA.cond_store %{{.*}}, %{{.*}}[%{{.*}}] if %[[ELSE_PATH]] : memref<8xi32>
+// CHECK: %[[FINAL_PATH:.*]] = arith.select %[[ELSEIF_OUTER]], %[[ELSEIF_FALSE]], %[[NOT_INNER]] : i1
+// CHECK: ADORA.cond_store %{{.*}}, %{{.*}}[%{{.*}}] if %[[FINAL_PATH]] : memref<8xi32>
 // CHECK: ADORA.terminator
 
 // CHECK-LABEL: func.func @store_nested(
@@ -107,7 +114,7 @@
 // ELSE-DOT-DAG: Input[[VALUE:[0-9]+]][opcode = "Input", ref_name="cf_else_only:arg1", size="4", offset="0,0", pattern="0,1"
 // ELSE-DOT-DAG: CONST[[FALSE:[0-9]+]][opcode = "CONST", value="0x00"
 // ELSE-DOT-DAG: CONST[[TRUE:[0-9]+]][opcode = "CONST", value="0x01"
-// ELSE-DOT-DAG: CSTORE[[STORE:[0-9]+]][opcode = "CSTORE"
+// ELSE-DOT-DAG: CSTORE[[STORE:[0-9]+]][opcode = "CSTORE", ref_name="cf_else_only:arg2", size="32", offset="0,0", pattern="0,1"
 // ELSE-DOT-DAG: CONST[[FOUR:[0-9]+]][opcode = "CONST", value="0x00000004"
 // ELSE-DOT-DAG: MUL[[ADDR:[0-9]+]][opcode = "MUL"
 // ELSE-DOT-DAG: SEL[[ENABLE:[0-9]+]][opcode = "SEL"
@@ -131,8 +138,9 @@
 // DIFF-DOT: }
 
 // ELSEIF-DOT: Digraph G {
-// ELSEIF-DOT-DAG: CSTORE{{[0-9]+}}[opcode = "CSTORE"
 // ELSEIF-DOT-DAG: SEL{{[0-9]+}}[opcode = "SEL"
+// ELSEIF-DOT-COUNT-3: opcode = "CSTORE"
+// ELSEIF-DOT-COUNT-3: -> CSTORE{{[0-9]+}}{{[^]]*}}operand = 2, label = "Op=2"
 // ELSEIF-DOT: }
 
 // NESTED-DOT: Digraph G {
@@ -145,12 +153,17 @@
 // I8-DOT-DAG: Input[[I8_VALUE:[0-9]+]][opcode = "Input", ref_name="cf_direct_i8:arg0", size="1", offset="0,0", pattern="0,1"
 // I8-DOT-DAG: Input[[I8_COND:[0-9]+]][opcode = "Input", ref_name="cf_direct_i8:arg2", size="1", offset="0,0", pattern="0,1"
 // I8-DOT-DAG: CONST[[I8_ADDR:[0-9]+]][opcode = "CONST"
-// I8-DOT-DAG: CSTORE[[I8_STORE:[0-9]+]][opcode = "CSTORE"
+// I8-DOT-DAG: CSTORE[[I8_STORE:[0-9]+]][opcode = "CSTORE", ref_name="cf_direct_i8:arg1", size="8", offset="0,0", pattern="0,1"
 // I8-DOT-DAG: Input[[I8_VALUE]] -> CSTORE[[I8_STORE]]{{[^]]*}}operand = 0, label = "Op=0"
 // I8-DOT-DAG: CONST[[I8_ADDR]] -> CSTORE[[I8_STORE]]{{[^]]*}}operand = 1, label = "Op=1"
 // I8-DOT-DAG: Input[[I8_COND]] -> CSTORE[[I8_STORE]]{{[^]]*}}operand = 2, label = "Op=2"
 // I8-DOT-NOT: opcode = "MUL"
 // I8-DOT: }
+
+// METADATA-DOT: Digraph G {
+// METADATA-DOT-DAG: CSTORE[[FIRST_STORE:[0-9]+]][opcode = "CSTORE", ref_name="cf_distinct_memrefs:arg2", size="32", offset="0,0", pattern="0,1"
+// METADATA-DOT-DAG: CSTORE[[SECOND_STORE:[0-9]+]][opcode = "CSTORE", ref_name="cf_distinct_memrefs:arg3", size="64", offset="0,0", pattern="0,1"
+// METADATA-DOT: }
 
 // RESULT-DOT: Digraph G {
 // RESULT-DOT: CSTORE{{[0-9]+}}[opcode = "CSTORE"
@@ -234,7 +247,8 @@ module {
   }
 
   func.func @store_else_if(%a: i1, %b: i1, %outer_value: i32,
-                           %inner_value: i32, %output: memref<8xi32>) {
+                           %inner_value: i32, %else_value: i32,
+                           %output: memref<8xi32>) {
     ADORA.kernel {
       affine.for %i = 0 to 8 {
         scf.if %a {
@@ -242,6 +256,8 @@ module {
         } else {
           scf.if %b {
             affine.store %inner_value, %output[1] : memref<8xi32>
+          } else {
+            affine.store %else_value, %output[2] : memref<8xi32>
           }
         }
       }
@@ -271,6 +287,19 @@ module {
       ADORA.cond_store %value, %output[%c0] if %cond : memref<8xi8>
       ADORA.terminator
     } {KernelName = "cf_direct_i8"}
+    return
+  }
+
+  func.func @direct_distinct_memrefs(%cond: i1, %value: i32,
+                                     %first: memref<8xi32>,
+                                     %second: memref<16xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    ADORA.kernel {
+      ADORA.cond_store %value, %first[%c0] if %cond : memref<8xi32>
+      ADORA.cond_store %value, %second[%c1] if %cond : memref<16xi32>
+      ADORA.terminator
+    } {KernelName = "cf_distinct_memrefs"}
     return
   }
 

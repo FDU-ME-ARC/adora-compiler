@@ -1020,8 +1020,62 @@ static void createFallbackStore(OpBuilder &builder, scf::IfOp ifOp,
     }
 }
 
-// The main function to lower scf.if to select with store sinking support
-static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
+static LogicalResult preflightSCFIfToSelect(ADORA::KernelOp kernel) {
+    bool invalid = false;
+
+    kernel.walk([&](ADORA::CondStoreOp store) {
+        for (Operation *ancestor = store->getParentOp(); ancestor;
+             ancestor = ancestor->getParentOp()) {
+            if (isa<scf::ForOp>(ancestor)) {
+                store.emitError(
+                    "ADORA.cond_store nested under scf.for is unsupported by "
+                    "CDFG generation; use affine.for");
+                invalid = true;
+                break;
+            }
+            if (ancestor == kernel.getOperation())
+                break;
+        }
+    });
+
+    kernel.walk([&](scf::IfOp ifOp) {
+        auto validateBlock = [&](Block *block) {
+            if (!block)
+                return;
+            for (Operation &op : block->getOperations()) {
+                if (isa<scf::YieldOp, scf::IfOp, affine::AffineStoreOp,
+                        memref::StoreOp, ADORA::CondStoreOp>(op))
+                    continue;
+                if (op.getNumRegions() == 0 && mlir::isMemoryEffectFree(&op) &&
+                    mlir::isSpeculatable(&op))
+                    continue;
+
+                op.emitError()
+                    << "unsupported operation in scf.if branch for "
+                       "conditional-store lowering: '"
+                    << op.getName().getStringRef()
+                    << "'; only speculatable memory-effect-free operations "
+                       "and supported stores are allowed";
+                invalid = true;
+            }
+        };
+
+        validateBlock(&ifOp.getThenRegion().front());
+        validateBlock(ifOp.getElseRegion().empty()
+                          ? nullptr
+                          : &ifOp.getElseRegion().front());
+    });
+
+    return failure(invalid);
+}
+
+// The main function to lower scf.if to select with store sinking support.
+// Preflight the complete kernel before committing any rewrite so unsupported
+// effects cannot leave a partially converted control-flow tree behind.
+static LogicalResult lowerSCFIfToSelect(ADORA::KernelOp kernel) {
+    if (failed(preflightSCFIfToSelect(kernel)))
+        return failure();
+
     llvm::SmallVector<scf::IfOp, 4> ifOps;
     kernel.walk<WalkOrder::PostOrder>([&](scf::IfOp op) {
         ifOps.push_back(op);
@@ -1031,11 +1085,15 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
         OpBuilder builder(ifOp);
 
         auto blockHasStores = [](mlir::Block *block) {
-            if (!block) return false;
-            return llvm::any_of(block->getOperations(), [](mlir::Operation &op) {
-                return isa<affine::AffineStoreOp, memref::StoreOp,
-                           ADORA::CondStoreOp>(op);
+            if (!block)
+                return false;
+            bool foundStore = false;
+            block->walk([&](mlir::Operation *op) {
+                if (isa<affine::AffineStoreOp, memref::StoreOp,
+                        ADORA::CondStoreOp>(op))
+                    foundStore = true;
             });
+            return foundStore;
         };
         mlir::Block *thenBlock = &ifOp.getThenRegion().front();
         mlir::Block *elseBlock = ifOp.getElseRegion().empty()
@@ -1108,7 +1166,8 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
                 for (const auto &entry : entries) {
                     if (entry.kind != BranchStoreEntry::Kind::Other ||
                         entry.op->getNumRegions() != 0 ||
-                        !mlir::isMemoryEffectFree(entry.op))
+                        !mlir::isMemoryEffectFree(entry.op) ||
+                        !mlir::isSpeculatable(entry.op))
                         continue;
                     bool operandsAvailable = llvm::all_of(
                         entry.op->getOperands(), [&](mlir::Value operand) {
@@ -1268,6 +1327,8 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
             ifOp.erase();
         }
     }
+
+    return success();
 }
 
 /**
@@ -3326,6 +3387,45 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
     }
   }
 
+  // CSTORE is an I/O node with an explicit scalar address, so it still needs
+  // the same identity and footprint metadata as affine memory operations.
+  // The access pattern describes one explicit address per invocation rather
+  // than an inferred affine traversal.
+  for (auto &nodePair : CDFG->nodes()) {
+    LLVMCDFGNode *node = nodePair.second;
+    auto store = dyn_cast_or_null<ADORA::CondStoreOp>(node->operation());
+    if (!store)
+      continue;
+
+    mlir::Value memref = store.getMemref();
+    mlir::Operation *memrefOp = memref.getDefiningOp();
+    std::string refName;
+    if (!memrefOp) {
+      auto blockArg = dyn_cast<BlockArgument>(memref);
+      auto function = blockArg
+          ? dyn_cast<func::FuncOp>(blockArg.getOwner()->getParentOp())
+          : func::FuncOp();
+      if (function && blockArg.getArgNumber() < function.getNumArguments())
+        refName = std::string(kernel.getKernelName()) + ":arg" +
+                  std::to_string(blockArg.getArgNumber());
+      else
+        refName = std::string(kernel.getKernelName()) + ":local";
+    } else if (auto blockLoad = dyn_cast<ADORA::DataBlockLoadOp>(memrefOp)) {
+      refName = std::string(kernel.getKernelName()) + ":" +
+                std::string(blockLoad.getId());
+    } else if (auto localAlloc = dyn_cast<ADORA::LocalMemAllocOp>(memrefOp)) {
+      refName = std::string(kernel.getKernelName()) + ":" +
+                std::string(localAlloc.getId());
+    } else {
+      refName = std::string(kernel.getKernelName()) + ":local";
+    }
+
+    node->setMemrefName(refName);
+    node->setMemrefSize(GetMemrefSize(store));
+    node->setInitAddr("0");
+    node->setLinearAccess("0,1");
+  }
+
   /*** Add Edges ***/
   std::map<std::pair<mlir::Block *, unsigned>, LLVMCDFGNode *>
       scalarInputNodes;
@@ -3423,9 +3523,14 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
           if(isa<affine::AffineForOp>(parentop)){
             if(verbose) {errs() << "  parentop:" << *parentop <<"\n";}
             
-            if(SuccNode->isLinearAccess()){
+            // Affine memory operations encode their induction-variable
+            // address in the serialized access pattern. CSTORE also carries
+            // I/O metadata, but its address is an explicit operand and must
+            // remain connected on port 1.
+            if(SuccNode->isLinearAccess() &&
+               SuccNode->getTypeName() != "CSTORE"){
               continue;      
-            }       
+            }
             else{
               AnceNode = CDFG->node(parentop);
               AnceNode->addOutputNode(SuccNode, isBackEdge);
@@ -3733,7 +3838,9 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
 }
 
 
-LLVMCDFG* mlir::ADORA::generateCDFGfromKernel(LLVMCDFG* &CDFG, ADORA::KernelOp kernel, bool verbose){
+LogicalResult mlir::ADORA::generateCDFGfromKernel(LLVMCDFG* &CDFG,
+                                                  ADORA::KernelOp kernel,
+                                                  bool verbose){
   
   
   /// remove truncf op
@@ -3741,7 +3848,8 @@ LLVMCDFG* mlir::ADORA::generateCDFGfromKernel(LLVMCDFG* &CDFG, ADORA::KernelOp k
 
   // hjy
   // [Add] If-Conversion (scf.if -> arith.select)
-  lowerSCFIfToSelect(kernel);
+  if (failed(lowerSCFIfToSelect(kernel)))
+    return failure();
   if(verbose) {
     llvm::errs() << "[ADORA] Applied If-Conversion (scf.if -> arith.select).\n";
     kernel.dump(); 
@@ -3788,9 +3896,9 @@ LLVMCDFG* mlir::ADORA::generateCDFGfromKernel(LLVMCDFG* &CDFG, ADORA::KernelOp k
     }
     else{
       llvm::errs() << "[ERROR] CDFG generation failed again. Abort.\n";
-      abort();
+      return failure();
     }
   }
   
-  return CDFG;
+  return success();
 }

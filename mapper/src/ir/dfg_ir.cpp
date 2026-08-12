@@ -505,7 +505,9 @@ DFG* DFGIR::parseDFGJFromMLIRCDFG(LLVMCDFG * CDFG){
                 // std::vector<int> values = strSplit2Int(node->getLinearAccess(), ',');
                 std::vector<std::string> values = strSplit2Str(node->getLinearAccess(), ',');
                 std::vector<std::pair<std::string, std::string>> VarPattern;
-                for(int i = 0; i < values.size(); i += 2){
+                for(size_t i = 0; i + 1 < values.size(); i += 2){
+                    if(values[i].empty() || values[i + 1].empty())
+                        continue;
                     int value0 = 0x4fe, value1 = 0x4fe;
                     std::string var0 = "__const__", var1 = "__const__";
 
@@ -722,5 +724,4 @@ DFG* DFGIR::parseDFG(std::string filename, std::string format){
     return parseDFGJson(filename);
     // }
 }
-
 

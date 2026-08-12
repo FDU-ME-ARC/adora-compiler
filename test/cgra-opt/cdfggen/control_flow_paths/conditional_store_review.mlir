@@ -1,19 +1,17 @@
-// RUN: rm -f cf_ordered_store_CDFG.dot cf_ordered_memory_CDFG.dot cf_paired_values_CDFG.dot cf_mapped_producers_CDFG.dot cf_direct_affine_baseline_CDFG.dot cf_unrelated_memory_CDFG.dot cf_mixed_constant_CDFG.dot cf_fallback_rank_two_CDFG.dot cf_crossed_order_CDFG.dot
+// RUN: rm -f cf_ordered_store_CDFG.dot cf_paired_values_CDFG.dot cf_mapped_producers_CDFG.dot cf_direct_affine_baseline_CDFG.dot cf_unrelated_memory_CDFG.dot cf_mixed_constant_CDFG.dot cf_fallback_rank_two_CDFG.dot cf_crossed_order_CDFG.dot
 // RUN: %cgra-opt --adora-kernel-dfg-gen %s | %FileCheck %s
 // RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_ordered_store_CDFG.dot)" -eq 2
-// RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_ordered_memory_CDFG.dot)" -eq 2
 // RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_mapped_producers_CDFG.dot)" -eq 1
 // RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_mixed_constant_CDFG.dot)" -eq 0
 // RUN: test "$(grep -c 'opcode = \"CSTORE\"' cf_crossed_order_CDFG.dot)" -eq 2
 // RUN: %FileCheck %s --check-prefix=ORDER-DOT --input-file=cf_ordered_store_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
-// RUN: %FileCheck %s --check-prefix=MEMORY-DOT --input-file=cf_ordered_memory_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=PRODUCER-DOT --input-file=cf_mapped_producers_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=BASELINE-DOT --input-file=cf_direct_affine_baseline_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=UNRELATED-DOT --input-file=cf_unrelated_memory_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=CONSTANT-DOT --input-file=cf_mixed_constant_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=FALLBACK-DOT --input-file=cf_fallback_rank_two_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=CROSSED-DOT --input-file=cf_crossed_order_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
-// RUN: rm -f cf_ordered_store_CDFG.dot cf_ordered_memory_CDFG.dot cf_paired_values_CDFG.dot cf_mapped_producers_CDFG.dot cf_direct_affine_baseline_CDFG.dot cf_unrelated_memory_CDFG.dot cf_mixed_constant_CDFG.dot cf_fallback_rank_two_CDFG.dot cf_crossed_order_CDFG.dot
+// RUN: rm -f cf_ordered_store_CDFG.dot cf_paired_values_CDFG.dot cf_mapped_producers_CDFG.dot cf_direct_affine_baseline_CDFG.dot cf_unrelated_memory_CDFG.dot cf_mixed_constant_CDFG.dot cf_fallback_rank_two_CDFG.dot cf_crossed_order_CDFG.dot
 
 // CHECK-LABEL: func.func @ordered_nested_then_direct(
 // CHECK-SAME: %[[OUTER:[a-zA-Z0-9]+]]: i1, %[[INNER:[a-zA-Z0-9]+]]: i1, %[[FIRST:[a-zA-Z0-9]+]]: i32, %[[SECOND:[a-zA-Z0-9]+]]: i32
@@ -29,23 +27,6 @@
 // ORDER-DOT: Digraph G {
 // ORDER-DOT-COUNT-2: opcode = "CSTORE"
 // ORDER-DOT: }
-
-// CHECK-LABEL: func.func @ordered_store_load_store(
-// CHECK-SAME: %[[COND:[a-zA-Z0-9]+]]: i1, %[[FIRST:[a-zA-Z0-9]+]]: i32
-// CHECK: ADORA.kernel
-// CHECK-NOT: scf.if
-// CHECK: ADORA.cond_store %[[FIRST]], %[[OUTPUT:.*]]{{\[}}%[[ZERO:.*]]{{\]}} if %[[COND]] : memref<8xi32>
-// CHECK-NEXT: %[[LOADED:.*]] = memref.load %[[OUTPUT]]{{\[}}%[[ZERO]]{{\]}} : memref<8xi32>
-// CHECK-NEXT: ADORA.cond_store %[[LOADED]], %[[OUTPUT]]{{\[}}%{{.*}}{{\]}} if %[[COND]] : memref<8xi32>
-// CHECK: ADORA.terminator
-
-// MEMORY-DOT: Digraph G {
-// MEMORY-DOT: CSTORE[[FIRST_STORE:[0-9]+]][opcode = "CSTORE"
-// MEMORY-DOT: load[[LOAD:[0-9]+]][opcode = "load"
-// MEMORY-DOT: CSTORE[[SECOND_STORE:[0-9]+]][opcode = "CSTORE"
-// MEMORY-DOT-DAG: CSTORE[[FIRST_STORE]] -> load[[LOAD]]{{[^]]*}}operand = -1, label = "Op=-1, DepDist = 0"
-// MEMORY-DOT-DAG: load[[LOAD]] -> CSTORE[[SECOND_STORE]]{{[^]]*}}operand = 0, label = "Op=0"
-// MEMORY-DOT: }
 
 // CHECK-LABEL: func.func @paired_branch_values(
 // CHECK: affine.for
@@ -174,21 +155,6 @@ module {
       }
       ADORA.terminator
     } {KernelName = "cf_ordered_store"}
-    return
-  }
-
-  func.func @ordered_store_load_store(%cond: i1, %first: i32,
-                                      %output: memref<8xi32>) {
-    %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index
-    ADORA.kernel {
-      scf.if %cond {
-        memref.store %first, %output[%c0] : memref<8xi32>
-        %loaded = memref.load %output[%c0] : memref<8xi32>
-        memref.store %loaded, %output[%c1] : memref<8xi32>
-      }
-      ADORA.terminator
-    } {KernelName = "cf_ordered_memory"}
     return
   }
 

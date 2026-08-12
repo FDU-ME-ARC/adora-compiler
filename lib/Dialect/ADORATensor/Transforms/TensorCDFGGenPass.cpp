@@ -102,16 +102,27 @@ void ADORATensorOpCdfgGenPass::runOnOperation()
     });
     // simplifyLoopLevelsInModuleOp(m);
     // m.dump();
+    bool generationFailed = false;
     m.walk([&](ADORA::KernelOp kernel) {
       std::string kernelName = kernel.getKernelName();
       if(kernelName.empty()){
         kernelName = "kernel_" + std::to_string(kernel_cnt);
       }
       LLVMCDFG *CDFG = new LLVMCDFG(kernelName, GeneralOpNameFile_str);
-      generateCDFGfromKernel(CDFG, kernel, /*verbose=*/false);
+      if (failed(generateCDFGfromKernel(CDFG, kernel, /*verbose=*/false))) {
+        delete CDFG;
+        generationFailed = true;
+        return WalkResult::interrupt();
+      }
       CDFG->CDFGtoDOT(funcname + "_" + kernelName + "_CDFG.dot");
+      delete CDFG;
       kernel_cnt++;
-    });   
+      return WalkResult::advance();
+    });
+    if (generationFailed) {
+      signalPassFailure();
+      return;
+    }
 
     // generateCDFGfromKernel(CDFG, kernel);
 

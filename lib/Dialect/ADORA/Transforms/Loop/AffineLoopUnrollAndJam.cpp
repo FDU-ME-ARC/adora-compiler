@@ -470,7 +470,10 @@ LogicalResult ADORALoopUnrollAndJam::
 
     /// Generating DFG
     LLVMCDFG *CDFG = new LLVMCDFG(fileName, GeneralOpNameFile_str);
-    generateCDFGfromKernel(CDFG, kernelur, /*verbose=*/true);
+    if (failed(generateCDFGfromKernel(CDFG, kernelur, /*verbose=*/true))) {
+      delete CDFG;
+      return LogicalResult::failure();
+    }
     CDFG->CDFGtoDOT(DesignSpacefolderPath.string() + "/" + CDFG->name_str()+"_CDFG_unrolljam.dot");
     
     ADORA::DFGInfo dfginfo = GetDFGinfo(CDFG);       

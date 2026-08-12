@@ -86,7 +86,10 @@ void TensorDataflowGen::MapNestedForOrKernel(
   }
   
   LLVMCDFG *CDFG = new LLVMCDFG(kernelName, OpNameFile_str);
-  generateCDFGfromKernel(CDFG, kernel, /*verbose=*/_verbose);
+  if (failed(generateCDFGfromKernel(CDFG, kernel, /*verbose=*/_verbose))) {
+    delete CDFG;
+    return;
+  }
 
   /// DFG Mapping to CGRA architecture
   DFGIR* dfg_ir = new DFGIR(CDFG);

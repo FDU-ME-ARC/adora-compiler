@@ -180,7 +180,8 @@ public:
                                 && (_operation->getName().getStringRef() == "affine.load"
                                     || _operation->getName().getStringRef() == "affine.store"
                                     || _operation->getName().getStringRef() == "affine.vector_store"
-                                    || _operation->getName().getStringRef() == "affine.vector_load")
+                                    || _operation->getName().getStringRef() == "affine.vector_load"
+                                    || _operation->getName().getStringRef() == "ADORA.cond_store")
                                 && _LinearAccess != "";}
     std::string getLinearAccess(){ return _LinearAccess;} 
     void setLinearAccess(std::string str) { _LinearAccess = str;}
