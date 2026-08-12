@@ -53,6 +53,9 @@ The pattern is metadata, not an implicit affine address. CSTORE address port 1
 therefore remains connected and byte-scaled in the CDFG. The direct
 LLVM-CDFG-to-mapper parser consumes access-pattern fields only in complete,
 non-empty pairs, so malformed or absent pairs are never indexed past the end.
+CDFG generation also verifies, before writing a success DOT, that every CSTORE
+has exactly one connected data, byte-address, and enable input (ports 0, 1,
+and 2 respectively) and complete memory metadata.
 
 ## Configuration contract
 
@@ -123,10 +126,22 @@ current lowering deliberately fails closed at these boundaries:
 - branch operations other than supported stores must be both memory-effect
   free and speculatable; calls, copies, nested loops/regions, and other effects
   are rejected before any `scf.if` rewrite;
-- `ADORA.cond_store` under `scf.for` is rejected because its address cannot be
-  represented safely by this CDFG path; `affine.for` remains supported; and
+- store-bearing `scf.if` and pre-authored `ADORA.cond_store` under `scf.for`
+  are rejected before lowering because their execution/address contract cannot
+  be represented safely by this CDFG path; `affine.for` remains supported;
+- Stage A CSTORE targets must be statically shaped rank-one memrefs. Dynamic
+  rank-one and all higher-rank targets are rejected rather than serialized with
+  incomplete size/address metadata;
+- nested `affine.apply` address expressions are fully composed before
+  arithmetic expansion; any address that still cannot be represented fails
+  closed through the CDFG port postcondition;
+- when a CSTORE participates in a block, mapped memory operations in that
+  execution region are conservatively chained in source order, including
+  intervening accesses to other memrefs; and
 - every rejection diagnoses the unsupported operation, fails the DFG pass,
-  and emits no success DOT for that kernel.
+  and emits no success DOT for that kernel. Validation precedes normalization,
+  and lowering plus both optimized/fallback CDFG attempts run on temporary
+  kernels, so a failure leaves the original kernel unchanged.
 
 **Stage B is blocked** until the repository has all of the following:
 

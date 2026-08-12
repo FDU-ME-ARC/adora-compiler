@@ -689,6 +689,8 @@ condition
 ```
 
 * [x] 当前 `cond_store` 只针对 **kernel 内部的条件 memory store**。
+* [x] Stage A 只支持静态 shape 的 rank-1 memref；动态 rank-1 和更高 rank
+  必须 fail closed，避免生成不完整的 size/address metadata。
 * [x] 暂不扩展：
 
   * `ADORA.BlockStore`
@@ -745,6 +747,12 @@ select + store
 * [x] 对 `else if` 和 nested if 使用任务二产生的完整 path predicate。
 * [x] 不为 `cond=false` 的单侧 store 再创建无必要的旧值 `memref.load`。
 * [x] 保证 transformation 后 MLIR verifier 通过。
+* [x] 在任何 mutation（包括常量 `truncf` 规整）前完成整 kernel preflight；
+  lowering 与 optimized/fallback 两次 CDFG generation 在临时 kernel 上执行，
+  只有完整成功后才提交，失败时原 IR 保持不变且不输出成功 DOT。
+* [x] branch-local load、copy/call、nested region/loop 等不满足
+  memory-effect-free 且 speculatable 的操作必须报错；`scf.for` 下 store-bearing
+  `scf.if` 或预先存在的 `ADORA.cond_store` 同样 fail closed，`affine.for` 保持支持。
 
 ### CDFG lowering
 
@@ -955,6 +963,10 @@ a && b
 * [x] 1-byte element 不生成 `×1`。
 * [x] CSTORE address edge 连接到真实 backend address port。
 * [x] enable edge 连接到真实 backend enable port。
+* [x] nested `affine.apply` 地址先完整 compose 再展开；每个 CSTORE 在写 DOT
+  前必须通过 data/address/enable 端口与 memref metadata 完整性检查。
+* [x] CSTORE 所在 execution region 的 mapped memory operation 按源码顺序保守
+  串联，不能越过中间对其他 memref 的普通 memory operation。
 
 ### Regression
 
@@ -1133,7 +1145,8 @@ operation spec
 仓库中的实际 operation specs 均缺少 `CSTORE`；实际 ADG / IOB 仅提供两个
 operand，且没有 `UseEn`。因此本轮只完成并验证了 backend audit、
 `ADORA.cond_store`、控制流 lowering、规范化 CDFG ports（data/address/enable =
-0/1/2）、byte offset 和正式回归测试。当前 fp32 Mapper 尝试在这一硬件缺口处
+0/1/2）、完整 I/O metadata、静态 rank-1 边界、transactional fail-closed
+lowering、memory source ordering、byte offset 和正式回归测试。当前 fp32 Mapper 尝试在这一硬件缺口处
 失败，不能视为 Mapper 配置、emit 或 conditional-store suppression 仿真通过；
 待获得真实的 CSTORE OPC/operation spec、三输入 IOB 和 `UseEn` 配置后再完成阶段 B。
 
