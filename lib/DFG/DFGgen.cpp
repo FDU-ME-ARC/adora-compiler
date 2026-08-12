@@ -18,6 +18,8 @@
 #include "llvm/ADT/APInt.h"              // llvm::APInt
 
 #include <iostream>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <bit>
 #include "ADORA/Dialect/ADORA/IR/ADORA.h"
@@ -813,6 +815,26 @@ struct StoreInfo {
     llvm::SmallVector<mlir::Value, 4> indices;
 };
 
+struct BranchStoreEntry {
+    enum class Kind { Direct, Conditional };
+
+    Kind kind;
+    mlir::Operation *op;
+};
+
+static StoreInfo getStoreInfo(mlir::Operation *op) {
+    if (auto storeOp = dyn_cast<affine::AffineStoreOp>(op)) {
+        llvm::SmallVector<mlir::Value, 4> indices(
+            storeOp.getMapOperands().begin(), storeOp.getMapOperands().end());
+        return {op, storeOp.getValue(), storeOp.getMemref(), indices};
+    }
+
+    auto storeOp = cast<memref::StoreOp>(op);
+    llvm::SmallVector<mlir::Value, 4> indices(
+        storeOp.getIndices().begin(), storeOp.getIndices().end());
+    return {op, storeOp.getValue(), storeOp.getMemref(), indices};
+}
+
 // Return true when an affine store's map is just a projection of the supplied
 // direct indices. This lets syntactically identical affine.store/memref.store
 // pairs share the ordinary select+store lowering without guessing about more
@@ -830,6 +852,15 @@ static bool affineLocationMatchesIndices(affine::AffineStoreOp affineStore,
             projected = operands[dim.getPosition()];
         } else if (auto symbol = dyn_cast<AffineSymbolExpr>(result)) {
             projected = operands[map.getNumDims() + symbol.getPosition()];
+        } else if (auto constant = dyn_cast<AffineConstantExpr>(result)) {
+            auto constantOp = directIndex.getDefiningOp<arith::ConstantOp>();
+            auto integerAttr = constantOp
+                ? dyn_cast<IntegerAttr>(constantOp.getValue())
+                : IntegerAttr();
+            if (!integerAttr ||
+                integerAttr.getValue().getSExtValue() != constant.getValue())
+                return false;
+            continue;
         } else {
             return false;
         }
@@ -915,32 +946,45 @@ static mlir::Value findExistingLoadValue(scf::IfOp ifOp, mlir::Value memref,
 // Materialize a normalized rank-one conditional store. Affine expansion can
 // fail for expressions that cannot be represented safely with standard
 // arithmetic; callers retain the load/select/store fallback in that case.
-static bool createCondStore(OpBuilder &builder, Location loc,
-                            const StoreInfo &store, mlir::Value condition) {
+static mlir::Value materializeCondStoreIndex(OpBuilder &builder, Location loc,
+                                             const StoreInfo &store) {
     auto memrefType = dyn_cast<MemRefType>(store.memref.getType());
     if (!memrefType || memrefType.getRank() != 1)
-        return false;
+        return {};
 
-    SmallVector<mlir::Value, 1> indices;
     if (auto affineStore = dyn_cast<affine::AffineStoreOp>(store.op)) {
         if (affineStore.getAffineMap().getNumResults() != 1)
-            return false;
+            return {};
         auto expanded = affine::expandAffineMap(
             builder, loc, affineStore.getAffineMap(),
             affineStore.getMapOperands());
         if (!expanded || expanded->size() != 1)
-            return false;
-        indices.push_back((*expanded)[0]);
+            return {};
+        return expanded->front();
     } else if (auto memrefStore = dyn_cast<memref::StoreOp>(store.op)) {
         if (memrefStore.getIndices().size() != 1)
-            return false;
-        indices.push_back(memrefStore.getIndices().front());
-    } else {
-        return false;
+            return {};
+        return memrefStore.getIndices().front();
     }
 
-    builder.create<ADORA::CondStoreOp>(loc, store.valueToStore,
-                                       store.memref, indices, condition);
+    return {};
+}
+
+static void createCondStoreWithIndex(OpBuilder &builder, Location loc,
+                                     const StoreInfo &store,
+                                     mlir::Value index,
+                                     mlir::Value condition) {
+    builder.create<ADORA::CondStoreOp>(loc, store.valueToStore, store.memref,
+                                       mlir::ValueRange(index), condition);
+}
+
+static bool createCondStore(OpBuilder &builder, Location loc,
+                            const StoreInfo &store, mlir::Value condition) {
+    mlir::Value index = materializeCondStoreIndex(builder, loc, store);
+    if (!index)
+        return false;
+
+    createCondStoreWithIndex(builder, loc, store, index, condition);
     return true;
 }
 
@@ -1025,34 +1069,21 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
         // returns values.
         {
 
-            // 2.1 separate store operations from other operations
-            llvm::SmallVector<StoreInfo, 4> thenStores;
-            llvm::SmallVector<StoreInfo, 4> elseStores;
-            llvm::SmallVector<ADORA::CondStoreOp, 4> thenCondStores;
-            llvm::SmallVector<ADORA::CondStoreOp, 4> elseCondStores;
-
-            // Lambda to collect only store operations
-            auto collectStoresOnly = [&](mlir::Block* block, llvm::SmallVector<StoreInfo, 4>& stores) {
-                if (!block) return;
+            // Keep direct and already-conditional stores in one ordered branch
+            // representation. Emitting separate batches changes the semantics
+            // when stores to the same address occur in both categories.
+            auto collectBranchStores = [&](mlir::Block *block) {
+                llvm::SmallVector<BranchStoreEntry, 4> entries;
+                if (!block) return entries;
                 for (auto &op : block->getOperations()) {
-                    if (auto storeOp = dyn_cast<affine::AffineStoreOp>(op)) {
-                        llvm::SmallVector<mlir::Value, 4> indices(storeOp.getMapOperands().begin(), 
-                                                                   storeOp.getMapOperands().end());
-                        stores.push_back({&op, storeOp.getValue(), storeOp.getMemref(), indices});
-                    }
-                    else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
-                        llvm::SmallVector<mlir::Value, 4> indices(storeOp.getIndices().begin(), 
-                                                                   storeOp.getIndices().end());
-                        stores.push_back({&op, storeOp.getValue(), storeOp.getMemref(), indices});
-                    }
+                    if (isa<affine::AffineStoreOp, memref::StoreOp>(op))
+                        entries.push_back(
+                            {BranchStoreEntry::Kind::Direct, &op});
+                    else if (isa<ADORA::CondStoreOp>(op))
+                        entries.push_back(
+                            {BranchStoreEntry::Kind::Conditional, &op});
                 }
-            };
-
-            auto collectCondStores = [&](mlir::Block *block,
-                                         llvm::SmallVectorImpl<ADORA::CondStoreOp> &stores) {
-                if (!block) return;
-                for (auto condStore : block->getOps<ADORA::CondStoreOp>())
-                    stores.push_back(condStore);
+                return entries;
             };
 
             // Lambda to move non-store operations out of the ifOp
@@ -1068,68 +1099,46 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
                 }
             };
 
-            // 2.1.1 collect store operations
-            collectStoresOnly(thenBlock, thenStores);
-            collectStoresOnly(elseBlock, elseStores);
-            collectCondStores(thenBlock, thenCondStores);
-            collectCondStores(elseBlock, elseCondStores);
+            // 2.1.1 collect store operations in source order.
+            auto thenStores = collectBranchStores(thenBlock);
+            auto elseStores = collectBranchStores(elseBlock);
 
             // 2.1.2 move non-store operations out of the ifOp
             moveNonStoreOps(thenBlock);
             moveNonStoreOps(elseBlock);
 
             // 2.2 handle all involved stores
-            llvm::DenseSet<mlir::Operation*> processedElseOps;
+            llvm::DenseMap<mlir::Operation *, mlir::Operation *> matchedElseOps;
+            llvm::DenseSet<mlir::Operation *> processedElseOps;
 
-            for (const auto& tStore : thenStores) {
-                const StoreInfo *matchedElseStore = nullptr;
+            // A paired select+store is emitted while walking the then branch.
+            // Pair only an else-branch prefix whose corresponding then stores
+            // occur in the same order. Otherwise an active selected store can
+            // cross an unmatched/conditional else store and change memory
+            // semantics when distinct SSA indices alias at runtime.
+            size_t nextThenPosition = 0;
+            for (const auto &elseEntry : elseStores) {
+                if (elseEntry.kind != BranchStoreEntry::Kind::Direct)
+                    break;
 
-                // search for matching store in elseStores
-                for (const auto& eStore : elseStores) {
-                    if (!processedElseOps.count(eStore.op) &&
-                        isSameLocation(tStore, eStore)) {
-                        matchedElseStore = &eStore;
-                        processedElseOps.insert(eStore.op);
+                StoreInfo elseStore = getStoreInfo(elseEntry.op);
+                mlir::Operation *matchedThenOp = nullptr;
+                for (size_t i = nextThenPosition; i < thenStores.size(); ++i) {
+                    const auto &thenEntry = thenStores[i];
+                    if (thenEntry.kind != BranchStoreEntry::Kind::Direct)
+                        continue;
+                    StoreInfo thenStore = getStoreInfo(thenEntry.op);
+                    if (isSameLocation(thenStore, elseStore)) {
+                        matchedThenOp = thenEntry.op;
+                        nextThenPosition = i + 1;
                         break;
                     }
                 }
+                if (!matchedThenOp)
+                    break;
 
-                if (matchedElseStore) {
-                    mlir::Value selected = builder.create<arith::SelectOp>(
-                        ifOp.getLoc(), ifOp.getCondition(), tStore.valueToStore,
-                        matchedElseStore->valueToStore);
-                    // Same-address pairs remain an ordinary store.
-                    auto origStore = dyn_cast<affine::AffineStoreOp>(tStore.op);
-                    if (origStore) {
-                        builder.create<affine::AffineStoreOp>(
-                            ifOp.getLoc(), selected, origStore.getMemref(),
-                            origStore.getAffineMap(), origStore.getMapOperands());
-                    } else {
-                        builder.create<memref::StoreOp>(
-                            ifOp.getLoc(), selected, tStore.memref,
-                            tStore.indices);
-                    }
-                } else if (!createCondStore(builder, ifOp.getLoc(), tStore,
-                                            ifOp.getCondition())) {
-                    createFallbackStore(builder, ifOp, tStore,
-                                        /*isThenStore=*/true);
-                }
-            }
-
-            // handle elseStores that were not processed
-            for (const auto& eStore : elseStores) {
-                if (processedElseOps.count(eStore.op)) continue;
-
-                mlir::Value falseValue = builder.create<arith::ConstantIntOp>(
-                    ifOp.getLoc(), 0, 1);
-                mlir::Value trueValue = builder.create<arith::ConstantIntOp>(
-                    ifOp.getLoc(), 1, 1);
-                mlir::Value elseCondition = builder.create<arith::SelectOp>(
-                    ifOp.getLoc(), ifOp.getCondition(), falseValue, trueValue);
-                if (!createCondStore(builder, ifOp.getLoc(), eStore,
-                                     elseCondition))
-                    createFallbackStore(builder, ifOp, eStore,
-                                        /*isThenStore=*/false);
+                matchedElseOps[matchedThenOp] = elseEntry.op;
+                processedElseOps.insert(elseEntry.op);
             }
 
             mlir::Value falseValue;
@@ -1140,22 +1149,78 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
                 return falseValue;
             };
 
-            // Nested conditional stores are side effects. Move them out only
-            // after combining their child predicate with the parent path.
-            for (ADORA::CondStoreOp condStore : thenCondStores) {
-                mlir::Value pathCondition = builder.create<arith::SelectOp>(
-                    ifOp.getLoc(), ifOp.getCondition(),
-                    condStore.getCondition(), getFalseValue());
-                condStore.getConditionMutable().set(pathCondition);
-                condStore->moveBefore(ifOp);
-            }
-            for (ADORA::CondStoreOp condStore : elseCondStores) {
-                mlir::Value pathCondition = builder.create<arith::SelectOp>(
-                    ifOp.getLoc(), ifOp.getCondition(), getFalseValue(),
-                    condStore.getCondition());
-                condStore.getConditionMutable().set(pathCondition);
-                condStore->moveBefore(ifOp);
-            }
+            auto emitBranchStores = [&](llvm::ArrayRef<BranchStoreEntry> entries,
+                                        bool isThenBranch) {
+              for (const auto &entry : entries) {
+                if (entry.kind == BranchStoreEntry::Kind::Conditional) {
+                    auto condStore = cast<ADORA::CondStoreOp>(entry.op);
+                    mlir::Value pathCondition = isThenBranch
+                        ? builder.create<arith::SelectOp>(
+                              ifOp.getLoc(), ifOp.getCondition(),
+                              condStore.getCondition(), getFalseValue())
+                        : builder.create<arith::SelectOp>(
+                              ifOp.getLoc(), ifOp.getCondition(),
+                              getFalseValue(), condStore.getCondition());
+                    condStore.getConditionMutable().set(pathCondition);
+                    condStore->moveBefore(ifOp);
+                    continue;
+                }
+
+                StoreInfo store = getStoreInfo(entry.op);
+                if (!isThenBranch && processedElseOps.count(entry.op))
+                    continue;
+
+                auto matchedIt = matchedElseOps.find(entry.op);
+                if (isThenBranch && matchedIt != matchedElseOps.end()) {
+                    StoreInfo matchedElseStore = getStoreInfo(matchedIt->second);
+                    mlir::Value selected = builder.create<arith::SelectOp>(
+                        ifOp.getLoc(), ifOp.getCondition(), store.valueToStore,
+                        matchedElseStore.valueToStore);
+                    // Same-address pairs remain an ordinary store.
+                    auto origStore = dyn_cast<affine::AffineStoreOp>(store.op);
+                    if (origStore) {
+                        builder.create<affine::AffineStoreOp>(
+                            ifOp.getLoc(), selected, origStore.getMemref(),
+                            origStore.getAffineMap(), origStore.getMapOperands());
+                    } else {
+                        builder.create<memref::StoreOp>(
+                            ifOp.getLoc(), selected, store.memref,
+                            store.indices);
+                    }
+                    continue;
+                }
+
+                if (isThenBranch) {
+                    if (!createCondStore(builder, ifOp.getLoc(), store,
+                                         ifOp.getCondition()))
+                        createFallbackStore(builder, ifOp, store,
+                                            /*isThenStore=*/true);
+                } else {
+                    mlir::Value index = materializeCondStoreIndex(
+                        builder, ifOp.getLoc(), store);
+                    if (!index) {
+                        createFallbackStore(builder, ifOp, store,
+                                            /*isThenStore=*/false);
+                        continue;
+                    }
+                    mlir::Value branchFalse =
+                        builder.create<arith::ConstantIntOp>(
+                            ifOp.getLoc(), 0, 1);
+                    mlir::Value branchTrue =
+                        builder.create<arith::ConstantIntOp>(
+                            ifOp.getLoc(), 1, 1);
+                    mlir::Value elseCondition =
+                        builder.create<arith::SelectOp>(
+                            ifOp.getLoc(), ifOp.getCondition(), branchFalse,
+                            branchTrue);
+                    createCondStoreWithIndex(builder, ifOp.getLoc(), store,
+                                             index, elseCondition);
+                }
+              }
+            };
+
+            emitBranchStores(thenStores, /*isThenBranch=*/true);
+            emitBranchStores(elseStores, /*isThenBranch=*/false);
 
             // A mixed result/store if still needs the ordinary result select
             // after all branch computations have been moved out.
@@ -2788,6 +2853,20 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
   std::map<mlir::Operation*, int> For_loop_level;
   std::map<mlir::Block*, int> loop_block_level;
   SmallVector<mlir::Operation*> OpsOutsideFor;
+  std::set<std::string> mappedOperationNames;
+  {
+    std::ifstream opNameFile(CDFG->getOpNameFilePath());
+    std::string line;
+    while (std::getline(opNameFile, line)) {
+      if (line.empty() || line.front() == '/' || line.front() == '#' ||
+          line.front() == '@')
+        continue;
+      std::istringstream fields(line);
+      std::string operationName;
+      if (fields >> operationName)
+        mappedOperationNames.insert(operationName);
+    }
+  }
   kernel->walk([&](mlir::Operation* op)
   {
     if(isa<affine::AffineForOp>(op)){
@@ -2826,20 +2905,11 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
       }
       // for_region.viewGraph();
     }
-    else if((isa<affine::AffineLoadOp>(op) 
-        || isa<affine::AffineStoreOp>(op)
-        || isa<ADORA::CondStoreOp>(op)
-        || isa<arith::ConstantOp>(op)
-        || isa<arith::SelectOp>(op)
-        || isa<arith::MulIOp>(op)
-        || isa<arith::DivSIOp>(op)
-        || isa<arith::RemSIOp>(op)
-        || isa<arith::CmpIOp>(op)
-        || isa<arith::AddFOp>(op)
-        || isa<arith::AddIOp>(op)
-        || isa<arith::SubFOp>(op)
-        || isa<arith::SubIOp>(op)) 
-        && isa<ADORA::KernelOp>(op->getParentOp())){
+    else if (isa<ADORA::KernelOp>(op->getParentOp()) &&
+             op->getNumRegions() == 0 &&
+             !op->hasTrait<mlir::OpTrait::IsTerminator>() &&
+             mappedOperationNames.count(
+                 op->getName().getStringRef().str()) != 0) {
       OpsOutsideFor.push_back(op);
     }
   });
