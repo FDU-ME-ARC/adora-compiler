@@ -66,6 +66,7 @@ ADORA.interleaver INTLV
 ADORA.deinterleaver DEINTLV
 
 /// Load Store
+ADORA.cond_store CSTORE
 memref.load load
 memref.store store
 affine.load Input
