@@ -5,11 +5,21 @@
 //
 // DOT0: Digraph G {
 // DOT0-DAG: Input{{[0-9]+}}[opcode = "Input"
-// DOT0-DAG: load{{[0-9]+}}[opcode = "load"
+// DOT0-DAG: load[[LOAD:[0-9]+]][opcode = "load"
+// DOT0-DAG: store[[STORE:[0-9]+]][opcode = "store"
 // DOT0-DAG: Output{{[0-9]+}}[opcode = "Output"
-// DOT0-DAG: Input{{[0-9]+}} -> load{{[0-9]+}}
-// DOT0-DAG: load{{[0-9]+}} -> Output
-// DOT0-DAG: operand = 0, label = "Op=0"
+// DOT0-DAG: CONST[[LOAD_CONST:[0-9]+]][opcode = "CONST", value="0x00000004"
+// DOT0-DAG: CONST[[STORE_CONST:[0-9]+]][opcode = "CONST", value="0x00000004"
+// DOT0-DAG: MUL[[LOAD_MUL:[0-9]+]][opcode = "MUL"
+// DOT0-DAG: MUL[[STORE_MUL:[0-9]+]][opcode = "MUL"
+// DOT0-DAG: Input{{[0-9]+}} -> MUL[[LOAD_MUL]]
+// DOT0-DAG: Input{{[0-9]+}} -> MUL[[STORE_MUL]]
+// DOT0-DAG: CONST[[LOAD_CONST]] -> MUL[[LOAD_MUL]]
+// DOT0-DAG: CONST[[STORE_CONST]] -> MUL[[STORE_MUL]]
+// DOT0-DAG: MUL[[LOAD_MUL]] -> load[[LOAD]]{{.*}}operand = 0, label = "Op=0"
+// DOT0-DAG: MUL[[STORE_MUL]] -> store[[STORE]]{{.*}}operand = 2, label = "Op=2"
+// DOT0-DAG: load[[LOAD]] -> store[[STORE]]{{.*}}operand = 0, label = "Op=0"
+// DOT0-DAG: load[[LOAD]] -> Output
 // DOT0: }
 //
 // CHECK: module {
@@ -20,6 +30,7 @@
 // CHECK: affine.for %arg1 = 0 to 1025 {
 // CHECK: affine.load
 // CHECK: memref.load
+// CHECK: memref.store
 // CHECK: affine.store
 // CHECK: ADORA.terminator
 // CHECK: ADORA.BlockStore
@@ -61,6 +72,7 @@ module {
         %6 = affine.load %1[0] : memref<2xi32>
         %7 = arith.index_cast %6 : i32 to index
         %8 = memref.load %3[%7] : memref<2048xi32>
+        memref.store %8, %3[%7] : memref<2048xi32>
         affine.store %8, %5[%arg1] : memref<1025xi32>
         // %10 = arith.index_cast %9 : i32 to index
         // %11 = memref.load %alloca_1[%10] : memref<2048xi32>
@@ -71,4 +83,3 @@ module {
     return
   }
 }
-

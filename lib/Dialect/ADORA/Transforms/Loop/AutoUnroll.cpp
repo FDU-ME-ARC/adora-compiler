@@ -348,7 +348,10 @@ chooseAndApplyUnrollStrategyWithDeps(ADORA::KernelOp kernel, mlir::ModuleOp& m){
     else
       GeneralOpNameFile_str = GeneralOpNameFile;
     LLVMCDFG *CDFG = new LLVMCDFG(fileName, GeneralOpNameFile_str);
-    generateCDFGfromKernel(CDFG, kernelur, /*verbose=*/false);
+    if (failed(generateCDFGfromKernel(CDFG, kernelur, /*verbose=*/false))) {
+      delete CDFG;
+      return LogicalResult::failure();
+    }
     CDFG->CDFGtoDOT(DesignSpacefolderPath.string() + "/" + CDFG->name_str()+"_CDFG_unroll.dot");
   
     ADORA::DFGInfo dfginfo = GetDFGinfo(CDFG);       

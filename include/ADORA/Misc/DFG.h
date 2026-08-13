@@ -28,7 +28,8 @@ std::string GenDFGfromAffinewithCMD
     (std::string KernelsDir, std::string kernelFnName, std::string llvmCDFGPass);
 DFGInfo GetDFGinfo(std::string DFGPath);
 DFGInfo GetDFGinfo(LLVMCDFG* CDFG);
-LLVMCDFG* generateCDFGfromKernel(LLVMCDFG* &CDFG, ADORA::KernelOp kernel, bool verbose = true);
+LogicalResult generateCDFGfromKernel(LLVMCDFG* &CDFG, ADORA::KernelOp kernel,
+                                     bool verbose = true);
 
 } // namespace ADORA
 } // namespace mlir

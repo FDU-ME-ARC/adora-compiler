@@ -15,10 +15,10 @@
 // DOT0-DAG: MUL{{[0-9]+}} -> ACC{{[0-9]+}}
 // DOT0-DAG: ACC{{[0-9]+}} -> SLT{{[0-9]+}}
 // DOT0-DAG: CONST{{[0-9]+}} -> SLT{{[0-9]+}}
-// ReLU: SEL op0=cond(SLT), op1=CONST 0, op2=ACC -> select(cond, 0, acc); SEL result -> Output
-// DOT0-DAG: SLT{{[0-9]+}} -> SEL{{[0-9]+}}{{[^]]*operand = 0, label = "Op=0"}}
+// ReLU: SEL false=ACC(op0), true=CONST 0(op1), cond=SLT(op2); SEL result -> Output
+// DOT0-DAG: ACC{{[0-9]+}} -> SEL{{[0-9]+}}{{[^]]*operand = 0, label = "Op=0"}}
 // DOT0-DAG: CONST{{[0-9]+}} -> SEL{{[0-9]+}}{{[^]]*operand = 1, label = "Op=1"}}
-// DOT0-DAG: ACC{{[0-9]+}} -> SEL{{[0-9]+}}{{[^]]*operand = 2, label = "Op=2"}}
+// DOT0-DAG: SLT{{[0-9]+}} -> SEL{{[0-9]+}}{{[^]]*operand = 2, label = "Op=2"}}
 // DOT0-DAG: SEL{{[0-9]+}} -> Output{{[0-9]+}}{{[^]]*operand = 0, label = "Op=0"}}
 // DOT0: }
 //
@@ -58,4 +58,3 @@ module {
     return
   }
 }
-

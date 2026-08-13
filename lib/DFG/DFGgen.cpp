@@ -5,6 +5,7 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Affine/Analysis/Utils.h"
 #include "mlir/Dialect/Affine/Analysis/LoopAnalysis.h"
+#include "mlir/Dialect/Affine/Utils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/OperationSupport.h"
@@ -12,11 +13,15 @@
 #include "mlir/Transforms/RegionUtils.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "llvm/ADT/APFloat.h"            // llvm::APFloat
 #include "llvm/ADT/APInt.h"              // llvm::APInt
 
 #include <iostream>
+#include <fstream>
+#include <functional>
+#include <sstream>
 #include <string>
 #include <bit>
 #include "ADORA/Dialect/ADORA/IR/ADORA.h"
@@ -812,14 +817,81 @@ struct StoreInfo {
     llvm::SmallVector<mlir::Value, 4> indices;
 };
 
+struct BranchStoreEntry {
+    enum class Kind { Direct, Conditional, Other };
+
+    Kind kind;
+    mlir::Operation *op;
+};
+
+static StoreInfo getStoreInfo(mlir::Operation *op) {
+    if (auto storeOp = dyn_cast<affine::AffineStoreOp>(op)) {
+        llvm::SmallVector<mlir::Value, 4> indices(
+            storeOp.getMapOperands().begin(), storeOp.getMapOperands().end());
+        return {op, storeOp.getValue(), storeOp.getMemref(), indices};
+    }
+
+    auto storeOp = cast<memref::StoreOp>(op);
+    llvm::SmallVector<mlir::Value, 4> indices(
+        storeOp.getIndices().begin(), storeOp.getIndices().end());
+    return {op, storeOp.getValue(), storeOp.getMemref(), indices};
+}
+
+// Return true when an affine store's map is just a projection of the supplied
+// direct indices. This lets syntactically identical affine.store/memref.store
+// pairs share the ordinary select+store lowering without guessing about more
+// complex affine expressions.
+static bool affineLocationMatchesIndices(affine::AffineStoreOp affineStore,
+                                         mlir::ValueRange directIndices) {
+    AffineMap map = affineStore.getAffineMap();
+    if (map.getNumResults() != directIndices.size()) return false;
+
+    mlir::ValueRange operands = affineStore.getMapOperands();
+    for (auto [result, directIndex] :
+         llvm::zip_equal(map.getResults(), directIndices)) {
+        mlir::Value projected;
+        if (auto dim = dyn_cast<AffineDimExpr>(result)) {
+            projected = operands[dim.getPosition()];
+        } else if (auto symbol = dyn_cast<AffineSymbolExpr>(result)) {
+            projected = operands[map.getNumDims() + symbol.getPosition()];
+        } else if (auto constant = dyn_cast<AffineConstantExpr>(result)) {
+            auto constantOp = directIndex.getDefiningOp<arith::ConstantOp>();
+            auto integerAttr = constantOp
+                ? dyn_cast<IntegerAttr>(constantOp.getValue())
+                : IntegerAttr();
+            if (!integerAttr ||
+                integerAttr.getValue().getSExtValue() != constant.getValue())
+                return false;
+            continue;
+        } else {
+            return false;
+        }
+        if (projected != directIndex) return false;
+    }
+    return true;
+}
+
 // auxiliary function to check if two store operations are the same
 static bool isSameLocation(const StoreInfo& a, const StoreInfo& b) {
     if (a.memref != b.memref) return false;
-    if (a.indices.size() != b.indices.size()) return false;
-    for (size_t i = 0; i < a.indices.size(); ++i) {
-        if (a.indices[i] != b.indices[i]) return false;
+
+    if (auto aStore = dyn_cast<affine::AffineStoreOp>(a.op)) {
+        if (auto bStore = dyn_cast<affine::AffineStoreOp>(b.op))
+            return aStore.getAffineMap() == bStore.getAffineMap() &&
+                   llvm::equal(aStore.getMapOperands(),
+                               bStore.getMapOperands());
+        if (auto bStore = dyn_cast<memref::StoreOp>(b.op))
+            return affineLocationMatchesIndices(aStore, bStore.getIndices());
+        return false;
     }
-    return true;
+
+    auto aStore = dyn_cast<memref::StoreOp>(a.op);
+    if (!aStore) return false;
+    if (auto bStore = dyn_cast<memref::StoreOp>(b.op))
+        return llvm::equal(aStore.getIndices(), bStore.getIndices());
+    if (auto bStore = dyn_cast<affine::AffineStoreOp>(b.op))
+        return affineLocationMatchesIndices(bStore, aStore.getIndices());
+    return false;
 }
 
 // auxiliary function to find existing load value before ifOp
@@ -873,21 +945,196 @@ static mlir::Value findExistingLoadValue(scf::IfOp ifOp, mlir::Value memref,
     return mlir::Value(); // not found
 }
 
-// The main function to lower scf.if to select with store sinking support
-static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
+// Materialize a normalized rank-one conditional store. Affine expansion can
+// fail for expressions that cannot be represented safely with standard
+// arithmetic; callers retain the load/select/store fallback in that case.
+static mlir::Value materializeCondStoreIndex(OpBuilder &builder, Location loc,
+                                             const StoreInfo &store) {
+    auto memrefType = dyn_cast<MemRefType>(store.memref.getType());
+    if (!memrefType || memrefType.getRank() != 1 ||
+        !memrefType.hasStaticShape() ||
+        !memrefType.getLayout().isIdentity())
+        return {};
+
+    if (auto affineStore = dyn_cast<affine::AffineStoreOp>(store.op)) {
+        if (affineStore.getAffineMap().getNumResults() != 1)
+            return {};
+        AffineMap composedMap = affineStore.getAffineMap();
+        SmallVector<mlir::Value> composedOperands(
+            affineStore.getMapOperands());
+        affine::fullyComposeAffineMapAndOperands(&composedMap,
+                                                 &composedOperands);
+        if (composedMap.getNumResults() != 1)
+            return {};
+        auto expanded = affine::expandAffineMap(
+            builder, loc, composedMap, composedOperands);
+        if (!expanded || expanded->size() != 1)
+            return {};
+        return expanded->front();
+    } else if (auto memrefStore = dyn_cast<memref::StoreOp>(store.op)) {
+        if (memrefStore.getIndices().size() != 1)
+            return {};
+        return memrefStore.getIndices().front();
+    }
+
+    return {};
+}
+
+static void createCondStoreWithIndex(OpBuilder &builder, Location loc,
+                                     const StoreInfo &store,
+                                     mlir::Value index,
+                                     mlir::Value condition) {
+    builder.create<ADORA::CondStoreOp>(loc, store.valueToStore, store.memref,
+                                       mlir::ValueRange(index), condition);
+}
+
+static bool createCondStore(OpBuilder &builder, Location loc,
+                            const StoreInfo &store, mlir::Value condition) {
+    mlir::Value index = materializeCondStoreIndex(builder, loc, store);
+    if (!index)
+        return false;
+
+    createCondStoreWithIndex(builder, loc, store, index, condition);
+    return true;
+}
+
+static void createFallbackStore(OpBuilder &builder, scf::IfOp ifOp,
+                                const StoreInfo &store, bool isThenStore) {
+    mlir::Value oldValue = findExistingLoadValue(ifOp, store.memref,
+                                                 store.indices);
+    if (!oldValue) {
+        if (auto affineStore = dyn_cast<affine::AffineStoreOp>(store.op)) {
+            oldValue = builder.create<affine::AffineLoadOp>(
+                ifOp.getLoc(), affineStore.getMemref(),
+                affineStore.getAffineMap(), affineStore.getMapOperands());
+        } else {
+            oldValue = builder.create<memref::LoadOp>(
+                ifOp.getLoc(), store.memref, store.indices);
+        }
+    }
+
+    mlir::Value trueValue = isThenStore ? store.valueToStore : oldValue;
+    mlir::Value falseValue = isThenStore ? oldValue : store.valueToStore;
+    mlir::Value selected = builder.create<arith::SelectOp>(
+        ifOp.getLoc(), ifOp.getCondition(), trueValue, falseValue);
+
+    if (auto affineStore = dyn_cast<affine::AffineStoreOp>(store.op)) {
+        builder.create<affine::AffineStoreOp>(
+            ifOp.getLoc(), selected, affineStore.getMemref(),
+            affineStore.getAffineMap(), affineStore.getMapOperands());
+    } else {
+        builder.create<memref::StoreOp>(ifOp.getLoc(), selected, store.memref,
+                                        store.indices);
+    }
+}
+
+static LogicalResult preflightSCFIfToSelect(ADORA::KernelOp kernel) {
+    bool invalid = false;
+
+    kernel.walk([&](ADORA::CondStoreOp store) {
+        for (Operation *ancestor = store->getParentOp(); ancestor;
+             ancestor = ancestor->getParentOp()) {
+            if (isa<scf::ForOp>(ancestor)) {
+                store.emitError(
+                    "ADORA.cond_store nested under scf.for is unsupported by "
+                    "CDFG generation; use affine.for");
+                invalid = true;
+                break;
+            }
+            if (ancestor == kernel.getOperation())
+                break;
+        }
+    });
+
+    kernel.walk([&](scf::IfOp ifOp) {
+        bool containsStore = false;
+        ifOp.walk([&](Operation *nested) {
+            if (nested != ifOp.getOperation() &&
+                isa<affine::AffineStoreOp, memref::StoreOp,
+                    ADORA::CondStoreOp>(nested))
+                containsStore = true;
+        });
+        if (containsStore) {
+            for (Operation *ancestor = ifOp->getParentOp(); ancestor;
+                 ancestor = ancestor->getParentOp()) {
+                if (isa<scf::ForOp>(ancestor)) {
+                    ifOp.emitError(
+                        "store-bearing scf.if nested under scf.for is "
+                        "unsupported by CDFG generation; use affine.for");
+                    invalid = true;
+                    break;
+                }
+                if (ancestor == kernel.getOperation())
+                    break;
+            }
+        }
+
+        auto validateBlock = [&](Block *block) {
+            if (!block)
+                return;
+            for (Operation &op : block->getOperations()) {
+                if (isa<scf::YieldOp, scf::IfOp, affine::AffineStoreOp,
+                        memref::StoreOp, ADORA::CondStoreOp>(op))
+                    continue;
+                if (op.getNumRegions() == 0 && mlir::isMemoryEffectFree(&op) &&
+                    mlir::isSpeculatable(&op))
+                    continue;
+
+                op.emitError()
+                    << "unsupported operation in scf.if branch for "
+                       "conditional-store lowering: '"
+                    << op.getName().getStringRef()
+                    << "'; only speculatable memory-effect-free operations "
+                       "and supported stores are allowed";
+                invalid = true;
+            }
+        };
+
+        validateBlock(&ifOp.getThenRegion().front());
+        validateBlock(ifOp.getElseRegion().empty()
+                          ? nullptr
+                          : &ifOp.getElseRegion().front());
+    });
+
+    return failure(invalid);
+}
+
+// The main function to lower scf.if to select with store sinking support.
+// Preflight the complete kernel before committing any rewrite so unsupported
+// effects cannot leave a partially converted control-flow tree behind.
+static LogicalResult lowerSCFIfToSelect(ADORA::KernelOp kernel) {
+    if (failed(preflightSCFIfToSelect(kernel)))
+        return failure();
+
     llvm::SmallVector<scf::IfOp, 4> ifOps;
-    kernel.walk([&](scf::IfOp op) {
+    kernel.walk<WalkOrder::PostOrder>([&](scf::IfOp op) {
         ifOps.push_back(op);
     });
 
     for (auto ifOp : ifOps) {
         OpBuilder builder(ifOp);
+
+        auto blockHasStores = [](mlir::Block *block) {
+            if (!block)
+                return false;
+            bool foundStore = false;
+            block->walk([&](mlir::Operation *op) {
+                if (isa<affine::AffineStoreOp, memref::StoreOp,
+                        ADORA::CondStoreOp>(op))
+                    foundStore = true;
+            });
+            return foundStore;
+        };
+        mlir::Block *thenBlock = &ifOp.getThenRegion().front();
+        mlir::Block *elseBlock = ifOp.getElseRegion().empty()
+                                    ? nullptr
+                                    : &ifOp.getElseRegion().front();
+        bool hasStoreSideEffects = blockHasStores(thenBlock) ||
+                                   blockHasStores(elseBlock);
         
-        // 1. handle return values first
-        if (ifOp.getNumResults() > 0) {
-            mlir::Block *thenBlock = &ifOp.getThenRegion().front();
-            mlir::Block *elseBlock = &ifOp.getElseRegion().front();
-            
+        // 1. Preserve the existing fast path for pure result-producing ifs.
+        // Store side effects must instead flow through predicate composition.
+        if (ifOp.getNumResults() > 0 && !hasStoreSideEffects) {
             // move all non-yield operations out of the ifOp
             for (auto &op : llvm::make_early_inc_range(thenBlock->getOperations())) {
                 if (!isa<scf::YieldOp>(op)) op.moveBefore(ifOp);
@@ -908,145 +1155,236 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
             continue; // skip to next ifOp
         }
 
-        // 2. handle store operations when there is no return value
-        if (ifOp.getNumResults() == 0) {
-            mlir::Block *thenBlock = &ifOp.getThenRegion().front();
-            mlir::Block *elseBlock = ifOp.getElseRegion().empty() ? nullptr : &ifOp.getElseRegion().front();
+        // 2. Handle branch stores, including stores nested in an if that also
+        // returns values.
+        {
 
-            // 2.1 separate store operations from other operations
-            llvm::SmallVector<StoreInfo, 4> thenStores;
-            llvm::SmallVector<StoreInfo, 4> elseStores;
-
-            // Lambda to collect only store operations
-            auto collectStoresOnly = [&](mlir::Block* block, llvm::SmallVector<StoreInfo, 4>& stores) {
-                if (!block) return;
+            // Keep every branch operation in one ordered representation. This
+            // prevents speculative memory reads and other memory effects from
+            // crossing rewritten stores while still allowing pure operations
+            // to move out with their original SSA order.
+            auto collectBranchStores = [&](mlir::Block *block) {
+                llvm::SmallVector<BranchStoreEntry, 4> entries;
+                if (!block) return entries;
                 for (auto &op : block->getOperations()) {
-                    if (auto storeOp = dyn_cast<affine::AffineStoreOp>(op)) {
-                        llvm::SmallVector<mlir::Value, 4> indices(storeOp.getMapOperands().begin(), 
-                                                                   storeOp.getMapOperands().end());
-                        stores.push_back({&op, storeOp.getValue(), storeOp.getMemref(), indices});
-                    }
-                    else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
-                        llvm::SmallVector<mlir::Value, 4> indices(storeOp.getIndices().begin(), 
-                                                                   storeOp.getIndices().end());
-                        stores.push_back({&op, storeOp.getValue(), storeOp.getMemref(), indices});
-                    }
+                    if (isa<scf::YieldOp>(op))
+                        continue;
+                    if (isa<affine::AffineStoreOp, memref::StoreOp>(op))
+                        entries.push_back(
+                            {BranchStoreEntry::Kind::Direct, &op});
+                    else if (isa<ADORA::CondStoreOp>(op))
+                        entries.push_back(
+                            {BranchStoreEntry::Kind::Conditional, &op});
+                    else
+                        entries.push_back(
+                            {BranchStoreEntry::Kind::Other, &op});
                 }
+                return entries;
             };
 
-            // Lambda to move non-store operations out of the ifOp
-            auto moveNonStoreOps = [&](mlir::Block* block) {
-                if (!block) return;
-                for (auto &op : llvm::make_early_inc_range(block->getOperations())) {
-                    if (!isa<scf::YieldOp>(op) && 
-                        !isa<affine::AffineStoreOp>(op) && 
-                        !isa<memref::StoreOp>(op)) {
-                        op.moveBefore(ifOp);
-                    }
+            // 2.1.1 collect store operations in source order.
+            auto thenStores = collectBranchStores(thenBlock);
+            auto elseStores = collectBranchStores(elseBlock);
+
+            // Hoist only leaf computations whose in-branch dependencies have
+            // already been hoisted. Operations depending on a load stay in
+            // the ordered stream with that load, while branch-local pure
+            // values needed by a paired store dominate the new select.
+            llvm::DenseSet<mlir::Operation *> speculativelyMovedOps;
+            auto moveAvailablePureOps = [&](llvm::ArrayRef<BranchStoreEntry> entries,
+                                            mlir::Block *block) {
+                for (const auto &entry : entries) {
+                    if (entry.kind != BranchStoreEntry::Kind::Other ||
+                        entry.op->getNumRegions() != 0 ||
+                        !mlir::isMemoryEffectFree(entry.op) ||
+                        !mlir::isSpeculatable(entry.op))
+                        continue;
+                    bool operandsAvailable = llvm::all_of(
+                        entry.op->getOperands(), [&](mlir::Value operand) {
+                            mlir::Operation *producer = operand.getDefiningOp();
+                            return !producer || producer->getBlock() != block ||
+                                   speculativelyMovedOps.count(producer);
+                        });
+                    if (!operandsAvailable)
+                        continue;
+                    entry.op->moveBefore(ifOp);
+                    speculativelyMovedOps.insert(entry.op);
                 }
             };
-
-            // 2.1.1 collect store operations
-            collectStoresOnly(thenBlock, thenStores);
-            collectStoresOnly(elseBlock, elseStores);
-
-            // 2.1.2 move non-store operations out of the ifOp
-            moveNonStoreOps(thenBlock);
-            moveNonStoreOps(elseBlock);
+            moveAvailablePureOps(thenStores, thenBlock);
+            moveAvailablePureOps(elseStores, elseBlock);
 
             // 2.2 handle all involved stores
-            llvm::DenseSet<mlir::Operation*> processedElseOps;
+            llvm::DenseMap<mlir::Operation *, mlir::Operation *> matchedElseOps;
+            llvm::DenseSet<mlir::Operation *> processedElseOps;
 
-            for (const auto& tStore : thenStores) {
-                mlir::Value valTrue = tStore.valueToStore;
-                mlir::Value valFalse;
-                mlir::Operation* matchedElseOp = nullptr;
+            // A paired select+store is emitted while walking the then branch.
+            // Pair only an else-branch prefix whose corresponding then stores
+            // occur in the same order. Otherwise an active selected store can
+            // cross an unmatched/conditional else store and change memory
+            // semantics when distinct SSA indices alias at runtime.
+            size_t nextThenPosition = 0;
+            for (const auto &elseEntry : elseStores) {
+                if (elseEntry.kind == BranchStoreEntry::Kind::Other &&
+                    speculativelyMovedOps.count(elseEntry.op))
+                    continue;
+                if (elseEntry.kind != BranchStoreEntry::Kind::Direct)
+                    break;
 
-                // search for matching store in elseStores
-                for (const auto& eStore : elseStores) {
-                    if (isSameLocation(tStore, eStore)) {
-                        valFalse = eStore.valueToStore;
-                        matchedElseOp = eStore.op;
-                        processedElseOps.insert(eStore.op);
+                StoreInfo elseStore = getStoreInfo(elseEntry.op);
+                mlir::Operation *matchedThenOp = nullptr;
+                for (size_t i = nextThenPosition; i < thenStores.size(); ++i) {
+                    const auto &thenEntry = thenStores[i];
+                    if (thenEntry.kind == BranchStoreEntry::Kind::Other &&
+                        speculativelyMovedOps.count(thenEntry.op))
+                        continue;
+                    if (thenEntry.kind != BranchStoreEntry::Kind::Direct)
+                        break;
+                    StoreInfo thenStore = getStoreInfo(thenEntry.op);
+                    if (isSameLocation(thenStore, elseStore)) {
+                        matchedThenOp = thenEntry.op;
+                        nextThenPosition = i + 1;
                         break;
                     }
                 }
+                if (!matchedThenOp)
+                    break;
 
-                // if no matching store in elseStores, create a new load
-                if (!matchedElseOp) {
-                    // find existing load value
-                    valFalse = findExistingLoadValue(ifOp, tStore.memref, tStore.indices);
-                    
-                    // if not found, create a new load
-                    if (!valFalse) {
-                        if (isa<affine::AffineStoreOp>(tStore.op)) {
-                            auto origStore = cast<affine::AffineStoreOp>(tStore.op);
-                            auto loadOp = builder.create<affine::AffineLoadOp>(
-                                ifOp.getLoc(), origStore.getMemref(), 
-                                origStore.getAffineMap(), origStore.getMapOperands());
-                            valFalse = loadOp.getResult();
-                        } else {
-                            auto loadOp = builder.create<memref::LoadOp>(
-                                ifOp.getLoc(), tStore.memref, tStore.indices);
-                            valFalse = loadOp.getResult();
-                        }
-                    }
-                }
-
-                // create Select
-                auto selectOp = builder.create<mlir::arith::SelectOp>(
-                    ifOp.getLoc(), ifOp.getCondition(), valTrue, valFalse);
-
-                // create new unconditional Store (after If)
-                if (isa<affine::AffineStoreOp>(tStore.op)) {
-                    auto origStore = cast<affine::AffineStoreOp>(tStore.op);
-                    builder.create<affine::AffineStoreOp>(
-                        ifOp.getLoc(), selectOp.getResult(), origStore.getMemref(),
-                        origStore.getAffineMap(), origStore.getMapOperands());
-                } else {
-                    builder.create<memref::StoreOp>(
-                        ifOp.getLoc(), selectOp.getResult(), tStore.memref, tStore.indices);
-                }
+                matchedElseOps[matchedThenOp] = elseEntry.op;
+                processedElseOps.insert(elseEntry.op);
             }
 
-            // handle elseStores that were not processed
-            for (const auto& eStore : elseStores) {
-                if (processedElseOps.count(eStore.op)) continue;
-
-                mlir::Value valTrue; 
-                mlir::Value valFalse = eStore.valueToStore;
-
-                // search for matching store in thenStores
-                valTrue = findExistingLoadValue(ifOp, eStore.memref, eStore.indices);
-                
-                // if not found, create a new load
-                if (!valTrue) {
-                    if (isa<affine::AffineStoreOp>(eStore.op)) {
-                        auto origStore = cast<affine::AffineStoreOp>(eStore.op);
-                        auto loadOp = builder.create<affine::AffineLoadOp>(
-                            ifOp.getLoc(), origStore.getMemref(),
-                            origStore.getAffineMap(), origStore.getMapOperands());
-                        valTrue = loadOp.getResult();
-                    } else {
-                        auto loadOp = builder.create<memref::LoadOp>(
-                            ifOp.getLoc(), eStore.memref, eStore.indices);
-                        valTrue = loadOp.getResult();
+            // Stage A serializes CSTORE addresses as an identity-layout logical
+            // index scaled by the element byte width. Reject an unmatched store
+            // before constructing CSTORE when the memref layout would require
+            // an additional offset or stride. Same-location branch pairs do not
+            // require CSTORE and remain on the ordinary SELECT + STORE path.
+            auto validateConditionalStoreLayouts = [&]() -> LogicalResult {
+                auto validateEntry = [&](const BranchStoreEntry &entry) {
+                    StoreInfo store = getStoreInfo(entry.op);
+                    auto memrefType = dyn_cast<MemRefType>(store.memref.getType());
+                    if (memrefType && !memrefType.getLayout().isIdentity()) {
+                        entry.op->emitError(
+                            "conditional-store lowering requires an "
+                            "identity-layout memref");
+                        return failure();
                     }
+                    return success();
+                };
+
+                for (const auto &entry : thenStores) {
+                    if (entry.kind == BranchStoreEntry::Kind::Direct &&
+                        !matchedElseOps.count(entry.op) &&
+                        failed(validateEntry(entry)))
+                        return failure();
+                }
+                for (const auto &entry : elseStores) {
+                    if (entry.kind == BranchStoreEntry::Kind::Direct &&
+                        !processedElseOps.count(entry.op) &&
+                        failed(validateEntry(entry)))
+                        return failure();
+                }
+                return success();
+            };
+            if (failed(validateConditionalStoreLayouts()))
+                return failure();
+
+            mlir::Value falseValue;
+            auto getFalseValue = [&]() -> mlir::Value {
+                if (!falseValue)
+                    falseValue = builder.create<arith::ConstantIntOp>(
+                        ifOp.getLoc(), 0, 1);
+                return falseValue;
+            };
+
+            auto emitBranchStores = [&](llvm::ArrayRef<BranchStoreEntry> entries,
+                                        bool isThenBranch) {
+              for (const auto &entry : entries) {
+                if (entry.kind == BranchStoreEntry::Kind::Other) {
+                    if (!speculativelyMovedOps.count(entry.op))
+                        entry.op->moveBefore(ifOp);
+                    continue;
+                }
+                if (entry.kind == BranchStoreEntry::Kind::Conditional) {
+                    auto condStore = cast<ADORA::CondStoreOp>(entry.op);
+                    mlir::Value pathCondition = isThenBranch
+                        ? builder.create<arith::SelectOp>(
+                              ifOp.getLoc(), ifOp.getCondition(),
+                              condStore.getCondition(), getFalseValue())
+                        : builder.create<arith::SelectOp>(
+                              ifOp.getLoc(), ifOp.getCondition(),
+                              getFalseValue(), condStore.getCondition());
+                    condStore.getConditionMutable().set(pathCondition);
+                    condStore->moveBefore(ifOp);
+                    continue;
                 }
 
-                // create Select
-                auto selectOp = builder.create<mlir::arith::SelectOp>(
-                    ifOp.getLoc(), ifOp.getCondition(), valTrue, valFalse);
+                StoreInfo store = getStoreInfo(entry.op);
+                if (!isThenBranch && processedElseOps.count(entry.op))
+                    continue;
 
-                // create new unconditional Store (after If)
-                if (isa<affine::AffineStoreOp>(eStore.op)) {
-                    auto origStore = cast<affine::AffineStoreOp>(eStore.op);
-                    builder.create<affine::AffineStoreOp>(
-                        ifOp.getLoc(), selectOp.getResult(), origStore.getMemref(),
-                        origStore.getAffineMap(), origStore.getMapOperands());
+                auto matchedIt = matchedElseOps.find(entry.op);
+                if (isThenBranch && matchedIt != matchedElseOps.end()) {
+                    StoreInfo matchedElseStore = getStoreInfo(matchedIt->second);
+                    mlir::Value selected = builder.create<arith::SelectOp>(
+                        ifOp.getLoc(), ifOp.getCondition(), store.valueToStore,
+                        matchedElseStore.valueToStore);
+                    // Same-address pairs remain an ordinary store.
+                    auto origStore = dyn_cast<affine::AffineStoreOp>(store.op);
+                    if (origStore) {
+                        builder.create<affine::AffineStoreOp>(
+                            ifOp.getLoc(), selected, origStore.getMemref(),
+                            origStore.getAffineMap(), origStore.getMapOperands());
+                    } else {
+                        builder.create<memref::StoreOp>(
+                            ifOp.getLoc(), selected, store.memref,
+                            store.indices);
+                    }
+                    continue;
+                }
+
+                if (isThenBranch) {
+                    if (!createCondStore(builder, ifOp.getLoc(), store,
+                                         ifOp.getCondition()))
+                        createFallbackStore(builder, ifOp, store,
+                                            /*isThenStore=*/true);
                 } else {
-                    builder.create<memref::StoreOp>(
-                        ifOp.getLoc(), selectOp.getResult(), eStore.memref, eStore.indices);
+                    mlir::Value index = materializeCondStoreIndex(
+                        builder, ifOp.getLoc(), store);
+                    if (!index) {
+                        createFallbackStore(builder, ifOp, store,
+                                            /*isThenStore=*/false);
+                        continue;
+                    }
+                    mlir::Value branchFalse =
+                        builder.create<arith::ConstantIntOp>(
+                            ifOp.getLoc(), 0, 1);
+                    mlir::Value branchTrue =
+                        builder.create<arith::ConstantIntOp>(
+                            ifOp.getLoc(), 1, 1);
+                    mlir::Value elseCondition =
+                        builder.create<arith::SelectOp>(
+                            ifOp.getLoc(), ifOp.getCondition(), branchFalse,
+                            branchTrue);
+                    createCondStoreWithIndex(builder, ifOp.getLoc(), store,
+                                             index, elseCondition);
+                }
+              }
+            };
+
+            emitBranchStores(thenStores, /*isThenBranch=*/true);
+            emitBranchStores(elseStores, /*isThenBranch=*/false);
+
+            // A mixed result/store if still needs the ordinary result select
+            // after all branch computations have been moved out.
+            if (ifOp.getNumResults() > 0) {
+                auto thenYield = cast<scf::YieldOp>(thenBlock->getTerminator());
+                auto elseYield = cast<scf::YieldOp>(elseBlock->getTerminator());
+                for (unsigned i = 0; i < ifOp.getNumResults(); ++i) {
+                    auto selectOp = builder.create<arith::SelectOp>(
+                        ifOp.getLoc(), ifOp.getCondition(),
+                        thenYield.getOperand(i), elseYield.getOperand(i));
+                    ifOp.getResult(i).replaceAllUsesWith(selectOp.getResult());
                 }
             }
 
@@ -1054,6 +1392,8 @@ static void lowerSCFIfToSelect(ADORA::KernelOp kernel) {
             ifOp.erase();
         }
     }
+
+    return success();
 }
 
 /**
@@ -1932,7 +2272,19 @@ void setConstantNode(LLVMCDFGNode* node){
   else if(isa<IntegerAttr>(constattr))
   {
     IntegerAttr intattr = dyn_cast<IntegerAttr>(constattr);
-    if(intattr.getType().isInteger(16)){    
+    if(intattr.getType().isIndex()){
+      int32_t value_32 = static_cast<int32_t>(intattr.getInt());
+      std::vector<unsigned char> ConstCal_hex = DataBitCastToHex(value_32);
+      node->setConstValHex(ConstCal_hex);
+      node->setDataBits(32);
+    }
+    else if(intattr.getType().isInteger(1)){
+      std::vector<unsigned char> ConstCal_hex = {
+          static_cast<unsigned char>(intattr.getInt() & 1)};
+      node->setConstValHex(ConstCal_hex);
+      node->setDataBits(1);
+    }
+    else if(intattr.getType().isInteger(16)){
       int value = intattr.getInt();   
       int16_t value_16 = (int16_t) value;       
       std::vector<unsigned char> ConstCal_hex = DataBitCastToHex(value_16);
@@ -2183,6 +2535,83 @@ static void HandleSelfCycle(LLVMCDFG* CDFG, bool verbose = true){
   }
 }
 
+// memref.load/store indices are element offsets, while CGRA load/store
+// addresses are byte offsets. Scale the address input by the element size.
+static void InsertMemrefByteOffsetMul(LLVMCDFG *CDFG, bool verbose = false) {
+  auto nodes = CDFG->nodes();
+  for (auto &elem : nodes) {
+    LLVMCDFGNode *node = elem.second;
+    llvm::StringRef typeName = node->getTypeName();
+    if (typeName != "load" && typeName != "store" && typeName != "CSTORE")
+      continue;
+
+    Operation *op = node->operation();
+    if (!op)
+      continue;
+
+    int64_t elementBytes;
+    if (typeName == "load") {
+      auto load = dyn_cast<memref::LoadOp>(op);
+      if (!load)
+        continue;
+      elementBytes = load.getMemRefType().getElementTypeBitWidth() / 8;
+    } else if (typeName == "store") {
+      auto store = dyn_cast<memref::StoreOp>(op);
+      if (!store)
+        continue;
+      elementBytes = store.getMemRefType().getElementTypeBitWidth() / 8;
+    } else {
+      auto store = dyn_cast<ADORA::CondStoreOp>(op);
+      if (!store)
+        continue;
+      elementBytes = store.getMemref().getType().getElementTypeBitWidth() / 8;
+    }
+
+    // Multiplication by one is redundant for one-byte elements.
+    if (elementBytes <= 1)
+      continue;
+
+    int addressPort = typeName == "load" ? 0 :
+                      typeName == "CSTORE" ? 1 : 2;
+    LLVMCDFGNode *addressNode = node->getInputPort(addressPort);
+    if (!addressNode)
+      continue;
+    bool isBackEdge = node->isInputBackEdge(addressNode);
+
+    node->delInputNode(addressNode);
+    addressNode->delOutputNode(node);
+    if (LLVMCDFGEdge *edge = CDFG->edge(addressNode, node))
+      CDFG->delEdge(edge);
+
+    LLVMCDFGNode *sizeNode = CDFG->addNode("CONST");
+    sizeNode->setTypeName("CONST");
+    sizeNode->setLoopLevel(node->getLoopLevel());
+    sizeNode->setConstValHex(
+        DataBitCastToHex(static_cast<int32_t>(elementBytes)));
+    sizeNode->setDataBits(32);
+
+    LLVMCDFGNode *mulNode = CDFG->addNode("MUL");
+    mulNode->setTypeName("MUL");
+    mulNode->setLoopLevel(node->getLoopLevel());
+
+    addressNode->addOutputNode(mulNode, isBackEdge);
+    mulNode->addInputNode(addressNode, 0, isBackEdge);
+    CDFG->addEdge(addressNode, mulNode);
+
+    sizeNode->addOutputNode(mulNode, false);
+    mulNode->addInputNode(sizeNode, 1, false);
+    CDFG->addEdge(sizeNode, mulNode);
+
+    mulNode->addOutputNode(node, false);
+    node->addInputNode(mulNode, addressPort, false);
+    CDFG->addEdge(mulNode, node);
+
+    if (verbose)
+      llvm::errs() << "Inserted byte-offset MUL*" << elementBytes << " for "
+                   << typeName << " node\n";
+  }
+}
+
 
 static bool HandleCompareNode(LLVMCDFG* CDFG, bool verbose = true){
   auto nodes = CDFG->nodes();
@@ -2190,6 +2619,7 @@ static bool HandleCompareNode(LLVMCDFG* CDFG, bool verbose = true){
     // int node_id = elem.first;
     LLVMCDFGNode* node = elem.second;
     mlir::Operation* op = node->operation();
+    if(!op) continue;
     // if(verbose) {op->dump();}
     if(   op->getName().getStringRef() == "arith.cmpi"
         ||op->getName().getStringRef() == "arith.cmpf"){
@@ -2217,6 +2647,7 @@ void HandleVectorExtractNode(LLVMCDFG* CDFG, bool verbose = true){
   for(auto &elem : nodes){
     LLVMCDFGNode* node = elem.second;
     mlir::Operation* op = node->operation();
+    if(!op) continue;
     if(op->getName().getStringRef() == "vector.extract"){
       mlir::vector::ExtractOp extractop = dyn_cast<mlir::vector::ExtractOp>(op);
       mlir::Operation* vecop = extractop.getVector().getDefiningOp();
@@ -2269,6 +2700,7 @@ void FixLinearAccessOfVectorNode(LLVMCDFG* CDFG, bool verbose = true){
   for(auto &elem : nodes){
     LLVMCDFGNode* node = elem.second;
     mlir::Operation* op = node->operation();
+    if(!op) continue;
     if(op->getName().getStringRef() == "affine.vector_store"){
       mlir::affine::AffineVectorStoreOp vecstoreop = dyn_cast<mlir::affine::AffineVectorStoreOp>(op);
       mlir::Operation* vecop = vecstoreop.getValue().getDefiningOp();
@@ -2558,17 +2990,13 @@ static void FuseOperators(LLVMCDFG* CDFG, bool verbose){
 
 /// After HandleSelfCycle, fix operand indices for SEL nodes. When adding edges we use
 /// MLIR operand order (0=cond, 1=true_value, 2=false_value). CDFG SEL expects
-/// 0=value_if_false, 1=value_if_true, 2=cond. Remap each input's idx to 2 - old_idx.
+/// 0=value_if_false, 1=value_if_true, 2=cond.
 static void fixSELOperandIndices(LLVMCDFG *CDFG, bool verbose) {
   for (auto nodepair : CDFG->nodes()) {
     LLVMCDFGNode *node = nodepair.second;
     if (node->getTypeName() != "SEL")
       continue;
-    for (LLVMCDFGNode *inputNode : node->inputNodes()) {
-      int oldIdx = node->getInputIdx(inputNode);
-      int newIdx = 2 - oldIdx;
-      node->setInputIdx(inputNode, newIdx);
-    }
+    node->swapInputPorts(0, 2);
   }
 }
 
@@ -2580,6 +3008,25 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
   std::map<mlir::Operation*, int> For_loop_level;
   std::map<mlir::Block*, int> loop_block_level;
   SmallVector<mlir::Operation*> OpsOutsideFor;
+  llvm::DenseSet<mlir::Operation *> opsOutsideForSet;
+  auto addOutsideFor = [&](mlir::Operation *op) {
+    if (opsOutsideForSet.insert(op).second)
+      OpsOutsideFor.push_back(op);
+  };
+  std::set<std::string> mappedOperationNames;
+  {
+    std::ifstream opNameFile(CDFG->getOpNameFilePath());
+    std::string line;
+    while (std::getline(opNameFile, line)) {
+      if (line.empty() || line.front() == '/' || line.front() == '#' ||
+          line.front() == '@')
+        continue;
+      std::istringstream fields(line);
+      std::string operationName;
+      if (fields >> operationName)
+        mappedOperationNames.insert(operationName);
+    }
+  }
   kernel->walk([&](mlir::Operation* op)
   {
     if(isa<affine::AffineForOp>(op)){
@@ -2598,7 +3045,7 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
         level++;
       }
       if(isa<ADORA::KernelOp>(op->getParentOp()))
-        OpsOutsideFor.push_back(op);
+        addOutsideFor(op);
       // for_region.viewGraph();
     }
     // scf::ForOp forop;
@@ -2618,15 +3065,62 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
       }
       // for_region.viewGraph();
     }
-    else if((isa<affine::AffineLoadOp>(op) 
+    else if((isa<affine::AffineLoadOp>(op)
         || isa<affine::AffineStoreOp>(op)
         || isa<arith::AddFOp>(op)
         || isa<arith::AddIOp>(op)
         || isa<arith::SubFOp>(op)
-        || isa<arith::SubIOp>(op)) 
+        || isa<arith::SubIOp>(op))
         && isa<ADORA::KernelOp>(op->getParentOp())){
-      OpsOutsideFor.push_back(op);
+      // Preserve the original direct-Kernel graph contract. The CSTORE slice
+      // below extends this baseline; it does not replace it.
+      addOutsideFor(op);
     }
+  });
+
+  // Extend the original direct-Kernel graph with mapped producers needed by a
+  // conditional-store port. Build that slice recursively so unrelated mapped
+  // memref operations and host-side operations do not enter the kernel graph.
+  func::FuncOp kernelFunction = kernel->getParentOfType<func::FuncOp>();
+  llvm::DenseSet<mlir::Operation *> slicedOps;
+  auto isInsideAffineLoop = [&](mlir::Operation *op) {
+    for (mlir::Operation *ancestor = op->getParentOp(); ancestor;
+         ancestor = ancestor->getParentOp()) {
+      if (isa<affine::AffineForOp>(ancestor))
+        return true;
+      if (ancestor == kernel.getOperation())
+        break;
+    }
+    return false;
+  };
+
+  std::function<void(mlir::Value)> collectCondStoreProducer;
+  collectCondStoreProducer = [&](mlir::Value value) {
+    mlir::Operation *producer = value.getDefiningOp();
+    if (!producer || producer->getParentOfType<func::FuncOp>() != kernelFunction)
+      return;
+    if (producer->getNumRegions() != 0 ||
+        producer->hasTrait<mlir::OpTrait::IsTerminator>() ||
+        mappedOperationNames.count(
+            producer->getName().getStringRef().str()) == 0)
+      return;
+    if (!slicedOps.insert(producer).second)
+      return;
+
+    for (mlir::Value operand : producer->getOperands())
+      collectCondStoreProducer(operand);
+    if (!isInsideAffineLoop(producer))
+      addOutsideFor(producer);
+  };
+
+  kernel.walk([&](ADORA::CondStoreOp store) {
+    collectCondStoreProducer(store.getValue());
+    for (mlir::Value index : store.getIndices())
+      collectCondStoreProducer(index);
+    collectCondStoreProducer(store.getCondition());
+    if (!isInsideAffineLoop(store) &&
+        slicedOps.insert(store.getOperation()).second)
+      addOutsideFor(store.getOperation());
   });
   level_total = level;
   // scf::ForOp scf_for;
@@ -2890,7 +3384,10 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
   for(mlir::Operation* lsop : OpsOutsideFor){
     LLVMCDFGNode* node = CDFG->addNode(lsop); 
     node->setLoopLevel(level_total);
-    if (lsop->getName().getStringRef() == "affine.load"){
+    if (isa<arith::ConstantOp>(lsop)) {
+      setConstantNode(node);
+    }
+    else if (lsop->getName().getStringRef() == "affine.load"){
       affine::AffineLoadOp load = dyn_cast<affine::AffineLoadOp>(lsop);
       std::string linearaccess_str = LinearAccessToStr(GetLinearAccess(load, For_loop_level));
       std::string initAddr_str = std::to_string(GetInitAddr(load, For_loop_level));
@@ -2955,7 +3452,48 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
     }
   }
 
+  // CSTORE is an I/O node with an explicit scalar address, so it still needs
+  // the same identity and footprint metadata as affine memory operations.
+  // The access pattern describes one explicit address per invocation rather
+  // than an inferred affine traversal.
+  for (auto &nodePair : CDFG->nodes()) {
+    LLVMCDFGNode *node = nodePair.second;
+    auto store = dyn_cast_or_null<ADORA::CondStoreOp>(node->operation());
+    if (!store)
+      continue;
+
+    mlir::Value memref = store.getMemref();
+    mlir::Operation *memrefOp = memref.getDefiningOp();
+    std::string refName;
+    if (!memrefOp) {
+      auto blockArg = dyn_cast<BlockArgument>(memref);
+      auto function = blockArg
+          ? dyn_cast<func::FuncOp>(blockArg.getOwner()->getParentOp())
+          : func::FuncOp();
+      if (function && blockArg.getArgNumber() < function.getNumArguments())
+        refName = std::string(kernel.getKernelName()) + ":arg" +
+                  std::to_string(blockArg.getArgNumber());
+      else
+        refName = std::string(kernel.getKernelName()) + ":local";
+    } else if (auto blockLoad = dyn_cast<ADORA::DataBlockLoadOp>(memrefOp)) {
+      refName = std::string(kernel.getKernelName()) + ":" +
+                std::string(blockLoad.getId());
+    } else if (auto localAlloc = dyn_cast<ADORA::LocalMemAllocOp>(memrefOp)) {
+      refName = std::string(kernel.getKernelName()) + ":" +
+                std::string(localAlloc.getId());
+    } else {
+      refName = std::string(kernel.getKernelName()) + ":local";
+    }
+
+    node->setMemrefName(refName);
+    node->setMemrefSize(GetMemrefSize(store));
+    node->setInitAddr("0");
+    node->setLinearAccess("0,1");
+  }
+
   /*** Add Edges ***/
+  std::map<std::pair<mlir::Block *, unsigned>, LLVMCDFGNode *>
+      scalarInputNodes;
   for (auto nodepair : CDFG->nodes())
   {
     // int id = nodepair.first;
@@ -2970,6 +3508,8 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
     }
 
     mlir::Operation *op = SuccNode->operation();
+    if (!op)
+      continue;
     if(verbose) {errs() << nodepair.first << ".Node:";}
     if(verbose) {op->dump();}
     for (unsigned operand_idx = 0; operand_idx < op->getNumOperands(); operand_idx++)
@@ -2978,10 +3518,17 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
       bool isBackEdge = false;
       mlir::Value _v = op->getOperand(operand_idx);
 
+      if (SuccNode->getTypeName() == "CSTORE" && operand_idx == 1)
+        // ADORA.cond_store operand 1 is the memref SSA value, not a CDFG input.
+        continue;
+
       int edgeidx;
       if (SuccNode->getTypeName() == "load")
         // memref.load: MLIR operand 0 = memref, 1+ = address indices; CDFG address = first operand (0)
         edgeidx = (operand_idx >= 1) ? (int)(operand_idx - 1) : (int)operand_idx;
+      else if (SuccNode->getTypeName() == "CSTORE")
+        // ADORA.cond_store: value, memref, index, condition -> data, address, enable.
+        edgeidx = operand_idx == 0 ? 0 : (int)(operand_idx - 1);
       else
         edgeidx = operand_idx;
       
@@ -2989,6 +3536,41 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
         /// Operands is a loop index or loop arg
         mlir::BlockArgument arg = _v.cast<BlockArgument>();
         mlir::Block * owner = arg.getOwner();
+
+        mlir::Type argType = arg.getType();
+        auto func = dyn_cast<func::FuncOp>(owner->getParentOp());
+        if (func && owner == &func.getBody().front() &&
+            arg.getArgNumber() < func.getNumArguments() &&
+            (argType.isa<mlir::IntegerType>() ||
+             argType.isa<mlir::FloatType>() || argType.isIndex())) {
+          auto key = std::make_pair(owner, arg.getArgNumber());
+          auto inputIt = scalarInputNodes.find(key);
+          if (inputIt == scalarInputNodes.end()) {
+            AnceNode = CDFG->addNode("Input");
+            AnceNode->setTypeName("Input");
+            AnceNode->setLoopLevel(SuccNode->getLoopLevel());
+
+            unsigned bitWidth = argType.isa<mlir::IntegerType>()
+                                    ? argType.cast<mlir::IntegerType>().getWidth()
+                                : argType.isa<mlir::FloatType>()
+                                    ? argType.cast<mlir::FloatType>().getWidth()
+                                    : 32;
+            AnceNode->setMemrefName(CDFG->name_str() + ":arg" +
+                                    std::to_string(arg.getArgNumber()));
+            AnceNode->setMemrefSize(std::max(1u, (bitWidth + 7u) / 8u));
+            AnceNode->setInitAddr("0");
+            AnceNode->setLinearAccess("0,1");
+            scalarInputNodes[key] = AnceNode;
+          } else {
+            AnceNode = inputIt->second;
+          }
+
+          AnceNode->addOutputNode(SuccNode, false);
+          SuccNode->addInputNode(AnceNode, edgeidx, false);
+          CDFG->addEdge(AnceNode, SuccNode);
+          continue;
+        }
+
         int blk_level = loop_block_level[owner];
         
         // _v.dump();
@@ -2997,14 +3579,23 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
         mlir::Operation* parentop;
 
         if(_v.getType().isIndex()){
-          isBackEdge = true;
+          // Preserve the established recurrence classification for ordinary
+          // consumers. A direct CSTORE induction-variable address is a
+          // current-iteration input and must not inherit an undefined
+          // iteration distance through byte scaling.
+          isBackEdge = !(SuccNode->getTypeName() == "CSTORE" && edgeidx == 1);
           parentop = _v.getParentBlock()->getParentOp();
           if(isa<affine::AffineForOp>(parentop)){
             if(verbose) {errs() << "  parentop:" << *parentop <<"\n";}
             
-            if(SuccNode->isLinearAccess()){
+            // Affine memory operations encode their induction-variable
+            // address in the serialized access pattern. CSTORE also carries
+            // I/O metadata, but its address is an explicit operand and must
+            // remain connected on port 1.
+            if(SuccNode->isLinearAccess() &&
+               SuccNode->getTypeName() != "CSTORE"){
               continue;      
-            }       
+            }
             else{
               AnceNode = CDFG->node(parentop);
               AnceNode->addOutputNode(SuccNode, isBackEdge);
@@ -3143,7 +3734,79 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
       CDFG->addEdge(AnceNode, SuccNode); //To fix: Edge Type
     }
   }
+
+  // A CSTORE has no SSA result, so source order alone does not constrain the
+  // scheduler.  Flatten mapped leaf memory effects in structured lexical
+  // execution order.  When a CSTORE participates, chaining the complete
+  // sequence preserves both same-block order and the entry/exit boundaries of
+  // affine loops (including nested loops).  Kernels without CSTORE retain the
+  // legacy graph unchanged.
+  llvm::SmallVector<mlir::Operation *, 8> orderedMemoryOps;
+  kernel.walk([&](mlir::Operation *op) {
+    if (op->getNumRegions() != 0 ||
+        op->hasTrait<mlir::OpTrait::IsTerminator>() ||
+        mlir::isMemoryEffectFree(op) || !CDFG->node(op))
+      return;
+    orderedMemoryOps.push_back(op);
+  });
+
+  auto hasGraphPath = [](LLVMCDFGNode *source, LLVMCDFGNode *target) {
+    llvm::SmallVector<LLVMCDFGNode *, 8> worklist{source};
+    llvm::DenseSet<LLVMCDFGNode *> visited;
+    while (!worklist.empty()) {
+      LLVMCDFGNode *current = worklist.pop_back_val();
+      if (!visited.insert(current).second)
+        continue;
+      if (current == target)
+        return true;
+      llvm::append_range(worklist, current->outputNodes());
+    }
+    return false;
+  };
+
+  bool invalidMemoryOrder = false;
+  if (llvm::any_of(orderedMemoryOps, [](Operation *op) {
+        return isa<ADORA::CondStoreOp>(op);
+      })) {
+    for (size_t i = 1; i < orderedMemoryOps.size(); ++i) {
+      Operation *previous = orderedMemoryOps[i - 1];
+      Operation *current = orderedMemoryOps[i];
+      LLVMCDFGNode *sourceNode = CDFG->node(previous);
+      LLVMCDFGNode *targetNode = CDFG->node(current);
+      if (!CDFG->edge(sourceNode, targetNode)) {
+        if (hasGraphPath(targetNode, sourceNode)) {
+          current->emitError(
+              "cannot preserve CSTORE memory source order without creating "
+              "a CDFG cycle");
+          invalidMemoryOrder = true;
+          break;
+        }
+        auto isRead = [](mlir::Operation *memoryOp) {
+          return isa<affine::AffineLoadOp, memref::LoadOp>(memoryOp);
+        };
+        DependInfo dependence;
+        dependence.type = isRead(previous)
+            ? (isRead(current) ? INPUT_DEP : ANTI_DEP)
+            : (isRead(current) ? FLOW_DEP : OUTPUT_DEP);
+        dependence.isConstDist = true;
+        dependence.distance = 0;
+
+        sourceNode->addOutputNode(targetNode, false);
+        targetNode->addInputNode(sourceNode, -1, false);
+        sourceNode->addDstDep(targetNode, dependence);
+        targetNode->addSrcDep(sourceNode, dependence);
+        CDFG->addEdge(sourceNode, targetNode, EDGE_TYPE_MEM);
+      }
+    }
+  }
+  if (invalidMemoryOrder)
+    return false;
   if(verbose) { CDFG->CDFGtoDOT(CDFG->name_str()+"_0_CDFG.dot");}
+
+  ////////////////////////
+  /// Convert memref element indices to byte offsets
+  ////////////////////////
+  InsertMemrefByteOffsetMul(CDFG, verbose);
 
   ////////////////////////
   /// Extract Accumulation
@@ -3212,23 +3875,13 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
         removing = 1;
       }
       else if(node->getTypeName() == "for"){
-        ////// for to input/output
-        const std::vector<LLVMCDFGNode *>& sinknodes = node->outputNodes();
-        // for(LLVMCDFGNode* sinknode : sinknodes){
-        //   if( ( sinknode->getTypeName()=="Input" || sinknode->getTypeName()=="INPUT"
-        //       ||sinknode->getTypeName()=="Output" || sinknode->getTypeName()=="OUTPUT" )
-        //     && sinknode->isLSaffine() ) {
-        //       CDFG->delEdge(CDFG->edge(node, sinknode));
-        //       node->delOutputNode(sinknode);
-        //       sinknode->delInputNode(node); 
-        //       LLVM_DEBUG( llvm::errs()<< node->inputNodes().size()<< " " << node->outputNodes().size()<< " ");
-        //   }
-        // }
-        // LLVM_DEBUG( llvm::errs()<< node->inputNodes().size()<< " " << node->outputNodes().size()<< " ");
-        // if(verbose) { CDFG->CDFGtoDOT(CDFG->name_str()+"_3_CDFG.dot");}
-        assert(node->inputNodes().size() == 0 && node->outputNodes().size() == 0);
-        CDFG->delNode(node);
-        removing = 1;
+        // Affine memory nodes normally encode loop indices in their linear
+        // access metadata, leaving the loop node isolated. CSTORE carries an
+        // explicit address operand, so retain a loop node that feeds it.
+        if(node->inputNodes().empty() && node->outputNodes().empty()){
+          CDFG->delNode(node);
+          removing = 1;
+        }
       }
       else if(node->getTypeName() == "truncf"){
         assert(node->inputNodes().size() == 1 && node->outputNodes().size() == 0);
@@ -3241,7 +3894,7 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
           CDFG->delNode(node);
           removing = 1;
         }  
-        else if(node->outputNodes().size() != 0){
+        else if(node->outputNodes().size() != 0 && node->operation() != nullptr){
           if(dyn_cast<arith::ConstantOp>(node->operation()).getValue().getType().isIndex()){
             int i = 0;
             for(i = 0; i < node->outputNodes().size(); i++){
@@ -3275,68 +3928,120 @@ bool generateCDFGfromKernelAfterOptimization(LLVMCDFG* CDFG, ADORA::KernelOp ker
   if(verbose) { CDFG->CDFGtoDOT(CDFG->name_str()+"_3_CDFG.dot");}
   FuseOperators(CDFG, verbose);
 
+  // Fail closed rather than serializing a CSTORE whose required value,
+  // explicit byte address, enable, or memory identity was lost while building
+  // and simplifying the graph.
+  bool malformedCStore = false;
+  kernel.walk([&](ADORA::CondStoreOp store) {
+    LLVMCDFGNode *node = CDFG->node(store.getOperation());
+    unsigned portCounts[3] = {0, 0, 0};
+    if (node) {
+      for (const auto &inputAndInfo : node->inputInfoMap()) {
+        for (const NodeInfo &info : inputAndInfo.second) {
+          if (info.idx >= 0 && info.idx < 3)
+            ++portCounts[info.idx];
+        }
+      }
+    }
+    if (!node || portCounts[0] != 1 || portCounts[1] != 1 ||
+        portCounts[2] != 1 || node->getMemrefName().empty() ||
+        node->getMemrefSize() <= 0 || node->getInitAddr() != "0" ||
+        node->getLinearAccess() != "0,1") {
+      store.emitError(
+          "malformed CSTORE CDFG node: requires exactly connected ports 0, "
+          "1, and 2 and valid memory metadata");
+      malformedCStore = true;
+    }
+  });
+  if (malformedCStore)
+    return false;
+
   return true;
 }
 
 
-LLVMCDFG* mlir::ADORA::generateCDFGfromKernel(LLVMCDFG* &CDFG, ADORA::KernelOp kernel, bool verbose){
-  
-  
-  /// remove truncf op
-  RemoveConstantTruncF(kernel);
+LogicalResult mlir::ADORA::generateCDFGfromKernel(LLVMCDFG* &CDFG,
+                                                  ADORA::KernelOp kernel,
+                                                  bool verbose){
+  // Validate the original operation before any normalization or if-conversion.
+  // All subsequent mutations happen on detached copies which replace the
+  // original only after a complete CDFG has been generated successfully.
+  if (failed(preflightSCFIfToSelect(kernel)))
+    return failure();
 
-  // hjy
-  // [Add] If-Conversion (scf.if -> arith.select)
-  lowerSCFIfToSelect(kernel);
+  ADORA::KernelOp fallbackKernel = kernel.clone();
+  kernel.getOperation()->getBlock()->push_back(fallbackKernel);
+  fallbackKernel->moveBefore(kernel);
+
+  RemoveConstantTruncF(fallbackKernel);
+  if (failed(lowerSCFIfToSelect(fallbackKernel))) {
+    fallbackKernel.erase();
+    return failure();
+  }
   if(verbose) {
     llvm::errs() << "[ADORA] Applied If-Conversion (scf.if -> arith.select).\n";
-    kernel.dump(); 
+    fallbackKernel.dump();
   }
-  // [Add] End
 
-  ADORA::KernelOp kernel_clone = kernel.clone();
-  // kernel_clone.dump();
-  kernel.getOperation()->getBlock()->push_back(kernel_clone);
-  kernel_clone->moveBefore(kernel);
+  ADORA::KernelOp optimizedKernel = fallbackKernel.clone();
+  kernel.getOperation()->getBlock()->push_back(optimizedKernel);
+  optimizedKernel->moveBefore(fallbackKernel);
 
-  /// Hoist load store op
-  /// FIX: We should judge whether to use hoist
-  HoistLoadStoreInKernelOp(kernel); 
-  if(verbose) kernel.dump();
+  // The legacy hoist does not model CSTORE as a memory-ordering barrier.
+  // Preserve that optimization for kernels whose memory semantics it supports.
+  bool containsCondStore =
+      optimizedKernel
+          .walk([&](ADORA::CondStoreOp) { return WalkResult::interrupt(); })
+          .wasInterrupted();
+  if (!containsCondStore)
+    HoistLoadStoreInKernelOp(optimizedKernel);
+  if(verbose) optimizedKernel.dump();
 
   
 
   /// For every loop carried value, find their accumulation mode. Move initial value computing to outer most level.
-  MoveLoopCarriedInitailValue(kernel);
-  if(verbose) kernel.dump();
+  MoveLoopCarriedInitailValue(optimizedKernel);
+  if(verbose) optimizedKernel.dump();
 
   /// For accumulation chain, move accumulation operation to the last using commutative law of addition/multiplication
-  MoveAccumulationToLast(kernel);
-  if(verbose) kernel.dump();
+  MoveAccumulationToLast(optimizedKernel);
+  if(verbose) optimizedKernel.dump();
 
   /// insert ISEL operator for loop carried value(not acc)
-  InsertIselForLoopCarry(kernel, verbose);
-  if(verbose) kernel.dump();
+  InsertIselForLoopCarry(optimizedKernel, verbose);
+  if(verbose) optimizedKernel.dump();
+
+  auto resetCDFG = [&]() {
+    LLVMCDFG *newCDFG =
+        new LLVMCDFG(CDFG->name_str(), CDFG->getOpNameFilePath());
+    delete CDFG;
+    CDFG = newCDFG;
+  };
 
   /// Generate
-  if(generateCDFGfromKernelAfterOptimization(CDFG, kernel, verbose)){
-    kernel_clone.erase();
+  if(generateCDFGfromKernelAfterOptimization(CDFG, optimizedKernel, verbose)){
+    kernel->getRegion(0).takeBody(optimizedKernel->getRegion(0));
+    optimizedKernel.erase();
+    fallbackKernel.erase();
   }
   else{
     if(verbose) llvm::errs() << "[Mion] CDFG generation failed. Try again with no opt.\n";
-    if(verbose) kernel.dump();
-    if(verbose) kernel_clone.dump();
-    LLVMCDFG* NewCDFG = new LLVMCDFG(CDFG->name_str(), CDFG->getOpNameFilePath());
-    delete CDFG;
-    CDFG = NewCDFG;
-    if(generateCDFGfromKernelAfterOptimization(CDFG, kernel_clone, verbose)){
-      kernel.erase();
+    if(verbose) optimizedKernel.dump();
+    if(verbose) fallbackKernel.dump();
+    resetCDFG();
+    if(generateCDFGfromKernelAfterOptimization(CDFG, fallbackKernel, verbose)){
+      kernel->getRegion(0).takeBody(fallbackKernel->getRegion(0));
+      optimizedKernel.erase();
+      fallbackKernel.erase();
     }
     else{
       llvm::errs() << "[ERROR] CDFG generation failed again. Abort.\n";
-      abort();
+      resetCDFG();
+      optimizedKernel.erase();
+      fallbackKernel.erase();
+      return failure();
     }
   }
   
-  return CDFG;
+  return success();
 }

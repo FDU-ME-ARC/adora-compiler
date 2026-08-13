@@ -51,6 +51,23 @@ static void printStrides(OpAsmPrinter &p, const llvm::ArrayRef<int64_t> strides)
     p << "]";
 }
 
+//===----------------------------------------------------------------------===//
+// CondStoreOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult CondStoreOp::verify() {
+  auto memrefType = cast<MemRefType>(getMemref().getType());
+  if (memrefType.getRank() != 1)
+    return emitOpError("requires a rank-1 memref");
+  if (!memrefType.hasStaticShape())
+    return emitOpError("requires a statically shaped rank-1 memref");
+  if (!memrefType.getLayout().isIdentity())
+    return emitOpError("requires an identity-layout memref");
+  if (getIndices().size() != 1)
+    return emitOpError("requires exactly one index");
+  return success();
+}
+
 
 //===----------------------------------------------------------------------===//
 // DataBlockLoadOp
@@ -1139,4 +1156,3 @@ void mlir::ADORA::DataBlockStoreOp::getCanonicalizationPatterns(
     mlir::RewritePatternSet &results, mlir::MLIRContext *ctx) {
   results.add<DedupAsyncDeps<DataBlockStoreOp>>(ctx);
 }
-

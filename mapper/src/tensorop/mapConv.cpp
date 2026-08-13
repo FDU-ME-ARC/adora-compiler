@@ -130,9 +130,11 @@ namespace mlir
 
             // 4. Initialize the CGRA mapper, and execute hardware mapping and Python/C configuration generation
             ADORA_TENSOR_MAPPER *mapper = new ADORA_TENSOR_MAPPER(_adg, _timeout_ms, _max_iters, _objOpt);
+            if (failed(MapNestedForOrKernel(mapper, newfor,
+                                            _OpNameFile_str))) {
+                return false;
+            }
             mappers.push_back(mapper);
-
-            MapNestedForOrKernel(mapper, newfor, _OpNameFile_str);
 
             ADORA::KernelOp kernel = nullptr;
             newfor.walk([&](ADORA::KernelOp k) { kernel = k; });

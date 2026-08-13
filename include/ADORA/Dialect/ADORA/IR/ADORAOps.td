@@ -424,6 +424,28 @@ def LocalMemAllocOp : ADORA_Op<"LocalMemAlloc", []>{
   let hasVerifier = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// Conditional Store
+//===----------------------------------------------------------------------===//
+
+def ADORA_CondStoreOp : ADORA_Op<"cond_store", [
+    TypesMatchWith<"type of 'value' matches element type of 'memref'",
+                   "memref", "value",
+                   "::llvm::cast<MemRefType>($_self).getElementType()">
+  ]> {
+  let summary = "conditionally store a value to a rank-1 memref";
+  let arguments = (ins
+    AnyType:$value,
+    Arg<AnyMemRef, "the reference to store to", [MemWrite]>:$memref,
+    Variadic<Index>:$indices,
+    I1:$condition
+  );
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    $value `,` $memref `[` $indices `]` `if` $condition attr-dict `:` type($memref)
+  }];
+}
+
 
 //===----------------------------------------------------------------------===//
 // KernelCallOp

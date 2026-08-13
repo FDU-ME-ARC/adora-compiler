@@ -3,12 +3,17 @@
 // RUN: %cgra-mapper --adg=%S/../../../spec/cgra_bf16/vitra_cgra_adg.json --op-file=%S/../../../spec/cgra_bf16/operations.json --output-type=pytest --obj-opt=false %t/opt.mlir --output=%t/gemm_funccall.py
 // RUN: test -s %t/gemm_funccall.py
 // RUN: %FileCheck %s --check-prefix=CHECK-PY --input-file=%t/gemm_funccall.py
+// RUN: not %cgra-mapper --adg=%S/../../../spec/cgra_bf16/vitra_cgra_adg.json --op-file=%S/../../../spec/cgra_bf16/operations.json --output-type=pytest --obj-opt=false --tile=1 %t/opt.mlir --output=%t/map_fail.py 2>&1 | %FileCheck %s --check-prefix=CHECK-MAP-FAIL
+// RUN: test ! -s %t/map_fail.py
 //
 // Verify cgra-mapper flow with function call around ADORATensor.Gemm.
 //
 // CHECK-PY: async def matmul_0(runtime: DeviceRuntime
 // CHECK-PY: await Gemm_0(runtime
 // CHECK-PY: async def Gemm_0(runtime: DeviceRuntime
+// CHECK-MAP-FAIL-DAG: Fail to map DFG to ADG!
+// CHECK-MAP-FAIL-DAG: error: failed to map tensor kernel to the selected ADG
+// CHECK-MAP-FAIL-DAG: cgra-mapper: tensor CDFG generation failed.
 
 #map = affine_map<(d0, d1, d2) -> (d0, d2)>
 #map1 = affine_map<(d0, d1, d2) -> (d2, d1)>
@@ -23,4 +28,3 @@ module {
     return %0 : memref<32x64xbf16>
   }
 }
-

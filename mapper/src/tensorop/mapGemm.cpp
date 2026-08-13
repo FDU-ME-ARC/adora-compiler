@@ -67,7 +67,7 @@ void tryToMoveOutBlockAccessOp(affine::AffineForOp forop){
   }
 }
 
-void TensorDataflowGen::MapNestedForOrKernel(
+LogicalResult TensorDataflowGen::MapNestedForOrKernel(
   ADORA_TENSOR_MAPPER* mapper, mlir::Operation* forOrKernel, std::string& OpNameFile_str){
   ADORA::KernelOp kernel;
   if(isa<ADORA::KernelOp>(forOrKernel)){
@@ -75,6 +75,11 @@ void TensorDataflowGen::MapNestedForOrKernel(
   }
   else if(isa<affine::AffineForOp>(forOrKernel)){
     kernel = findTheOnlyKernelInNestedLoop(dyn_cast<affine::AffineForOp>(forOrKernel));
+  }
+  if (!kernel) {
+    forOrKernel->emitError("tensor lowering did not produce an ADORA.kernel");
+    delete mapper;
+    return failure();
   }
   kernel.getOperation()->setAttr("Pingpong", mlir::UnitAttr::get(forOrKernel->getContext()));
 
@@ -86,7 +91,11 @@ void TensorDataflowGen::MapNestedForOrKernel(
   }
   
   LLVMCDFG *CDFG = new LLVMCDFG(kernelName, OpNameFile_str);
-  generateCDFGfromKernel(CDFG, kernel, /*verbose=*/_verbose);
+  if (failed(generateCDFGfromKernel(CDFG, kernel, /*verbose=*/_verbose))) {
+    delete CDFG;
+    delete mapper;
+    return failure();
+  }
 
   /// DFG Mapping to CGRA architecture
   DFGIR* dfg_ir = new DFGIR(CDFG);
@@ -103,13 +112,29 @@ void TensorDataflowGen::MapNestedForOrKernel(
     //   CEmitter.preestablishPlacementConstraints(kernel, mapper);
     // }
 
-  std::filesystem::create_directory(kernelName + "_map_result");
-  CDFG->CDFGtoDOT(kernelName + "_map_result/before_map_" + CDFG->name_str() + "_CDFG.dot");
-  bool succeed = mapper->execute(/*dumpCallFunc=*/false, /*dumpMappedViz*/true, /*resultDir=*/kernelName + "_map_result");
+  std::string resultDir = kernelName + "_map_result";
+  bool createdResultDir = std::filesystem::create_directory(resultDir);
+  bool succeed = mapper->execute(/*dumpCallFunc=*/false,
+                                 /*dumpMappedViz=*/true,
+                                 /*resultDir=*/resultDir);
     // std::filesystem::create_directory("map_result");
     // CDFG->CDFGtoDOT("map_result/before_map_" + CDFG->name_str() + "_CDFG.dot");
     // bool succeed = mapper->execute(/*dumpCallFunc=*/false, /*dumpMappedViz*/true, /*resultDir=*/"map_result");
-  if(succeed){
+  if (!succeed) {
+    kernel.emitError("failed to map tensor kernel to the selected ADG");
+    delete mapper;
+    delete dfg_ir;
+    delete CDFG;
+    if (createdResultDir) {
+      std::error_code cleanupError;
+      std::filesystem::remove_all(resultDir, cleanupError);
+    }
+    return failure();
+  }
+
+  CDFG->CDFGtoDOT(resultDir + "/before_map_" + CDFG->name_str() +
+                  "_CDFG.dot");
+  {
       // Mapping is successful, get all blockload and blockstore op and corresponding spad memory addresses.
       // if(_emit_type == "pytest"){
         pyEmitter->setMapResult(kernel, mapper);
@@ -123,7 +148,7 @@ void TensorDataflowGen::MapNestedForOrKernel(
       //   cEmitter->DataBlockOperationsToSPADInfo(kernel, mapper);
       //   cEmitter->GenerateCGRAConfig(kernel, mapper);
       // }
-    }
+  }
     // kernel_cnt++;
   forOrKernel->dump();
 
@@ -135,6 +160,7 @@ void TensorDataflowGen::MapNestedForOrKernel(
   //   ADORA::LocalMemAllocOp alloc = elem.first;
   //   alloc.dump();
   // }
+  return success();
 }
 
 bool TensorDataflowGen::visitOp(ADORATensor::GemmOp op){
@@ -160,10 +186,12 @@ bool TensorDataflowGen::visitOp(ADORATensor::GemmOp op){
   if(_verbose) newfor.dump();
 
   ADORA_TENSOR_MAPPER* mapper = new ADORA_TENSOR_MAPPER(_adg, _timeout_ms, _max_iters, _objOpt);
-  mappers.push_back(mapper);
       
   // mlir::Operation* loweredIR = op->getNextNode();
-  MapNestedForOrKernel(mapper, newfor, _OpNameFile_str);
+  if (failed(MapNestedForOrKernel(mapper, newfor, _OpNameFile_str))) {
+    return false;
+  }
+  mappers.push_back(mapper);
 
   op.erase();
 

@@ -340,8 +340,13 @@ int main(int argc, char **argv) {
   /////////////////////////
   /// Map ADORA Tensor
   /////////////////////////
-  MapAdoraTensorOp(&context, moduleop, tensor_mapper_Vec, &CEmitter, &PyEmitter, &SDKEmitter,
-    subadg, GeneralOpNameFile_str, timeout_ms, max_iters, objOpt, verbose);
+  if (failed(MapAdoraTensorOp(&context, moduleop, tensor_mapper_Vec, &CEmitter,
+                              &PyEmitter, &SDKEmitter, subadg,
+                              GeneralOpNameFile_str, timeout_ms, max_iters,
+                              objOpt, verbose))) {
+    llvm::errs() << "cgra-mapper: tensor CDFG generation failed.\n";
+    return 1;
+  }
   // if(emit_type == "pytest"){
   //   MapAdoraTensorOp(tensor_mapper_Vec)
   // }
@@ -397,12 +402,15 @@ int main(int argc, char **argv) {
   // });
 
   std::atomic<int> kernel_cnt{0};
+  std::atomic<bool> generation_failed{false};
   std::mutex mlir_mutex;
   std::mutex emitter_mutex;
   std::mutex vector_mutex;
   int max_threads = std::max(1, parallel_cores.getValue());
 
   auto map_kernel = [&](ADORA::KernelOp kernel) {
+    if (generation_failed.load())
+      return;
     MapperSA* mapper = new MapperSA(subadg, timeout_ms, max_iters, objOpt);
     {
       std::lock_guard<std::mutex> lock(vector_mutex);
@@ -418,9 +426,16 @@ int main(int argc, char **argv) {
       kernelName = "kernel_" + std::to_string(kernel_cnt.fetch_add(1));
     }
     LLVMCDFG *CDFG = new LLVMCDFG(kernelName, GeneralOpNameFile_str);
+    LogicalResult generationResult = failure();
     {
       std::lock_guard<std::mutex> lock(mlir_mutex);
-      generateCDFGfromKernel(CDFG, kernel, /*verbose=*/verbose);
+      generationResult = generateCDFGfromKernel(CDFG, kernel,
+                                                /*verbose=*/verbose);
+    }
+    if (failed(generationResult)) {
+      delete CDFG;
+      generation_failed.store(true);
+      return;
     }
     // CDFG->CDFGtoDOT(CDFG->name_str()+"_CDFG.dot");
 
@@ -507,7 +522,7 @@ int main(int argc, char **argv) {
       workers.emplace_back([&]() {
         while(true){
           size_t idx = next_index.fetch_add(1);
-          if(idx >= kernels.size()){
+          if(idx >= kernels.size() || generation_failed.load()){
             break;
           }
           map_kernel(kernels[idx]);
@@ -519,6 +534,16 @@ int main(int argc, char **argv) {
     }
     return WalkResult::advance();
   });
+
+  if (generation_failed.load()) {
+    for (auto mapper : mapper_Vec)
+      delete mapper;
+    for (auto ir : DFGIR_Vec)
+      delete ir;
+    for (auto mapper : tensor_mapper_Vec)
+      delete mapper;
+    return 1;
+  }
 
   /// Emit module to a C source file
   if(verbose) {moduleop.dump();}
