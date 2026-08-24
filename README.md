@@ -96,6 +96,9 @@ After a successful CMake build, you can run the regression suite from the build 
 cmake --build <your-build-dir> --target check-adora
 ```
 
+The validated loop-bearing conditional-store path is documented in
+[`docs/development/cstore-loop-index-e2e.md`](docs/development/cstore-loop-index-e2e.md).
+
 ### 3 adora-onnx-mlir (Optional)
 
 A self-hosted **onnx-mlir** fork lives under [`frontend/adora-onnx-mlir`](frontend/adora-onnx-mlir) (git submodule). From the repo root, initialize and update it with:

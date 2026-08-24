@@ -1,0 +1,275 @@
+{
+  "Operations" : [ {
+    "name" : "PASS",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 1,
+    "numRes" : 1,
+    "OPC" : 0
+  }, {
+    "name" : "ADD",
+    "commutative" : 1,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 1
+  }, {
+    "name" : "SUB",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 2
+  }, {
+    "name" : "MUL",
+    "commutative" : 1,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 3
+  }, {
+    "name" : "SHL",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 4
+  }, {
+    "name" : "LSHR",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 5
+  }, {
+    "name" : "ASHR",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 6
+  }, {
+    "name" : "ACC",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 1,
+    "numOperands" : 1,
+    "numRes" : 1,
+    "OPC" : 33
+  }, {
+    "name" : "ASUB",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 1,
+    "numOperands" : 1,
+    "numRes" : 1,
+    "OPC" : 34
+  }, {
+    "name" : "AND",
+    "commutative" : 1,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 7
+  }, {
+    "name" : "OR",
+    "commutative" : 1,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 8
+  }, {
+    "name" : "SLE",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 9
+  }, {
+    "name" : "SLT",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 10
+  }, {
+    "name" : "SEL",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 3,
+    "numRes" : 1,
+    "OPC" : 11
+  }, {
+    "name" : "BFMUL16",
+    "commutative" : 1,
+    "latency" : 3,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 12
+  }, {
+    "name" : "BFSUB16",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 13
+  }, {
+    "name" : "BFADD16",
+    "commutative" : 1,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 14
+  }, {
+    "name" : "BFACC16",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 1,
+    "numOperands" : 1,
+    "numRes" : 1,
+    "OPC" : 46
+  }, {
+    "name" : "BFEQ16",
+    "commutative" : 1,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 15
+  }, {
+    "name" : "BFOLT16",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 16
+  }, {
+    "name" : "BFOLE16",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 17
+  }, {
+    "name" : "BFUNO16",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 18
+  }, {
+    "name" : "ISEL",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 1,
+    "numOperands" : 1,
+    "numRes" : 1,
+    "OPC" : 160
+  }, {
+    "name" : "INTLV4",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 1,
+    "numOperands" : 4,
+    "numRes" : 1,
+    "OPC" : 243
+  }, {
+    "name" : "INTLV3",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 1,
+    "numOperands" : 3,
+    "numRes" : 1,
+    "OPC" : 244
+  }, {
+    "name" : "INTLV2",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 1,
+    "numOperands" : 2,
+    "numRes" : 1,
+    "OPC" : 245
+  }, {
+    "name" : "DEINTLV4",
+    "commutative" : 0,
+    "latency" : 4,
+    "accumulative" : 1,
+    "numOperands" : 1,
+    "numRes" : 4,
+    "OPC" : 246
+  }, {
+    "name" : "DEINTLV3",
+    "commutative" : 0,
+    "latency" : 3,
+    "accumulative" : 1,
+    "numOperands" : 1,
+    "numRes" : 3,
+    "OPC" : 247
+  }, {
+    "name" : "DEINTLV2",
+    "commutative" : 0,
+    "latency" : 2,
+    "accumulative" : 1,
+    "numOperands" : 1,
+    "numRes" : 2,
+    "OPC" : 248
+  }, {
+    "name" : "INPUT",
+    "commutative" : 0,
+    "latency" : 3,
+    "accumulative" : 0,
+    "numOperands" : 0,
+    "numRes" : 1,
+    "OPC" : 0
+  }, {
+    "name" : "OUTPUT",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 1,
+    "numRes" : 0,
+    "OPC" : 1
+  }, {
+    "name" : "LOAD",
+    "commutative" : 0,
+    "latency" : 3,
+    "accumulative" : 0,
+    "numOperands" : 1,
+    "numRes" : 1,
+    "OPC" : 2
+  }, {
+    "name" : "STORE",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 2,
+    "numRes" : 0,
+    "OPC" : 3
+  }, {
+    "name" : "CSTORE",
+    "commutative" : 0,
+    "latency" : 1,
+    "accumulative" : 0,
+    "numOperands" : 3,
+    "numRes" : 0,
+    "OPC" : 4
+  } ]
+}

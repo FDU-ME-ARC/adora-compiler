@@ -17,14 +17,14 @@ private:
     ADG* _adg;
     std::map<int, std::string> _iobModeNames;
     // parse ADG json object
-    ADG* parseADG(json& adgJson);
+    ADG* parseADG(json& adgJson, const std::string& owner = "");
     // parse ADGNode from sub-modules json object 
     ADGNode* parseADGNode(json& nodeJson);
     // parse ADGNode from instances json object, 
     // modules<moduleId, <ADGNode*, used>>,  
     ADGNode* parseADGNode(json& nodeJson, std::map<int, std::pair<ADGNode*, bool>>& modules);
     // parse ADGEdge json object
-    void parseADGEdges(ADG* adg, json& edgeJson);
+    void parseADGEdges(ADG* adg, json& edgeJson, const std::string& owner);
     // analyze the connections among the internal sub-modules for GPENode, fill _operandInputs 
     void analyzeIntraConnect(GPENode* node);
     // analyze the connections among the internal sub-modules for IOBNode, fill _operandInputs 

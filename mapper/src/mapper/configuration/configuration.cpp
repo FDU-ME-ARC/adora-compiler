@@ -1,6 +1,8 @@
 
 #include "mapper/configuration.h"
 
+#include <limits>
+
 void Configuration::addCfgData(std::map<int, CfgData> &cfg, const CfgDataLoc &loc, uint32_t data){
     CfgData loc_data(loc.high - loc.low + 1, data);
     cfg[loc.low] = loc_data;
@@ -21,6 +23,53 @@ void Configuration::addCfgData(std::map<int, CfgData> &cfg, const CfgDataLoc &lo
 void Configuration::addCfgData(std::map<int, CfgData> &cfg, const CfgDataLoc &loc, const std::vector<uint32_t> &data){
     CfgData loc_data(loc.high - loc.low + 1, data);
     cfg[loc.low] = loc_data;
+}
+
+void Configuration::addIobDelayCfg(std::map<int, CfgData> &cfg, IOBNode *node,
+                                   ADGNode *delayNode,
+                                   const std::map<int, int> &delayUsed){
+    if(delayUsed.empty()){
+        return;
+    }
+    const std::string prefix = "Invalid IOB configuration " + node->name() +
+                               " (id=" + std::to_string(node->id()) + "): ";
+    if(!delayNode ||
+       (delayNode->type() != "DelayPipe" && delayNode->type() != "RDU")){
+        std::cout << prefix << "expected DelayPipe after input mux" << std::endl;
+        exit(1);
+    }
+    auto config = node->configInfo().find(delayNode->id());
+    if(config == node->configInfo().end()){
+        std::cout << prefix << "missing DelayPipe configuration for module "
+                  << delayNode->id() << std::endl;
+        exit(1);
+    }
+    const CfgDataLoc &location = config->second;
+    const int width = location.high - location.low + 1;
+    const int operands = node->numOperands();
+    if(width <= 0 || width > 32 || operands <= 0 || width % operands != 0){
+        std::cout << prefix << "DelayPipe configuration width " << width
+                  << " is incompatible with " << operands << " operands"
+                  << std::endl;
+        exit(1);
+    }
+    const int laneWidth = width / operands;
+    const uint32_t laneMask = laneWidth == 32
+                                  ? std::numeric_limits<uint32_t>::max()
+                                  : (uint32_t(1) << laneWidth) - 1;
+    uint32_t packed = 0;
+    for(const auto &entry : delayUsed){
+        const int lane = entry.first;
+        const int delay = entry.second;
+        if(lane < 0 || lane >= operands || delay < 0 ||
+           uint64_t(delay) > laneMask){
+            std::cout << prefix << "DelayPipe lane " << lane
+                      << " cannot encode delay " << delay << std::endl;
+            exit(1);
+        }
+        packed |= uint32_t(delay) << (laneWidth * lane);
+    }
+    addCfgData(cfg, location, packed);
 }
 
 
@@ -190,7 +239,7 @@ std::map<int, CfgData> Configuration::getGpeCfgData(GPENode* node){
 
         /// II
         int II = _mapping->II();
-        int WI = dfgNode->interval() * II;
+        int WI = dfgNode->isLoopIndexAcc() ? 1 : dfgNode->interval() * II;
         int wiId = node->cfgIdMap["WI"];
         addCfgData(cfg, node->configInfo(wiId), (uint32_t)WI);
         // CfgDataLoc wiCfgLoc = node->configInfo(wiId);
@@ -200,11 +249,14 @@ std::map<int, CfgData> Configuration::getGpeCfgData(GPENode* node){
         // cfg[wiCfgLoc.low] = wiCfg;
 
         auto& dfgNodeAttr = _mapping->dfgNodeAttr(dfgNode->id());
-        int latency = dfgNodeAttr.lat - dfgNode->opLatency(); 
+        int latency = dfgNode->isLoopIndexAcc() ? 0 :
+            dfgNodeAttr.lat - dfgNode->opLatency();
         int latencyId = node->cfgIdMap["Latency"];
 
         //// @jhlou: for nodes following merge op, add additional latency(acr counting 3 more cycles) 
-        latency = addAdditionalLatencyForMERGEOp(dfgNode, latency);
+        if(!dfgNode->isLoopIndexAcc()){
+            latency = addAdditionalLatencyForMERGEOp(dfgNode, latency);
+        }
 
         addCfgData(cfg, node->configInfo(latencyId), (uint32_t)latency);
         // CfgDataLoc latencyCfgLoc = node->configInfo(latencyId);
@@ -228,7 +280,7 @@ std::map<int, CfgData> Configuration::getGpeCfgData(GPENode* node){
             varconfig->LSBToLenExpr[key] = value;
         }
 
-        int repeats = dfgNode->repeats();
+        int repeats = dfgNode->isLoopIndexAcc() ? 1 : dfgNode->repeats();
         int repeatsId = node->cfgIdMap["Repeats"];
         addCfgData(cfg, node->configInfo(repeatsId), (uint32_t)repeats);
         // CfgDataLoc repeatsCfgLoc = node->configInfo(repeatsId);
@@ -243,7 +295,7 @@ std::map<int, CfgData> Configuration::getGpeCfgData(GPENode* node){
             varconfig->LSBToLenExpr[key] = value;
         }
 
-        bool skipfisrt = !dfgNode->isAccFirst();
+        bool skipfisrt = dfgNode->isLoopIndexAcc() || !dfgNode->isAccFirst();
         int skipfisrtId = node->cfgIdMap["SkipFirst"];
         addCfgData(cfg, node->configInfo(skipfisrtId), (uint32_t)skipfisrt);
         // CfgDataLoc skipfisrtCfgLoc = node->configInfo(skipfisrtId);
@@ -446,14 +498,13 @@ std::map<int, CfgData> Configuration::getIobCfgData(IOBNode* node){
         // cfg[useEnCfgLoc.low] = useEnCfg;
     }
     if(op != "INPUT"){ // only INPUT node donot use Mux     
-        int rduId;
+        ADGNode* delayNode = nullptr;
         std::map<int, int> delayUsed;
         for(auto& elem : dfgNode->inputEdges()){
             int eid = elem.second;
             // auto edge = dfg->edge(eid);
             // std::cout << "eid: " << eid << ", " << dfg->node(edge->srcId())->name() << " -> " << dfg->node(edge->dstId())->name() << std::endl;
             auto& edgeAttr = _mapping->dfgEdgeAttr(eid);
-            int delay = edgeAttr.delay; // delay cycles
             int inputIdx = edgeAttr.edgeLinks.rbegin()->srcPort; // last edgeLInk, dst port
             auto muxPair = subAdg->input(inputIdx).begin(); // one input only connected to one Mux
             int muxId = muxPair->first;
@@ -463,30 +514,19 @@ std::map<int, CfgData> Configuration::getIobCfgData(IOBNode* node){
             // CfgDataLoc muxCfgLoc = node->configInfo(muxId);
             // CfgData muxCfg((muxCfgLoc.high - muxCfgLoc.low + 1), (uint32_t)muxCfgData);
             // cfg[muxCfgLoc.low] = muxCfg;
-            auto rduPair = mux->output(0).begin();
-            rduId = rduPair->first; 
-            int rduPort = rduPair->second;
-            auto rdu = subAdg->node(rduId);            
-            if(rdu->type() == "RDU"){
-                delayUsed[rduPort] = edgeAttr.delay; // delay cycles used by this port
-                addCfgData(cfg, node->configInfo(rduId), (uint32_t)delay);
-                // CfgDataLoc rduCfgLoc = node->configInfo(rduId);
-                // CfgData rduCfg(rduCfgLoc.high - rduCfgLoc.low + 1, (uint32_t)delay);
-                // cfg[rduCfgLoc.low] = rduCfg;      
+            auto delayPair = mux->output(0).begin();
+            auto currentDelayNode = subAdg->node(delayPair->first);
+            if(delayNode && delayNode->id() != currentDelayNode->id()){
+                std::cout << "Invalid IOB configuration " << node->name()
+                          << " (id=" << node->id()
+                          << "): input muxes do not share one DelayPipe"
+                          << std::endl;
+                exit(1);
             }     
+            delayNode = currentDelayNode;
+            delayUsed[delayPair->second] = edgeAttr.delay;
         }  
-        // RDU
-        if(!delayUsed.empty()){
-            CfgDataLoc rduCfgLoc = node->configInfo(rduId);
-            uint32_t delayCfg = 0;
-            int eachDelayWidth = (rduCfgLoc.high - rduCfgLoc.low + 1) / node->numOperands();
-            for(auto& elem : delayUsed){
-                delayCfg |= elem.second << (eachDelayWidth * elem.first);
-            }
-            addCfgData(cfg, rduCfgLoc, (uint32_t)delayCfg);
-            // CfgData rduCfg(rduCfgLoc.high - rduCfgLoc.low + 1, delayCfg);
-            // cfg[rduCfgLoc.low] = rduCfg;  
-        }
+        addIobDelayCfg(cfg, node, delayNode, delayUsed);
     }
     // dumpCfgData(std::cout);
     return cfg;

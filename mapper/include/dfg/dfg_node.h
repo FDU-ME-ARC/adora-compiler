@@ -28,6 +28,7 @@ private:
     // Accumulate operation varibales; e.g. for(i = 2; i < 10; i += 2)
     bool _accumulative = false;
     bool _isAccFirst;  // if the accumulative value is the first result; e.g. false
+    bool _isLoopIndexAcc = false;
     uint64_t _initVal;  // initial value, 2
     int _cycles;        // update number, (10-2)/2 = 2
     int _interval;      // update interval, 1
@@ -46,6 +47,8 @@ public:
     void setCommutative(bool cmu){ _commutative = cmu; }
     bool isAccFirst(){ return _isAccFirst; }
     void setIsAccFirst(bool isFirst){ _isAccFirst = isFirst; }
+    bool isLoopIndexAcc(){ return _isLoopIndexAcc; }
+    void setLoopIndexAcc(bool isLoopIndexAcc = true){ _isLoopIndexAcc = isLoopIndexAcc; }
     uint64_t imm(){ return _imm; }
     void setImm(uint64_t imm){ _imm = imm; }
     int immIdx(){ return _immIdx; }

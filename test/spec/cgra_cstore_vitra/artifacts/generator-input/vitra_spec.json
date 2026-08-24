@@ -1,0 +1,296 @@
+{
+  "rs_store_queue_depth" : 8,
+  "cgra_lg_max_ii" : 4,
+  "cgra_gpes" : [ [ {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  } ], [ {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  } ], [ {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  } ], [ {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  } ], [ {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  } ], [ {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  } ], [ {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  } ], [ {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  } ], [ {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  } ], [ {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  }, {
+    "max_delay" : 10,
+    "operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ]
+  } ] ],
+  "id_width" : 6,
+  "tile_num_row" : 10,
+  "cgra_tile_num" : 8,
+  "system_bus_beat_bits" : 128,
+  "cgra_gpe_max_delay" : 10,
+  "cgra_gpe_in_from_dir" : [ 4, 5, 7, 6 ],
+  "cgra_lg_max_cycles" : 12,
+  "axilite_addrspace" : 1024,
+  "spad_cfg_lg_size" : 14,
+  "cgra_cfg_data_width" : 32,
+  "cgra_lg_max_lat" : 6,
+  "cgra_iobs" : [ [ {
+    "mode" : 2,
+    "max_delay" : 10
+  }, {
+    "mode" : 2,
+    "max_delay" : 10
+  }, {
+    "mode" : 2,
+    "max_delay" : 10
+  } ], [ {
+    "mode" : 2,
+    "max_delay" : 10
+  }, {
+    "mode" : 2,
+    "max_delay" : 10
+  }, {
+    "mode" : 2,
+    "max_delay" : 10
+  } ] ],
+  "rs_load_queue_depth" : 8,
+  "cgra_iob_sram_addr_width" : 16,
+  "cgra_gpe_operations" : [ "PASS", "ADD", "SUB", "MUL", "SHL", "LSHR", "ASHR", "ACC", "ASUB", "AND", "OR", "SLE", "SLT", "SEL", "BFMUL16", "BFSUB16", "BFADD16", "BFACC16", "BFEQ16", "BFOLT16", "BFOLE16", "BFUNO16", "ISEL", "INTLV4", "INTLV3", "INTLV2", "DEINTLV4", "DEINTLV3", "DEINTLV2" ],
+  "axilite_datawidth" : 32,
+  "cgra_gib_diag_iopin_connect" : true,
+  "operation_set_filename" : "operations.json",
+  "dma_num_req_in_flight" : 8,
+  "cgra_iob_sram_add_reg" : 2,
+  "tile_spad_num_banks" : 6,
+  "cgra_iob_mode" : 2,
+  "ls_stream_queue_depth" : 0,
+  "cgra_data_width" : 16,
+  "cgra_gpe_out_to_dir" : [ 4, 5, 7, 6 ],
+  "cgra_iob_max_delay" : 10,
+  "cgra_gibs" : [ [ {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  } ], [ {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  } ], [ {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  } ], [ {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  } ], [ {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  } ], [ {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  } ], [ {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  } ], [ {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  } ], [ {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  } ], [ {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  } ], [ {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  }, {
+    "diag_iopin_connect" : true,
+    "fc_list" : [ 2, 2, 4 ]
+  } ] ],
+  "spad_bank_lg_size" : 13,
+  "dumpADG" : true,
+  "tlb_num_ways" : 32,
+  "cgra_gib_connect_flexibility" : [ 2, 2, 4 ],
+  "cgra_iob_sram_has_mask" : true,
+  "cgra_lg_max_stride" : 13,
+  "cgra_iob_num_sides" : 2,
+  "cgra_lg_max_init" : 12,
+  "tile_num_column" : 3,
+  "cgra_gib_track_reged_mode" : 1,
+  "cgra_adg_filename" : "vitra_cgra_adg.json",
+  "cgra_cfg_blk_offset" : 3,
+  "cgra_iob_sram_banks_coalesce" : 8,
+  "dma_lg_max_burst_size" : 6,
+  "tlb_is_shared" : true,
+  "spad_data_width" : 128,
+  "cgra_cfg_addr_width_align" : 16,
+  "cgra_gib_num_track" : 2,
+  "rs_exe_queue_depth" : 4,
+  "cgra_iob_ag_nest_levels" : 4,
+  "cgra_cfg_sram_add_reg" : false,
+  "dumpOperationSet" : true,
+  "cgra_cfg_addr_width" : 13,
+  "spad_addr_num" : 5
+}

@@ -1,7 +1,22 @@
+add_llvm_executable(cstore-dfg-contract-test
+  cgra-mapper/cstore_contract/dfg_contract_unit.cpp)
+target_include_directories(cstore-dfg-contract-test PRIVATE
+  ${CMAKE_SOURCE_DIR}/mapper/include
+  ${CMAKE_SOURCE_DIR}/lib/DFG/inc)
+target_compile_definitions(cstore-dfg-contract-test PRIVATE
+  SPDLOG_NO_EXCEPTIONS)
+target_link_libraries(cstore-dfg-contract-test PRIVATE
+  CGRAMapperLIB
+  GeneralCDFGGen
+  MLIRADORAOps
+  MLIRADORAKernelOp)
+llvm_update_compile_flags(cstore-dfg-contract-test)
+
 set(ADORA_TEST_DEPENDS
   cgra-opt
   tensor-opt
   cgra-mapper
+  cstore-dfg-contract-test
   FileCheck
 )
 
@@ -24,9 +39,7 @@ configure_lit_site_cfg(
 
 add_lit_testsuite(check-adora "Running the ADORA regression tests"
   ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS cgra-opt FileCheck
-  DEPENDS tensor-opt FileCheck
-  DEPENDS cgra-mapper FileCheck
+  DEPENDS ${ADORA_TEST_DEPENDS}
 )
 
 

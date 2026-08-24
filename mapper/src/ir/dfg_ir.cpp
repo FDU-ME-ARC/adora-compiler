@@ -1,5 +1,33 @@
 
 #include "ir/dfg_ir.h"
+#include "ir/cstore_contract.h"
+
+namespace {
+
+bool requiresRoutedConstant(DFGNode *destination, int logicalPort) {
+    if(!destination)
+        return false;
+    const std::string &operation = destination->operation();
+    // CSTORE consumes all three values on physical IOB lanes. Ordinary STORE
+    // retains its static address in the IOB access pattern, but its data port
+    // is likewise a physical lane and cannot consume a node-local immediate.
+    return (operation == "CSTORE" && logicalPort >= 0 && logicalPort < 3) ||
+           (operation == "STORE" && logicalPort == 0);
+}
+
+DFGNode *materializeRoutedConstant(DFG *dfg, int &nextNodeId,
+                                   uint64_t value) {
+    DFGNode *node = new DFGNode();
+    node->setId(++nextNodeId);
+    node->setName("PASS" + std::to_string(node->id()));
+    node->setOperation("PASS");
+    node->setImm(value);
+    node->setImmIdx(0);
+    dfg->addNode(node);
+    return node;
+}
+
+} // namespace
 
 
 DFGIR::DFGIR(std::string filename)
@@ -274,12 +302,14 @@ DFG* DFGIR::parseDFGJson(std::string filename){
     ifs >> dfgJson;
     DFG* dfg = new DFG();
     dfg->setId(0); // DFG id = 0, node id = 1,...,n
+    int nextMaterializedNodeId = 0;
     // parse nodes
     for(auto& nodeJson : dfgJson["objects"]){
         std::string nodeName = nodeJson["name"].get<std::string>();
         std::string opName = nodeJson["opcode"].get<std::string>();
         std::transform(opName.begin(), opName.end(), opName.begin(), toupper);
         int id = nodeJson["_gvid"].get<int>() + 1; // start from 1
+        nextMaterializedNodeId = std::max(nextMaterializedNodeId, id);
         // if(opName == "INPUT"){
         //     int idx = _inputId2idx.size();
         //     setInputIdx(id, idx);
@@ -350,6 +380,13 @@ DFG* DFGIR::parseDFGJson(std::string filename){
                         dfg_node->setIsAccFirst(false);
                     }
                 }
+                if(nodeJson.contains("loop_index_acc") &&
+                   ((nodeJson["loop_index_acc"].is_string() &&
+                     nodeJson["loop_index_acc"].get<std::string>() == "1") ||
+                    (nodeJson["loop_index_acc"].is_boolean() &&
+                     nodeJson["loop_index_acc"].get<bool>()))) {
+                    dfg_node->setLoopIndexAcc();
+                }
             }
             dfg_node->setId(id);
             dfg_node->setName(nodeName);
@@ -369,6 +406,7 @@ DFG* DFGIR::parseDFGJson(std::string filename){
         }
     }
     // parse edges
+    std::map<int, int> immediateCount;
     for(auto& edgeJson : dfgJson["edges"]){
         int srcId = edgeJson["tail"].get<int>() + 1;
         int dstId = edgeJson["head"].get<int>() + 1;
@@ -391,8 +429,24 @@ DFG* DFGIR::parseDFGJson(std::string filename){
         }
         if(isConst(srcId)){ // merge const node into the node connected to it
             DFGNode* node = dfg->node(dstId);
-            node->setImm(constValue(srcId));
-            node->setImmIdx(dstPort);
+            if(node && (node->operation() == "STORE" ||
+                        node->operation() == "CSTORE"))
+                ++immediateCount[dstId];
+            if(requiresRoutedConstant(node, dstPort)){
+                // VITRA IOBs do not have an operation-local immediate input.
+                // Materialize the one accepted STORE/CSTORE constant in a GPE
+                // PASS so it becomes a real routed operand at the exact logical
+                // port instead of silently reading zero at the IOB boundary.
+                DFGNode *constant = materializeRoutedConstant(
+                    dfg, nextMaterializedNodeId, constValue(srcId));
+                int edgeId = edgeJson["_gvid"].get<int>();
+                DFGEdge* edge = new DFGEdge(edgeId);
+                edge->setEdge(constant->id(), 0, dstId, dstPort);
+                dfg->addEdge(edge);
+            }else{
+                node->setImm(constValue(srcId));
+                node->setImmIdx(dstPort);
+            }
         } else{
             int edgeId = edgeJson["_gvid"].get<int>();
             DFGEdge* edge = new DFGEdge(edgeId);
@@ -405,6 +459,18 @@ DFG* DFGIR::parseDFGJson(std::string filename){
             // }
             dfg->addEdge(edge);
         }         
+    }
+    for(auto &elem : dfg->nodes()){
+        DFGNode *node = elem.second;
+        if(node->operation() != "STORE" && node->operation() != "CSTORE")
+            continue;
+        const std::string violation =
+            CStoreContract::immediateViolation(immediateCount[node->id()]);
+        if(!violation.empty()){
+            std::cout << "Invalid " << node->operation() << " DFG node "
+                      << node->id() << ": " << violation << std::endl;
+            exit(1);
+        }
     }
     // // add const operand for nodes with only one operand, should be avoid
     // for(auto &elem : dfg->nodes()){
@@ -443,6 +509,7 @@ DFG* DFGIR::parseDFGJFromMLIRCDFG(LLVMCDFG * CDFG){
     dfg->setId(0); // DFG id = 0, node id = 1,...,n
     // parse nodes
     const std::map<int, LLVMCDFGNode*> nodes = CDFG->nodes();
+    int nextMaterializedNodeId = nodes.empty() ? 0 : nodes.rbegin()->first + 1;
     for(auto &elem : nodes){
         int id = elem.first + 1;
         LLVMCDFGNode* node = elem.second;
@@ -596,11 +663,14 @@ DFG* DFGIR::parseDFGJFromMLIRCDFG(LLVMCDFG * CDFG){
                     }
                     ///// acc first
 
-                    if(opName == "ISEL"){
+                    if(opName == "ISEL" || node->isLoopIndexAcc()){
                         dfg_node->setIsAccFirst(false);
                     }
                     else{
                         dfg_node->setIsAccFirst(true);
+                    }
+                    if(node->isLoopIndexAcc()){
+                        dfg_node->setLoopIndexAcc();
                     }
                         
                     if(!IsAccConstant(VarACC)){
@@ -638,7 +708,10 @@ DFG* DFGIR::parseDFGJFromMLIRCDFG(LLVMCDFG * CDFG){
     }
     // parse edges
     std::map<std::pair<LLVMCDFGNode*, LLVMCDFGNode*>, std::vector<int>> visited_edgeidx;    
+    std::map<std::pair<LLVMCDFGNode*, LLVMCDFGNode*>, size_t> rawEdgePortIdx;
     std::map<int, LLVMCDFGEdge*> edges = CDFG->edges();
+    std::map<int, std::map<int, int>> logicalPortUse;
+    std::map<int, int> immediateCount;
     for(auto &elem : edges){
         int edge_id = elem.first;
         LLVMCDFGEdge* edge = elem.second;
@@ -647,25 +720,56 @@ DFG* DFGIR::parseDFGJFromMLIRCDFG(LLVMCDFG * CDFG){
         std::vector<int> dstPorts;
         int srcPort, dstPort; // default one output for each node
 
-        dstPorts = edge->dst()->getInputIndices(edge->src());
-        if(dstPorts.size() > 1){
-            for(int _ = 0; _ < dstPorts.size(); _++){
-                auto& visitedPorts = visited_edgeidx[std::make_pair(edge->src(), edge->dst())];
+        const std::string destinationType = edge->dst()->getTypeName();
+        const bool isCStoreDestination = destinationType == "CSTORE";
+        const bool isStoreDestination = destinationType == "store";
+        const bool hasExactIOContract =
+            isCStoreDestination || isStoreDestination;
+        if(hasExactIOContract){
+            auto inputInfo = edge->dst()->inputInfoMap().find(edge->src());
+            auto edgePair = std::make_pair(edge->src(), edge->dst());
+            size_t& portIdx = rawEdgePortIdx[edgePair];
+            if(inputInfo == edge->dst()->inputInfoMap().end() ||
+               portIdx >= inputInfo->second.size()){
+                std::cout << "Invalid "
+                          << (isCStoreDestination ? "CSTORE" : "STORE")
+                          << " DFG node " << dstId
+                          << ": missing logical operand path for raw edge "
+                          << edge_id << std::endl;
+                exit(1);
+            }
+            dstPort = inputInfo->second[portIdx++].idx;
+        }else{
+            dstPorts = edge->dst()->getInputIndices(edge->src());
+            if(dstPorts.size() > 1){
+                for(int _ = 0; _ < dstPorts.size(); _++){
+                    auto& visitedPorts = visited_edgeidx[std::make_pair(edge->src(), edge->dst())];
 
-                if (std::find(visitedPorts.begin(), visitedPorts.end(), dstPorts[_]) == visitedPorts.end()) {
-                    visitedPorts.push_back(dstPorts[_]);
-                    dstPort = dstPorts[_];
-                    break; 
+                    if (std::find(visitedPorts.begin(), visitedPorts.end(), dstPorts[_]) == visitedPorts.end()) {
+                        visitedPorts.push_back(dstPorts[_]);
+                        dstPort = dstPorts[_];
+                        break;
+                    }
                 }
             }
-        }
-        else{
-            dstPort = dstPorts[0];
+            else{
+                dstPort = dstPorts[0];
+            }
         }
 
         srcPort = 0; // default one output for each node
 
         bool isBackEdge = edge->src()->isOutputBackEdge(edge->dst());
+        if(hasExactIOContract){
+            CStoreContract::recordNonMemoryLogicalPort(logicalPortUse[dstId],
+                                                       dstPort,
+                                                       edge->type() == EDGE_TYPE_MEM);
+            // Count source-level constants before materialization. The v1 DFG
+            // contract intentionally accepts at most one even though that one
+            // is subsequently represented by a routed PASS for an IOB.
+            if(edge->type() != EDGE_TYPE_MEM && isConst(srcId))
+                ++immediateCount[dstId];
+        }
         // if(isBackEdge){continue;}
         // if(edgeJson.contains("operand")){
         //     dstPort = std::stoi(edgeJson["operand"].get<std::string>());
@@ -684,8 +788,21 @@ DFG* DFGIR::parseDFGJFromMLIRCDFG(LLVMCDFG * CDFG){
         // }
         if(isConst(srcId)){ // merge const node into the node connected to it
             DFGNode* node = dfg->node(dstId);
-            node->setImm(constValue(srcId));
-            node->setImmIdx(dstPort);
+            if(requiresRoutedConstant(node, dstPort)){
+                DFGNode *constant = materializeRoutedConstant(
+                    dfg, nextMaterializedNodeId, constValue(srcId));
+                DFGEdge* DFGedge = new DFGEdge(edge_id);
+                DFGedge->setEdge(constant->id(), 0, dstId, dstPort);
+                DFGedge->setType(edge->type());
+                dfg->addEdge(DFGedge);
+                if(isBackEdge){
+                    DFGedge->setBackEdge(true);
+                    DFGedge->setIterDist(edge->IterDist());
+                }
+            }else{
+                node->setImm(constValue(srcId));
+                node->setImmIdx(dstPort);
+            }
         } else{
             // int edgeId = edgeJson["_gvid"].get<int>();
             DFGEdge* DFGedge = new DFGEdge(edge_id);
@@ -696,6 +813,7 @@ DFG* DFGIR::parseDFGJFromMLIRCDFG(LLVMCDFG * CDFG){
             // } else{
             DFGedge->setEdge(srcId, srcPort, dstId, dstPort);
             // }
+            DFGedge->setType(edge->type());
             dfg->addEdge(DFGedge);
             if(isBackEdge){
                 int iterdist = edge->IterDist();
@@ -712,6 +830,38 @@ DFG* DFGIR::parseDFGJFromMLIRCDFG(LLVMCDFG * CDFG){
     //         node->setImmIdx(1);
     //     }
     // }
+    for(auto& elem : dfg->nodes()){
+        DFGNode* node = elem.second;
+        const bool isCStore = node->operation() == "CSTORE";
+        const bool isStore = node->operation() == "STORE";
+        if(!isCStore && !isStore){
+            continue;
+        }
+        const std::string operation = isCStore ? "CSTORE" : "STORE";
+        const int expectedOperands = isCStore ? 3 : 2;
+        const std::string prefix = "Invalid " + operation + " DFG node " +
+                                   std::to_string(node->id()) + ": ";
+        if(Operations::numOperands(operation) != expectedOperands ||
+           Operations::numRes(operation) != 0){
+            std::cout << prefix << "operation spec must have "
+                      << expectedOperands << " operands and 0 results"
+                      << std::endl;
+            exit(1);
+        }
+        const std::string immediateViolation =
+            CStoreContract::immediateViolation(immediateCount[node->id()]);
+        if(!immediateViolation.empty()){
+            std::cout << prefix << immediateViolation << std::endl;
+            exit(1);
+        }
+        const std::string portViolation =
+            CStoreContract::logicalPortViolation(logicalPortUse[node->id()],
+                                                 expectedOperands);
+        if(!portViolation.empty()){
+            std::cout << prefix << portViolation << std::endl;
+            exit(1);
+        }
+    }
     dfg->printVariableConfigNodes();
     return dfg;
 }
@@ -724,4 +874,3 @@ DFG* DFGIR::parseDFG(std::string filename, std::string format){
     return parseDFGJson(filename);
     // }
 }
-
