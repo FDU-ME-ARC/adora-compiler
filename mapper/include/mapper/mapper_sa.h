@@ -4,6 +4,7 @@
 #include "mapper/mapper.h"
 // #include "emit/EmitCGRACall.h"
 #include <cmath>
+#include <random>
 
 
 #include "mlir/IR/BuiltinOps.h"
@@ -25,15 +26,19 @@ private:
     int _dfgLat;
     int _mappedAdgNodeNum;
     long _ioDeps; // IO dependence on previous tasks
+    std::mt19937 _randomEngine;
+    std::uniform_real_distribution<float> _unitDistribution{0.0f, 1.0f};
 
     
 public:
-    MapperSA(ADG* adg, int timeout_ms = 600000, int maxIter = 30, bool objOpt = true);
+    MapperSA(ADG* adg, int timeout_ms = 600000, int maxIter = 30,
+             bool objOpt = true, unsigned randomSeed = 0);
     // MapperSA(ADG* adg, DFG* dfg);
-    MapperSA(ADG* adg, DFG* dfg, int timeout_ms = 600000, int maxIter = 30, bool objOpt = true);
+    MapperSA(ADG* adg, DFG* dfg, int timeout_ms = 600000, int maxIter = 30,
+             bool objOpt = true, unsigned randomSeed = 0);
     ~MapperSA();
     // generate random 0~1 float value
-    float randfloat(){ return rand() / (float)(RAND_MAX);}
+    float randfloat(){ return _unitDistribution(_randomEngine); }
     void setMaxIters(int num){ _maxIters = num; }
     void setObjOpt(bool objOpt){ _objOpt = objOpt; }
     // PnR and Data Synchronization on the same DFG, i.e. without modifying DFG

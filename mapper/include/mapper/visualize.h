@@ -23,6 +23,8 @@ public:
     void drawADG();
     // dump mapped DFG IO ports with mapped ADG IO and latency annotated
     void dumpDFGIO();
+    // dump routed DFG edges with mapping and latency annotations
+    void dumpMappedRoutes();
     // print edge path
     void printDFGEdgePath();
 };

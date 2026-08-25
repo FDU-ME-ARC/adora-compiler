@@ -145,6 +145,7 @@ private:
     std::string _ACCcount = "";
     std::string _ACCinterval = "";
     std::string _ACCrepeat = "";
+    bool _isLoopIndexAcc = false;
 
     /// pingpong
     bool _pingpong = false;
@@ -200,6 +201,8 @@ public:
     std::string getACCinterval() { return _ACCinterval;}
     std::string getACCrepeat () { return _ACCrepeat;}
     std::string getACCInfo_str() { std::string str = _ACCinit+","+_ACCcount+","+_ACCinterval+","+_ACCrepeat; return str;}
+    void setLoopIndexAcc(){ _isLoopIndexAcc = true; }
+    bool isLoopIndexAcc(){ return _isLoopIndexAcc; }
     /***************/
 
     std::string customInstruction(){ return _customInstruction; }
@@ -296,6 +299,7 @@ public:
     bool isAcc(){return _isAcc;}
     void setAcc(){_isAcc=true;}
     void setAccFirst(){_accfirst=1;}
+    void clearAccFirst(){_accfirst=0;}
     int isAccFirst(){return _accfirst;}
     bool hasInitial(){return _hasinitial;}
     void setInitial(int ini){_hasinitial = true;_initial = ini;}

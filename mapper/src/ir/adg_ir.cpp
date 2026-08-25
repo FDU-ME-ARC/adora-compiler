@@ -1,6 +1,153 @@
 
 #include "ir/adg_ir.h"
 
+#include <cctype>
+#include <limits>
+
+namespace {
+
+bool rawIOBCapableOfCStore(const json &attrs,
+                          const std::map<int, std::string> &iobModeNames) {
+    auto operations = attrs.find("operations");
+    if(operations != attrs.end()){
+        if(!operations->is_array())
+            return false;
+        for(const auto &operation : *operations){
+            if(operation.is_string() && operation.get<std::string>() == "CSTORE")
+                return true;
+        }
+        return false;
+    }
+
+    auto mode = attrs.find("iob_mode");
+    if(mode == attrs.end() || !mode->is_number_integer())
+        return false;
+    auto name = iobModeNames.find(mode->get<int>());
+    return name != iobModeNames.end() && name->second != "FIFO_MODE" &&
+           name->second != "SRAM_MODE";
+}
+
+[[noreturn]] void invalidRawCStoreIOB(int moduleId, const json &attrs,
+                                      const std::string &message) {
+    std::cout << "Invalid CSTORE IOB module " << moduleId;
+    auto index = attrs.find("iob_index");
+    if(index != attrs.end() && index->is_number_integer())
+        std::cout << " (iob_index " << index->get<int>() << ")";
+    std::cout << ": " << message << std::endl;
+    exit(1);
+}
+
+void validateRawCStoreIOB(int moduleId, const json &attrs) {
+    auto index = attrs.find("iob_index");
+    if(index == attrs.end())
+        invalidRawCStoreIOB(moduleId, attrs, "missing iob_index");
+    if(!index->is_number_integer())
+        invalidRawCStoreIOB(moduleId, attrs,
+                            "iob_index must be an integer");
+
+    auto connections = attrs.find("connections");
+    if(connections == attrs.end() || !connections->is_object())
+        invalidRawCStoreIOB(moduleId, attrs,
+                            "connections must be an object");
+    const std::string maxEdgeId =
+        std::to_string(std::numeric_limits<int>::max());
+    for(const auto &element : connections->items()){
+        const std::string &edgeId = element.key();
+        if(edgeId.empty() ||
+           !std::all_of(edgeId.begin(), edgeId.end(), [](unsigned char ch) {
+               return std::isdigit(ch);
+           }) ||
+           edgeId.size() > maxEdgeId.size() ||
+           (edgeId.size() == maxEdgeId.size() && edgeId > maxEdgeId))
+            invalidRawCStoreIOB(moduleId, attrs,
+                                "connection id must be a nonnegative integer");
+        const json &edge = element.value();
+        if(!edge.is_array())
+            invalidRawCStoreIOB(moduleId, attrs,
+                                "connection " + edgeId + " must be an array");
+        if(edge.size() != 6)
+            invalidRawCStoreIOB(
+                moduleId, attrs,
+                "connection " + edgeId + " must contain 6 fields");
+        for(int field : {0, 2, 3, 5}){
+            if(!edge[field].is_number_integer())
+                invalidRawCStoreIOB(
+                    moduleId, attrs,
+                    "connection " + edgeId +
+                    " endpoint/port fields must be integers");
+        }
+        if(!edge[1].is_string() || !edge[4].is_string())
+            invalidRawCStoreIOB(
+                moduleId, attrs,
+                "connection " + edgeId + " endpoint types must be strings");
+    }
+
+    auto controller = attrs.find("io_controller_cfg_id");
+    if(controller == attrs.end())
+        invalidRawCStoreIOB(moduleId, attrs, "missing io_controller_cfg_id");
+    if(!controller->is_object())
+        invalidRawCStoreIOB(moduleId, attrs,
+                            "expected io_controller_cfg_id object");
+
+    auto useEn = controller->find("UseEn");
+    if(useEn == controller->end())
+        invalidRawCStoreIOB(moduleId, attrs, "missing UseEn");
+    if(!useEn->is_number_integer())
+        invalidRawCStoreIOB(moduleId, attrs, "UseEn must be an integer");
+
+    auto numOperands = attrs.find("num_operands");
+    if(numOperands == attrs.end() || !numOperands->is_number_integer() ||
+       numOperands->get<int>() != 3)
+        invalidRawCStoreIOB(moduleId, attrs, "expected num_operands=3");
+
+    for(const char *field : {"BaseAddr", "II", "Latency", "IsStore"}){
+        auto value = controller->find(field);
+        if(value == controller->end() || !value->is_number_integer())
+            invalidRawCStoreIOB(
+                moduleId, attrs,
+                std::string("expected integer io_controller_cfg_id.") + field);
+    }
+    auto useAddr = controller->find("UseAddr");
+    if(useAddr != controller->end() && !useAddr->is_number_integer())
+        invalidRawCStoreIOB(moduleId, attrs, "UseAddr must be an integer");
+
+    auto nestLevels = attrs.find("ag_nest_levels");
+    if(nestLevels == attrs.end() || !nestLevels->is_number_integer() ||
+       nestLevels->get<int>() < 0)
+        invalidRawCStoreIOB(moduleId, attrs,
+                            "expected nonnegative integer ag_nest_levels");
+    for(int level = 0; level < nestLevels->get<int>(); ++level){
+        for(const std::string &field :
+            {"Stride" + std::to_string(level),
+             "Cycles" + std::to_string(level)}){
+            auto value = controller->find(field);
+            if(value == controller->end() || !value->is_number_integer())
+                invalidRawCStoreIOB(
+                    moduleId, attrs,
+                    "expected integer io_controller_cfg_id." + field);
+        }
+    }
+}
+
+[[noreturn]] void invalidRawCStoreIOBInstance(
+    int nodeId, int moduleId, const std::string &message) {
+    std::cout << "Invalid CSTORE IOB instance " << nodeId
+              << " (module " << moduleId << "): " << message << std::endl;
+    exit(1);
+}
+
+void validateRawCStoreIOBInstance(int nodeId, int moduleId,
+                                  const json &nodeJson) {
+    auto index = nodeJson.find("iob_index");
+    if(index == nodeJson.end())
+        invalidRawCStoreIOBInstance(nodeId, moduleId, "missing iob_index");
+    if(!index->is_number_integer())
+        invalidRawCStoreIOBInstance(nodeId, moduleId,
+                                    "iob_index must be an integer");
+}
+
+} // namespace
+
 
 ADGIR::ADGIR(std::string filename)
 {
@@ -23,7 +170,7 @@ ADGIR::~ADGIR()
 
 
 // parse ADG json object
-ADG* ADGIR::parseADG(json& adgJson){
+ADG* ADGIR::parseADG(json& adgJson, const std::string& owner){
     // std::cout << "Parse ADG..." << std::endl;
     ADG* adg = new ADG();
     adg->setBitWidth(adgJson["data_width"].get<int>());    
@@ -80,7 +227,7 @@ ADG* ADGIR::parseADG(json& adgJson){
             adg->setId(nodeId);
         }
     }
-    parseADGEdges(adg, adgJson["connections"]);
+    parseADGEdges(adg, adgJson["connections"], owner);
     postProcess(adg);  
     return adg; 
 }
@@ -97,6 +244,8 @@ ADGNode* ADGIR::parseADGNode(json& nodeJson){
     ADGNode* adg_node;
     if(type == "GPE" || type == "GIB" || type == "IOB"){
         auto& attrs = nodeJson["attributes"];
+        if(type == "IOB" && rawIOBCapableOfCStore(attrs, _iobModeNames))
+            validateRawCStoreIOB(nodeId, attrs);
         if(type == "GPE" || type == "IOB"){
             FUNode *fu_node;
             if(type == "GPE"){
@@ -135,23 +284,33 @@ ADGNode* ADGIR::parseADGNode(json& nodeJson){
                     std::string cyclesName = "Cycles" + std::to_string(i);
                     node->cfgIdMap[cyclesName] = iocCfgId[cyclesName].get<int>();
                 }
-                int iobMode = attrs["iob_mode"].get<int>();
-                std::string modeName = _iobModeNames[iobMode];
-                if(modeName == "FIFO_MODE"){
-                    node->addOperation("INPUT");
-                    node->addOperation("OUTPUT");
-                }else if(modeName == "SRAM_MODE"){ // SRAM_MODE
-                    node->addOperation("INPUT");
-                    node->addOperation("OUTPUT");
-                    node->addOperation("LOAD");
-                    node->addOperation("STORE");
-                }else{ // COND_LS_MODE
-                    node->addOperation("INPUT");
-                    node->addOperation("OUTPUT");
-                    node->addOperation("LOAD");
-                    node->addOperation("STORE");
-                    node->addOperation("CLOAD");
-                    node->addOperation("CSTORE");
+                if(attrs.contains("operations")){
+                    if(attrs["operations"].is_array()){
+                        for(auto& op : attrs["operations"]){
+                            if(op.is_string()){
+                                node->addOperation(op.get<std::string>());
+                            }
+                        }
+                    }
+                }else{
+                    int iobMode = attrs["iob_mode"].get<int>();
+                    std::string modeName = _iobModeNames[iobMode];
+                    if(modeName == "FIFO_MODE"){
+                        node->addOperation("INPUT");
+                        node->addOperation("OUTPUT");
+                    }else if(modeName == "SRAM_MODE"){ // SRAM_MODE
+                        node->addOperation("INPUT");
+                        node->addOperation("OUTPUT");
+                        node->addOperation("LOAD");
+                        node->addOperation("STORE");
+                    }else{ // COND_LS_MODE
+                        node->addOperation("INPUT");
+                        node->addOperation("OUTPUT");
+                        node->addOperation("LOAD");
+                        node->addOperation("STORE");
+                        node->addOperation("CLOAD");
+                        node->addOperation("CSTORE");
+                    }
                 }
                 fu_node = node;
             }
@@ -169,7 +328,12 @@ ADGNode* ADGIR::parseADGNode(json& nodeJson){
         // adg_node->setType(type);
         // adg_node->setBitWidth(bitWidth);
         adg_node->setCfgBlkIdx(attrs["cfg_blk_index"].get<int>());
-        ADG* subADG = parseADG(attrs); // parse sub-adg
+        std::string subADGOwner;
+        if(type == "IOB" && dynamic_cast<IOBNode*>(adg_node)->opCapable("CSTORE")){
+            subADGOwner = "CSTORE IOB module " + std::to_string(nodeId) +
+                          " (iob_index " + std::to_string(attrs["iob_index"].get<int>()) + ")";
+        }
+        ADG* subADG = parseADG(attrs, subADGOwner); // parse sub-adg
         adg_node->setSubADG(subADG);
         if(attrs.count("configuration")){
             for(auto& elem : attrs["configuration"].items()){
@@ -200,6 +364,11 @@ ADGNode* ADGIR::parseADGNode(json& nodeJson, std::map<int, std::pair<ADGNode*, b
     int moduleId = nodeJson["module_id"].get<int>();
     ADGNode* adg_node;
     ADGNode* module = modules[moduleId].first;
+    if(type == "IOB"){
+        IOBNode *iobModule = dynamic_cast<IOBNode*>(module);
+        if(iobModule && iobModule->opCapable("CSTORE"))
+            validateRawCStoreIOBInstance(nodeId, moduleId, nodeJson);
+    }
     bool renewNode = modules[moduleId].second; // used, need to re-new ADGNode
     if(type == "GPE" || type == "GIB" || type == "IOB"){                
         if(renewNode){ // re-new ADGNode
@@ -256,7 +425,7 @@ ADGNode* ADGIR::parseADGNode(json& nodeJson, std::map<int, std::pair<ADGNode*, b
 
 
 // parse ADGEdge json object
-void ADGIR::parseADGEdges(ADG* adg, json& edgeJson){
+void ADGIR::parseADGEdges(ADG* adg, json& edgeJson, const std::string& owner){
     // std::cout << "Parse ADG Edge" << std::endl;
     for(auto& elem : edgeJson.items()){
         int edgeId = std::stoi(elem.key());
@@ -267,6 +436,22 @@ void ADGIR::parseADGEdges(ADG* adg, json& edgeJson){
         int dstId = edge[3].get<int>();
         // std::string dstType = edge[4].get<std::string>();
         int dstPort = edge[5].get<int>();
+        bool missingSrc = srcId != adg->id() && !adg->node(srcId);
+        bool missingDst = dstId != adg->id() && !adg->node(dstId);
+        if(missingSrc || missingDst){
+            const std::string endpoint = missingSrc ? "source" : "destination";
+            const int endpointId = missingSrc ? srcId : dstId;
+            if(!owner.empty()){
+                std::cout << "Invalid " << owner << ": malformed endpoint "
+                          << endpoint << " node " << endpointId
+                          << " in edge " << edgeId << std::endl;
+            }else{
+                std::cout << "Invalid ADG edge " << edgeId
+                          << ": malformed endpoint " << endpoint
+                          << " node " << endpointId << std::endl;
+            }
+            exit(1);
+        }
         ADGEdge* adg_edge = new ADGEdge(srcId, dstId);
         adg_edge->setId(edgeId);
         adg_edge->setSrcId(srcId);
@@ -303,19 +488,66 @@ void ADGIR::analyzeIntraConnect(GPENode* node){
 void ADGIR::analyzeIntraConnect(IOBNode* node){
     ADG* subAdg = node->subADG();
     for(auto& elem : subAdg->inputs()){
-        auto input = elem.second.begin(); // one input only connected to one sub-module
-        ADGNode* subNode = subAdg->node(input->first);
-        int opeIdx = input->second; // operand index
-        while (subNode->type() != "IOController"){
+        if(elem.second.empty()){
+            continue;
+        }
+        std::vector<std::pair<int, int>> pending(elem.second.begin(), elem.second.end());
+        std::set<std::pair<int, int>> visited;
+        while(!pending.empty()){
+            auto current = pending.back();
+            pending.pop_back();
+            ADGNode* subNode = subAdg->node(current.first);
+            int opeIdx = current.second;
+            if(!subNode || !visited.emplace(current).second){
+                continue;
+            }
+            if(subNode->type() == "IOController"){
+                if(opeIdx >= 0 && opeIdx < node->numOperands()){
+                    node->addOperandInputs(opeIdx, elem.first);
+                }
+                continue;
+            }
             if(subNode->outputs().size() == 1){ // only one output
                 opeIdx = 0;
             }
-            auto out = subNode->output(opeIdx).begin(); 
-            subNode = subAdg->node(out->first);
-            opeIdx = out->second;
+            auto outputs = subNode->output(opeIdx);
+            for(auto& output : outputs){
+                pending.push_back(output);
+            }
         }
-        // opeIdx is ALU operand index now
-        node->addOperandInputs(opeIdx, elem.first);
+    }
+}
+
+static void validateCStoreIOB(IOBNode* node){
+    if(!node->opCapable("CSTORE")){
+        return;
+    }
+    const std::string prefix = "Invalid CSTORE IOB " + node->name() +
+                               " (id=" + std::to_string(node->id()) + "): ";
+    if(node->numOperands() != 3){
+        std::cout << prefix << "expected num_operands=3" << std::endl;
+        exit(1);
+    }
+    if(!node->cfgIdMap.count("UseEn")){
+        std::cout << prefix << "missing UseEn" << std::endl;
+        exit(1);
+    }
+    for(int operand = 0; operand < 3; ++operand){
+        if(node->operandInputs(operand).empty()){
+            std::cout << prefix << "operand " << operand
+                      << " has no physical input path" << std::endl;
+            exit(1);
+        }
+    }
+    for(int first = 0; first < 3; ++first){
+        for(int second = first + 1; second < 3; ++second){
+            for(int input : node->operandInputs(first)){
+                if(node->operandInputs(second).count(input)){
+                    std::cout << prefix << "physical input sets overlap" << std::endl;
+                    exit(1);
+                }
+            }
+        }
     }
 }
 
@@ -367,7 +599,9 @@ void ADGIR::postProcess(ADG* adg){
             analyzeIntraConnect(dynamic_cast<GPENode*>(nodePtr));
         } else if(nodePtr->type() == "IOB"){
             numIobNodes++;
-            analyzeIntraConnect(dynamic_cast<IOBNode*>(nodePtr));
+            IOBNode* iob = dynamic_cast<IOBNode*>(nodePtr);
+            analyzeIntraConnect(iob);
+            validateCStoreIOB(iob);
         } else if(nodePtr->type() == "GIB"){
             analyzeIntraConnect(dynamic_cast<GIBNode*>(nodePtr));
             analyzeOutReg(adg, dynamic_cast<GIBNode*>(nodePtr));

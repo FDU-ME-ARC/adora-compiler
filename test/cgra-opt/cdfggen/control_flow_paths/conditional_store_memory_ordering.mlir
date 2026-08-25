@@ -47,7 +47,7 @@
 
 // APPLY-DOT: Digraph G {
 // APPLY-DOT: ADD[[COMPOSED:[0-9]+]][opcode = "ADD"
-// APPLY-DOT: CSTORE[[STORE:[0-9]+]][opcode = "CSTORE", ref_name="cf_affine_apply:arg2", size="128", offset="0,0", pattern="0,1"
+// APPLY-DOT: CSTORE[[STORE:[0-9]+]][opcode = "CSTORE", ref_name="cf_affine_apply:arg2", size="128", offset="0,0", pattern="0,8"
 // APPLY-DOT: CONST[[FOUR:[0-9]+]][opcode = "CONST", value="0x00000004"
 // APPLY-DOT-NEXT: MUL[[BYTE_ADDRESS:[0-9]+]][opcode = "MUL"
 // APPLY-DOT-DAG: {{.*}} -> CSTORE[[STORE]]{{.*}}operand = 0, label = "Op=0"
@@ -121,9 +121,10 @@ module {
   func.func @memory_after_cstore_in_loop(%cond: i1, %first: i32,
                                          %middle: i32, %a: memref<8xi32>,
                                          %b: memref<8xi32>) {
+    %c0 = arith.constant 0 : index
     ADORA.kernel {
       affine.for %i = 0 to 8 {
-        ADORA.cond_store %first, %a[%i] if %cond : memref<8xi32>
+        ADORA.cond_store %first, %a[%c0] if %cond : memref<8xi32>
         affine.store %middle, %b[%i] : memref<8xi32>
         %loaded = affine.load %a[%i] : memref<8xi32>
       }
@@ -151,12 +152,13 @@ module {
       %cond: i1, %value: i32, %before_store: memref<8xi32>,
       %before_load: memref<8xi32>, %loop_target: memref<8xi32>,
       %after_load: memref<8xi32>, %after_store: memref<8xi32>) {
+    %c0 = arith.constant 0 : index
     ADORA.kernel {
       affine.store %value, %before_store[0] : memref<8xi32>
       %before = affine.load %before_load[0] : memref<8xi32>
       affine.for %i = 0 to 2 {
         affine.for %j = 0 to 8 {
-          ADORA.cond_store %value, %loop_target[%j] if %cond : memref<8xi32>
+          ADORA.cond_store %value, %loop_target[%c0] if %cond : memref<8xi32>
         }
       }
       %after = affine.load %after_load[0] : memref<8xi32>
@@ -169,12 +171,13 @@ module {
   func.func @cstore_blocks_load_store_hoist(
       %cond: i1, %delta: i32, %state: memref<1xi32>,
       %conditional: memref<8xi32>, %observed: memref<8xi32>) {
+    %c0 = arith.constant 0 : index
     ADORA.kernel {
       affine.for %i = 0 to 8 {
         %initial = affine.load %state[0] : memref<1xi32>
         %updated = arith.addi %initial, %delta : i32
         scf.if %cond {
-          affine.store %delta, %conditional[%i] : memref<8xi32>
+          affine.store %delta, %conditional[%c0] : memref<8xi32>
         }
         affine.store %updated, %state[0] : memref<1xi32>
         %observed_value = affine.load %state[0] : memref<1xi32>

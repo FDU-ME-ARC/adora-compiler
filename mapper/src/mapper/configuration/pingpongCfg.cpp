@@ -163,14 +163,13 @@ std::map<int, CfgData> Configuration::getIobPingpongCfgData(IOBNode* node, bool 
         // cfg[useEnCfgLoc.low] = useEnCfg;
     }
     if(op != "INPUT"){ // only INPUT node donot use Mux     
-        int rduId;
+        ADGNode* delayNode = nullptr;
         std::map<int, int> delayUsed;
         for(auto& elem : dfgNode->inputEdges()){
             int eid = elem.second;
             // auto edge = dfg->edge(eid);
             // std::cout << "eid: " << eid << ", " << dfg->node(edge->srcId())->name() << " -> " << dfg->node(edge->dstId())->name() << std::endl;
             auto& edgeAttr = _mapping->dfgEdgeAttr(eid);
-            int delay = edgeAttr.delay; // delay cycles
             int inputIdx = edgeAttr.edgeLinks.rbegin()->srcPort; // last edgeLInk, dst port
             auto muxPair = subAdg->input(inputIdx).begin(); // one input only connected to one Mux
             int muxId = muxPair->first;
@@ -180,30 +179,19 @@ std::map<int, CfgData> Configuration::getIobPingpongCfgData(IOBNode* node, bool 
             // CfgDataLoc muxCfgLoc = node->configInfo(muxId);
             // CfgData muxCfg((muxCfgLoc.high - muxCfgLoc.low + 1), (uint32_t)muxCfgData);
             // cfg[muxCfgLoc.low] = muxCfg;
-            auto rduPair = mux->output(0).begin();
-            rduId = rduPair->first; 
-            int rduPort = rduPair->second;
-            auto rdu = subAdg->node(rduId);            
-            if(rdu->type() == "RDU"){
-                delayUsed[rduPort] = edgeAttr.delay; // delay cycles used by this port
-                addCfgData(cfg, node->configInfo(rduId), (uint32_t)delay);
-                // CfgDataLoc rduCfgLoc = node->configInfo(rduId);
-                // CfgData rduCfg(rduCfgLoc.high - rduCfgLoc.low + 1, (uint32_t)delay);
-                // cfg[rduCfgLoc.low] = rduCfg;      
+            auto delayPair = mux->output(0).begin();
+            auto currentDelayNode = subAdg->node(delayPair->first);
+            if(delayNode && delayNode->id() != currentDelayNode->id()){
+                std::cout << "Invalid IOB configuration " << node->name()
+                          << " (id=" << node->id()
+                          << "): input muxes do not share one DelayPipe"
+                          << std::endl;
+                exit(1);
             }     
+            delayNode = currentDelayNode;
+            delayUsed[delayPair->second] = edgeAttr.delay;
         }  
-        // RDU
-        if(!delayUsed.empty()){
-            CfgDataLoc rduCfgLoc = node->configInfo(rduId);
-            uint32_t delayCfg = 0;
-            int eachDelayWidth = (rduCfgLoc.high - rduCfgLoc.low + 1) / node->numOperands();
-            for(auto& elem : delayUsed){
-                delayCfg |= elem.second << (eachDelayWidth * elem.first);
-            }
-            addCfgData(cfg, rduCfgLoc, (uint32_t)delayCfg);
-            // CfgData rduCfg(rduCfgLoc.high - rduCfgLoc.low + 1, delayCfg);
-            // cfg[rduCfgLoc.low] = rduCfg;  
-        }
+        addIobDelayCfg(cfg, node, delayNode, delayUsed);
     }
     // dumpCfgData(std::cout);
     return cfg;

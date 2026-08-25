@@ -1,0 +1,130 @@
+{
+  "schema_version" : 1,
+  "target" : "vitra-cstore",
+  "logical_source" : "affine.for induction value",
+  "physical_operation" : "ACC",
+  "for_is_physical_operation" : false,
+  "data_width" : 16,
+  "signedness" : "unsigned_16_bit_modular_bitvector",
+  "data_width_bits" : 16,
+  "index_arithmetic" : "unsigned_16_bit_modular_bitvector",
+  "backpressure_supported" : false,
+  "enable_semantics" : "abort_reset_suppress",
+  "physical_for_supported" : false,
+  "operations" : {
+    "ACC" : {
+      "opcode" : 33,
+      "logical_operands" : 1,
+      "results" : 1,
+      "latency" : 1,
+      "accumulative" : true,
+      "alu_operation" : "ADD"
+    },
+    "ASUB" : {
+      "opcode" : 34,
+      "logical_operands" : 1,
+      "results" : 1,
+      "latency" : 1,
+      "accumulative" : true,
+      "alu_operation" : "SUB"
+    }
+  },
+  "configuration_fields" : {
+    "InitVal" : {
+      "high" : 67,
+      "low" : 52,
+      "width" : 16
+    },
+    "WI" : {
+      "high" : 79,
+      "low" : 68,
+      "width" : 12
+    },
+    "Latency" : {
+      "high" : 85,
+      "low" : 80,
+      "width" : 6
+    },
+    "Cycles" : {
+      "high" : 97,
+      "low" : 86,
+      "width" : 12
+    },
+    "Repeats" : {
+      "high" : 109,
+      "low" : 98,
+      "width" : 12
+    },
+    "SkipFirst" : {
+      "high" : 110,
+      "low" : 110,
+      "width" : 1
+    }
+  },
+  "configuration_formula" : {
+    "operation" : "ACC",
+    "InitVal" : "lower_bound mod 2^16",
+    "routed_operand_0" : "positive_step mod 2^16",
+    "WI" : 1,
+    "Latency" : 0,
+    "Cycles" : "trip_count",
+    "Repeats" : 1,
+    "SkipFirst" : 1,
+    "output" : "(lower_bound + iteration * positive_step) mod 2^16",
+    "field_semantics" : {
+      "WI" : "launch intervals per accumulator update; one updates every data cycle",
+      "Latency" : "AffineCtrlReg pre-data control cycles; not ALU output latency",
+      "Cycles" : "accumulator update opportunities in each repeat group",
+      "Repeats" : "cycle groups before returning idle; v1 fixes this to one",
+      "SkipFirst" : "emit InitVal on the first update without applying routed_operand_0"
+    }
+  },
+  "physical_path" : {
+    "feedback" : "DualModeReg.out(1) to ALU.in(0)",
+    "routed_operand" : "SharedDelayPipe.out(0) to ALU.in(1)",
+    "public_output" : "DualModeReg.out(0) after the accumulator register update",
+    "ASUB_usage" : "characterized subtract feedback operation; not supported by v1 negative-step lowering"
+  },
+  "timing" : {
+    "start_pulse_to_first_output_cycles" : 2,
+    "output_interval_cycles" : 1,
+    "post_sequence_output" : "holds_last_value_while_enabled",
+    "enable_deassertion" : "registered_abort_then_zero"
+  },
+  "first_value_timing" : {
+    "cycles_after_gpe_start_assertion" : 2,
+    "value" : "lower_bound",
+    "reason" : "one GPE start register followed by AffineCtrlReg entry into data state"
+  },
+  "last_value_behavior" : {
+    "value" : "lower_bound + (trip_count - 1) * positive_step",
+    "state_after_last_value" : "idle",
+    "output_while_enabled" : "holds_last_value",
+    "next_start" : "restarts_from_InitVal"
+  },
+  "wraparound" : {
+    "arithmetic" : "modulo_2^16",
+    "hardware_behavior" : "low data_width bits are retained",
+    "supported_loop_subset" : "logical wrap before the final iteration is rejected"
+  },
+  "execution_enable_semantics" : {
+    "backpressure_supported" : false,
+    "en_zero" : "abort_return_idle_and_zero_state",
+    "en_zero_is_stall" : false,
+    "en_zero_is_pause" : false,
+    "normal_execution" : "hold enable high from before start through the final value"
+  },
+  "byte_address_scaling" : "external-explicit-arithmetic",
+  "byte_address_scaling_detail" : "ACC emits a logical element index; ADORA CDFG/GPE arithmetic multiplies by element-byte-width",
+  "supported_loop_subset" : {
+    "minimum_trip_count" : 1,
+    "maximum_trip_count" : 4095,
+    "lower_bound" : "unsigned 16-bit value",
+    "positive_step" : "unsigned nonzero 16-bit value",
+    "negative_step" : false,
+    "zero_trip_count" : false,
+    "logical_wrap_before_last_iteration" : false,
+    "ASUB_characterized_only" : true
+  },
+  "evidence" : [ "src/main/scala/op/Operations.scala: ACC/ASUB dynamic operation definitions", "src/main/scala/dsa/pe/PE.scala: routed operand, feedback, start, enable, and output path", "src/main/scala/dsa/util/AffineCtrlReg.scala: affine fields, state transitions, and abort/reset semantics", "src/test/scala/vitra/VitraLoopIndexAccSpec.scala: production GPE 0..15, nonzero lower bound/step, and abort proof" ]
+}
