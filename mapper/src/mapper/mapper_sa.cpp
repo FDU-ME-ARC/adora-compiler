@@ -1,7 +1,11 @@
 
 #include "mapper/mapper_sa.h"
 
-MapperSA::MapperSA(ADG* adg, int timeout, int maxIter, bool objOpt) : Mapper(adg){
+#include <algorithm>
+
+MapperSA::MapperSA(ADG* adg, int timeout, int maxIter, bool objOpt,
+                   unsigned randomSeed)
+    : Mapper(adg), _randomEngine(randomSeed){
     setTimeOut(timeout);
     setMaxIters(maxIter);
     setObjOpt(objOpt);
@@ -9,7 +13,9 @@ MapperSA::MapperSA(ADG* adg, int timeout, int maxIter, bool objOpt) : Mapper(adg
 
 // MapperSA::MapperSA(ADG* adg, DFG* dfg) : Mapper(adg, dfg){}
 
-MapperSA::MapperSA(ADG* adg, DFG* dfg, int timeout, int maxIter, bool objOpt) : Mapper(adg, dfg){
+MapperSA::MapperSA(ADG* adg, DFG* dfg, int timeout, int maxIter, bool objOpt,
+                   unsigned randomSeed)
+    : Mapper(adg, dfg), _randomEngine(randomSeed){
     setTimeOut(timeout);
     setMaxIters(maxIter);
     setObjOpt(objOpt);
@@ -499,7 +505,7 @@ std::vector<ADGNode*> MapperSA::findCandidates(Mapping* mapping, DFGNode* dfgNod
     }
  
     // randomly select candidates
-    std::random_shuffle(candidates.begin(), candidates.end());
+    std::shuffle(candidates.begin(), candidates.end(), _randomEngine);
     int num = std::min((int)candidates.size(), range);
     candidates.erase(candidates.begin()+num, candidates.end());
     // sort candidates according to their distances with the mapped src and dst ADG nodes of this DFG node 

@@ -49,7 +49,12 @@ void Graphviz::drawDFG(){
         auto& attr = _mapping->dfgNodeAttr(node->id());
         auto name = node->name();
         std::string quoteName = "\"" + name + "\"";
-        ofs << quoteName << "[label = \"\\N\\nlat=" << attr.lat << "\"];\n";
+        ofs << quoteName << "[label = \"\\N\\nlat=" << attr.lat;
+        if(node->hasImm())
+            ofs << "\\nimm=" << node->imm() << "\\nimmIdx=" << node->immIdx();
+        if(node->isLoopIndexAcc())
+            ofs << "\\nloop_index_acc=1";
+        ofs << "\"];\n";
         // for(auto& input : node->inputs()){
         //     int srcNodeId = input.second.first;
         //     std::string srcName = dfg->node(srcNodeId)->name();
@@ -225,6 +230,45 @@ void Graphviz::printDFGEdgePath(){
                 std::cout << ");\n";
             }
         }
+    }
+}
+
+
+void Graphviz::dumpMappedRoutes(){
+    std::string filename = _dirname + "/mapped_routes.tsv";
+    std::ofstream ofs(filename);
+    DFG* dfg = _mapping->getDFG();
+
+    ofs << "edge_id\tsrc_dfg\tdst_dfg\tdst_operation\tlogical_operand"
+        << "\tdst_adg\tdst_physical_input\tsrc_latency\troute_latency"
+        << "\trdu_delay\tarrival_latency\ttarget_latency\n";
+    for(auto& elem : dfg->edges()){
+        int edgeId = elem.first;
+        DFGEdge* edge = elem.second;
+        if(!_mapping->isRouted(edgeId) || edge->isMemEdge() ||
+           edge->dstPortIdx() < 0){
+            continue;
+        }
+
+        const auto& edgeAttr = _mapping->dfgEdgeAttr(edgeId);
+        const auto& edgeLinks = edgeAttr.edgeLinks;
+        assert(!edgeLinks.empty());
+        DFGNode* srcNode = dfg->node(edge->srcId());
+        DFGNode* dstNode = dfg->node(edge->dstId());
+        const auto& dstAttr = _mapping->dfgNodeAttr(dstNode->id());
+        int srcLatency = _mapping->dfgNodeAttr(srcNode->id()).lat;
+        int routeLatency = edgeAttr.lat;
+        int rduDelay = edgeAttr.delay;
+        int arrivalLatency = srcLatency + routeLatency + rduDelay;
+        int targetLatency = dstAttr.lat - dstNode->opLatency();
+
+        ofs << edgeId << '\t' << srcNode->id() << '\t' << dstNode->id()
+            << '\t' << dstNode->operation() << '\t' << edge->dstPortIdx()
+            << '\t' << dstAttr.adgNode->id()
+            << '\t' << edgeLinks.back().srcPort
+            << '\t' << srcLatency << '\t' << routeLatency
+            << '\t' << rduDelay << '\t' << arrivalLatency
+            << '\t' << targetLatency << '\n';
     }
 }
 

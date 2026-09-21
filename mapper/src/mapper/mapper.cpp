@@ -368,6 +368,12 @@ bool Mapper::preMapCheck(ADG* adg, DFG* dfg){
     }
     for(auto& elem : dfgOpCnt){
         if(adgOpCnt[elem.first] < elem.second){ 
+            if(elem.first == "CSTORE" && adgOpCnt[elem.first] == 0){
+                std::cout << "No legal ADG node supports CSTORE: required="
+                          << elem.second << ", available="
+                          << adgOpCnt[elem.first] << std::endl;
+                return false;
+            }
             std::cout << "No enough ADG nodes to support " << elem.first << std::endl;
             return false; // there should be enough ADG nodes that support this operation
         }
@@ -426,6 +432,7 @@ bool Mapper::execute(bool dumpCallFunc, bool dumpMappedViz, std::string resultDi
             viz.drawDFG();
             viz.drawADG();
             viz.dumpDFGIO(); 
+            viz.dumpMappedRoutes();
             // viz.printDFGEdgePath();
         }
         Configuration cfg(_mapping);

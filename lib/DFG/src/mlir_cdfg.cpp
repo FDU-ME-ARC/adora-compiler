@@ -226,7 +226,12 @@ void LLVMCDFG::CDFGtoDOT(std::string fileName) {
         }
         else if(node->isAcc()){
             ofs << ", acc_params=\""  << node->getACCInfo_str();
-            ofs << "\", acc_first=1";
+            // Preserve the established generic-ACC DOT convention. Loop-index
+            // ACCs carry their deliberately different first-cycle semantic.
+            ofs << "\", acc_first="
+                << (node->isLoopIndexAcc() ? node->isAccFirst() : true);
+            if (node->isLoopIndexAcc())
+                ofs << ", loop_index_acc=\"1\", skip_first=\"1\"";
         } 
         else if(node->hasConst()){
             if(node->operation()) node->operation()->dump();

@@ -106,6 +106,9 @@ class Configuration
 private:
     Mapping* _mapping;
     std::map<int, int> _dfgIoSpadAddrs; // base address in spad for each DFG IO, <id, addr>
+    static void addIobDelayCfg(std::map<int, CfgData> &cfg, IOBNode *node,
+                               ADGNode *delayNode,
+                               const std::map<int, int> &delayUsed);
     
     // std::string getVarConfigFromAddr(std::map<int, std::vector<int>> lsb2addr,int  addr);
 public:

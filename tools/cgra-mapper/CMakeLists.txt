@@ -63,6 +63,4 @@ llvm_update_compile_flags(cgra-mapper)
 
 mlir_check_link_libraries(cgra-mapper)
 
-
-
 install(TARGETS cgra-mapper)

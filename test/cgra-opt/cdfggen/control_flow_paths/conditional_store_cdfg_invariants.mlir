@@ -7,7 +7,7 @@
 // RUN: %FileCheck %s --check-prefix=ORDER-DOT --input-file=cf_ordered_store_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=PRODUCER-DOT --input-file=cf_mapped_producers_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=BASELINE-DOT --input-file=cf_direct_affine_baseline_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
-// RUN: %FileCheck %s --check-prefix=UNRELATED-DOT --input-file=cf_unrelated_memory_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
+// RUN: %FileCheck %s --check-prefix=UNRELATED-DOT --input-file=cf_unrelated_memory_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"' --implicit-check-not='opcode = "load"' --implicit-check-not='opcode = "store"'
 // RUN: %FileCheck %s --check-prefix=CONSTANT-DOT --input-file=cf_mixed_constant_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=FALLBACK-DOT --input-file=cf_fallback_rank_two_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
 // RUN: %FileCheck %s --check-prefix=CROSSED-DOT --input-file=cf_crossed_order_CDFG.dot --implicit-check-not='opcode = "undefined"' --implicit-check-not='opcode = "CTRL"'
@@ -90,8 +90,6 @@
 
 // UNRELATED-DOT: Digraph G {
 // UNRELATED-DOT: opcode = "CSTORE"
-// UNRELATED-DOT-NOT: opcode = "load"
-// UNRELATED-DOT-NOT: opcode = "store"
 // UNRELATED-DOT: }
 
 // CHECK-LABEL: func.func @mixed_constant_address
